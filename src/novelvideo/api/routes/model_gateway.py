@@ -677,7 +677,9 @@ async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any
         if value is None:
             return saved
         normalized = value.strip()
-        if secret and not normalized:
+        if secret and (not normalized or set(normalized) == {"*"}):
+            # An all-asterisks value is a masked secret preview pasted back by
+            # mistake, not a real credential — keep the stored value instead.
             return saved
         return normalized
 
