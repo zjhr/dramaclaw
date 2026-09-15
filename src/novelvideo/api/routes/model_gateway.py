@@ -52,6 +52,7 @@ from novelvideo.newapi_provisioner import (
     delete_channel_by_name,
     ensure_newapi_setup,
     ensure_admin_access_token,
+    fetch_upstream_models,
     get_provisioner_config,
     list_channel_types,
     mask_token,
@@ -251,6 +252,12 @@ class SyncProviderChannelBody(BaseModel):
     new_api_base_url: str | None = Field(default=None, alias="newApiBaseUrl")
     database: NewApiDatabaseBody | None = None
     provider: str
+    upstream_key: str | None = Field(default=None, alias="upstreamKey")
+    base_url: str | None = Field(default=None, alias="baseUrl")
+
+
+class FetchProviderModelsBody(BaseModel):
+    # 可选覆盖：渠道行里已填但尚未保存的 Key / Base URL 优先于 settings.db 里的值。
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
 
@@ -964,6 +971,51 @@ async def get_custom_newapi_channel_types() -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True, "data": {"items": items}}
+
+
+@router.post("/custom/newapi/provider-channels/{provider}/models")
+async def fetch_custom_newapi_provider_models(
+    provider: str,
+    body: FetchProviderModelsBody | None = None,
+) -> dict[str, Any]:
+    """拉取某个供应商渠道上游可用的模型 ID 列表（经 NewAPI 探测上游 /v1/models）。"""
+    try:
+        require_ce_gateway_management()
+        require_provisioner_enabled()
+        provider_key = str(provider or "").strip().lower()
+        saved_channel = get_newapi_provider_channel(provider_key) or {}
+        channel_type = int(saved_channel.get("type") or 0) or 1
+        payload = body or FetchProviderModelsBody()
+        upstream_key = (
+            str(payload.upstream_key or "").strip()
+            or str(saved_channel.get("upstreamKey") or "").strip()
+        )
+        if not upstream_key:
+            raise ValueError(
+                f"upstreamKey is required for provider {provider_key}"
+            )
+        base_url = (
+            str(payload.base_url or "").strip()
+            or str(saved_channel.get("baseUrl") or "").strip()
+        )
+        cfg = get_provisioner_config()
+        admin = ensure_admin_access_token(cfg)
+        models = fetch_upstream_models(
+            cfg,
+            admin,
+            channel_type=channel_type,
+            upstream_key=upstream_key,
+            base_url=base_url or None,
+        )
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "data": {"provider": provider_key, "models": models}}
 
 
 @router.post("/custom/newapi/provider-channel/sync")

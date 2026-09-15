@@ -5468,7 +5468,13 @@
       "confirmBar": {
         "close": "关闭",
         "submit": "生成",
-        "cost": "消耗算力"
+        "cost": "消耗算力",
+        "modelLabel": "模型",
+        "sizeLabel": "尺寸",
+        "qualityLabel": "画质",
+        "aspectLabel": "比例",
+        "aspectFollowSource": "跟随源图",
+        "aspectNote": "宫格模板的输出比例由模板决定：跟随源图或固定值（如三视图 3:2），不可修改。"
       }
     },
     "video": {
@@ -7105,6 +7111,14 @@
         "channelUnavailable": "不可用",
         "noCapabilityData": "暂无能力信息",
         "noMatchingChannels": "没有符合条件的渠道。",
+        "customChannelSection": "自定义渠道",
+        "customChannelNamePlaceholder": "渠道名（小写英文 / 数字 / 中文）",
+        "customChannelAdd": "添加自定义渠道",
+        "customChannelTypeLabel": "OpenAI 兼容",
+        "customChannelExists": "渠道名“{{provider}}”已存在。",
+        "customChannelInvalid": "渠道名仅支持英文、数字、中划线、下划线或中文。",
+        "fetchModels": "拉取模型",
+        "fetchModelsEmpty": "上游未返回任何模型，请检查渠道 Key 与地址。",
         "channelTypesLoading": "正在加载渠道列表…",
         "channelTypesLoadFailed": "渠道列表加载失败，请检查 RelayClaw CE 是否正常运行后重试。",
         "retryChannelTypes": "重新加载",
@@ -7234,7 +7248,11 @@
       },
       "mediaModels": {
         "title": "图片 / 视频 / 音频生成模型",
-        "description": "模型列表来自当前自定义本地配置。可新增图片、视频模型并配置其在虾画中显示的能力。",
+        "description": "这里配置的模型会出现在虾画（画布）生成节点的模型下拉中：图片模型 → 图片生成 / 编辑节点，视频模型 → 视频生成节点。每行左侧的内部模型 ID 是虾画中显示的名称；「上游模型名」需填写所选供应商渠道的真实模型名（可点「拉取模型」直接从上游获取）。文本 / 视觉理解类功能模型请在上方功能模型映射中配置。",
+        "usageImage": "图片模型出现在：虾画图片生成 / 编辑节点的模型下拉，以及道具参考图等图片类功能的模型选择。",
+        "usageVideo": "视频模型出现在：虾画视频生成节点的模型下拉，以及分集制作中 beat 视频生成的模型选择。",
+        "usageAudio": "音频模型用于音频生成类功能的模型选择。",
+        "usageNote": "分集草图 / 场景参考图使用的默认模型（LingShan-G2 / LingShan-NB-2）由后端环境变量决定，不在此配置；它们同样会出现在画布模型下拉中。",
         "addModel": "新增模型",
         "addModelTitle": "新增媒体模型",
         "editModelTitle": "编辑媒体模型",

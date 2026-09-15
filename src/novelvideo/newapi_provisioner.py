@@ -1149,6 +1149,48 @@ def get_channel_detail(
     return data
 
 
+def fetch_upstream_models(
+    cfg: NewApiProvisionerConfig,
+    admin: AdminToken,
+    *,
+    channel_type: int,
+    upstream_key: str,
+    base_url: str | None = None,
+) -> list[str]:
+    """Fetch upstream model IDs via NewAPI's channel model preview API.
+
+    Works without a saved gateway channel: NewAPI probes the upstream
+    `/v1/models` endpoint with the given key and base URL directly.
+    """
+    key = str(upstream_key or "").strip()
+    if not key:
+        raise ValueError("upstreamKey is required")
+    payload: dict[str, Any] = {
+        "channel_id": 0,
+        "type": int(channel_type),
+        "key": key,
+    }
+    if base_url:
+        payload["base_url"] = str(base_url).strip().rstrip("/")
+    with httpx.Client(timeout=30) as client:
+        res = client.post(
+            f"{cfg.admin_base_url}/api/channel/fetch_models",
+            headers=admin_headers(admin),
+            json=payload,
+        )
+    try:
+        body: Any = res.json()
+    except ValueError:
+        body = res.text
+    if res.status_code >= 400:
+        raise RuntimeError(f"fetch upstream models failed: HTTP {res.status_code} {body}")
+    require_newapi_success(body, "fetch upstream models")
+    data = response_data(body)
+    if not isinstance(data, list):
+        raise RuntimeError(f"fetch upstream models failed: missing data in {body}")
+    return [str(item).strip() for item in data if str(item or "").strip()]
+
+
 def list_channel_types(
     cfg: NewApiProvisionerConfig,
     admin: AdminToken,

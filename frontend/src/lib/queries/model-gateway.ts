@@ -526,6 +526,32 @@ export function useSaveProviderChannels() {
   });
 }
 
+/** 拉取某个供应商渠道上游可用的模型 ID 列表（经 NewAPI 探测上游 /v1/models）。 */
+export function useFetchProviderModels() {
+  return useMutation({
+    mutationFn: (input: { provider: string; upstreamKey?: string; baseUrl?: string }) =>
+      api
+        .post(
+          `api/v1/model-gateway/custom/newapi/provider-channels/${encodeURIComponent(
+            input.provider,
+          )}/models`,
+          {
+            json: {
+              ...(input.upstreamKey ? { upstreamKey: input.upstreamKey } : {}),
+              ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+            },
+            timeout: 60_000,
+            throwHttpErrors: false,
+          },
+        )
+        .json<
+          | OkResponse<{ provider: string; models: string[] }>
+          | ErrorResponse
+          | FastApiErrorResponse
+        >(),
+  });
+}
+
 /** 删除 CE 本地及 NewAPI 中的 ComfyUI 渠道和媒体模型映射。 */
 export function useClearComfyUIConfig() {
   const qc = useQueryClient();

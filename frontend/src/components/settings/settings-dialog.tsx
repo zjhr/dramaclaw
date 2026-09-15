@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { confirmDialog } from "@/components/confirm-dialog-host";
@@ -64,6 +64,7 @@ import {
   useInitCustomNewApi,
   useSaveCustomChannel,
   useSaveCustomChannelsBatch,
+  useFetchProviderModels,
   useSaveEmbeddingModel,
   useSaveMediaModels,
   useSaveProviderChannels,
@@ -2737,7 +2738,7 @@ function FeatureModelsBlock({
         type:
           channelTypeByProvider.get(provider)?.type ||
           savedChannelByProvider.get(provider)?.type ||
-          customProviderChannelType(provider),
+          (customProviderChannelType(provider) ?? 1),
         upstreamKey: (channel?.upstreamKey ?? "").trim(),
         modelMapping,
         group: "default",
@@ -3045,6 +3046,12 @@ function EmbeddingModelBlock({
   }, [backendSnapshotLoaded, savedEmbeddingModel, savedKey]);
 
   const selectedProvider = localModel?.provider ?? "";
+  const providerChannel = useSettingsStore(
+    (s) =>
+      selectedProvider
+        ? s.featureModelConfig.providerChannels[selectedProvider]
+        : undefined,
+  );
   const upstreamModel = localModel?.upstreamModel ?? "";
   const dimension =
     localModel === undefined
@@ -3203,16 +3210,17 @@ function EmbeddingModelBlock({
               ))}
             </SelectContent>
           </Select>
-          <Input
+          <UpstreamModelField
             value={upstreamModel}
-            onChange={(event) =>
-              updateLocal({ upstreamModel: event.target.value })
-            }
+            onChange={(value) => updateLocal({ upstreamModel: value })}
+            provider={selectedProvider || undefined}
+            upstreamKey={providerChannel?.upstreamKey}
+            baseUrl={providerChannel?.baseUrl}
             placeholder={t(
               "settings.modelConfig.embeddingModel.upstreamModelPlaceholder",
             )}
-            className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
             disabled={embeddingProviders.length === 0}
+            inputClassName="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
           />
           <Input
             value={String(dimension)}
@@ -3660,6 +3668,24 @@ function MediaModelsBlock({
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
             {t("settings.modelConfig.mediaModels.description")}
           </p>
+          {/* 用途速查：说明每种类型影响产品里哪些选项/功能 */}
+          <div className="mt-2 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+            {(["image", "video", "audio"] as const).map((kind) => (
+              <p key={kind} className="flex items-start gap-1.5">
+                <span className="mt-px shrink-0 rounded border border-border/70 bg-white/[0.04] px-1.5 py-0.5 text-[10px]">
+                  {t(`settings.modelConfig.mediaModels.types.${kind}`)}
+                </span>
+                <span>
+                  {t(`settings.modelConfig.mediaModels.usage${
+                    kind === "image" ? "Image" : kind === "video" ? "Video" : "Audio"
+                  }`)}
+                </span>
+              </p>
+            ))}
+            <p className="text-muted-foreground/70">
+              {t("settings.modelConfig.mediaModels.usageNote")}
+            </p>
+          </div>
         </div>
         <Button
           type="button"
@@ -3704,7 +3730,16 @@ function MediaModelsBlock({
                 index > 0 && "border-t border-border/70",
               )}
             >
-              <span className="text-xs text-muted-foreground">
+              <span
+                className="text-xs text-muted-foreground"
+                title={t(
+                  row.kind === "video"
+                    ? "settings.modelConfig.mediaModels.usageVideo"
+                    : row.kind === "audio"
+                      ? "settings.modelConfig.mediaModels.usageAudio"
+                      : "settings.modelConfig.mediaModels.usageImage",
+                )}
+              >
                 {t(`settings.modelConfig.mediaModels.types.${row.kind}`)}
               </span>
               <code className="truncate rounded border border-border/60 bg-white/[0.03] px-2 py-1.5 text-[11px] text-muted-foreground">
@@ -3752,9 +3787,9 @@ function MediaModelsBlock({
                   {t("settings.modelConfig.mediaModels.officialOnly")}
                 </div>
               ) : (
-                <Input
+                <UpstreamModelField
                   value={entry?.upstreamModel ?? ""}
-                  onChange={(event) =>
+                  onChange={(modelValue) =>
                     setLocalMediaModels((prev) => ({
                       ...prev,
                       [row.model]: {
@@ -3763,18 +3798,23 @@ function MediaModelsBlock({
                           prev[row.model]?.provider ??
                           capableProviders[0] ??
                           "ali",
-                        upstreamModel: event.target.value,
+                        upstreamModel: modelValue,
                       },
                     }))
                   }
+                  provider={value || undefined}
+                  upstreamKey={
+                    value ? providerChannels[value]?.upstreamKey : undefined
+                  }
+                  baseUrl={value ? providerChannels[value]?.baseUrl : undefined}
                   placeholder={t(
                     "settings.modelConfig.mediaModels.upstreamModelPlaceholder",
                     {
                       model: row.model,
                     },
                   )}
-                  className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
                   disabled={capableProviders.length === 0}
+                  inputClassName="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
                 />
               )}
               <div className="flex items-center justify-end gap-1">
@@ -3932,6 +3972,10 @@ function LocalMediaModelEditor({
   );
   const [provider, setProvider] = useState<FeatureModelProvider>(
     entry?.provider ?? initialProviders[0] ?? "",
+  );
+  const providerChannel = useSettingsStore(
+    (s) =>
+      provider ? s.featureModelConfig.providerChannels[provider] : undefined,
   );
   const [upstreamModel, setUpstreamModel] = useState(
     entry?.upstreamModel ?? originalModel ?? "",
@@ -4132,12 +4176,18 @@ function LocalMediaModelEditor({
             </SelectContent>
           </Select>
         </div>
-        <div className="col-span-2">
-          <FieldRow
-            label={t("settings.modelConfig.mediaModels.colUpstreamModel")}
+        <div className="col-span-2 grid grid-cols-[120px_1fr] items-center gap-3">
+          <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
+            {t("settings.modelConfig.mediaModels.colUpstreamModel")}
+          </Label>
+          <UpstreamModelField
             value={upstreamModel}
             onChange={setUpstreamModel}
+            provider={provider || undefined}
+            upstreamKey={providerChannel?.upstreamKey}
+            baseUrl={providerChannel?.baseUrl}
             placeholder={model || "upstream-model-name"}
+            inputClassName="h-8"
           />
         </div>
         <div className="grid grid-cols-[120px_1fr] items-center gap-3">
@@ -4595,6 +4645,14 @@ function ProviderChannelsBlock({
       savedProviderChannels.map((channel) => [channel.provider, channel]),
     );
   }, [savedProviderChannels]);
+  // 已配置但不在类型清单里的渠道 = 用户自定义渠道（可多个 OpenAI 兼容中转等）。
+  const customProviders = useMemo(
+    () =>
+      configuredProviders.filter(
+        (provider) => !channelTypeByProvider.has(provider),
+      ),
+    [channelTypeByProvider, configuredProviders],
+  );
   const addProvider = (provider: FeatureModelProvider) => {
     if (providerChannels[provider]) return;
     const channelType = channelTypeByProvider.get(provider);
@@ -4622,7 +4680,7 @@ function ProviderChannelsBlock({
         type:
           channelTypeByProvider.get(provider)?.type ||
           savedChannelByProvider.get(provider)?.type ||
-          customProviderChannelType(provider),
+          (customProviderChannelType(provider) ?? 1),
         upstreamKey:
           (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
         baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
@@ -4835,6 +4893,7 @@ function ProviderChannelsBlock({
         onOpenChange={setChannelCatalogOpen}
         channelTypes={visibleChannelTypes}
         configuredProviders={configuredProviderSet}
+        customProviders={customProviders}
         loading={channelTypesLoading}
         loadError={channelTypesLoadFailed}
         onRetry={onRetryChannelTypes}
@@ -4899,6 +4958,7 @@ function ChannelCapabilitiesDialog({
   onOpenChange,
   channelTypes,
   configuredProviders,
+  customProviders,
   loading,
   loadError,
   onRetry,
@@ -4910,6 +4970,7 @@ function ChannelCapabilitiesDialog({
   onOpenChange: (open: boolean) => void;
   channelTypes: readonly NewApiChannelType[];
   configuredProviders: ReadonlySet<string>;
+  customProviders: readonly FeatureModelProvider[];
   loading: boolean;
   loadError: boolean;
   onRetry: () => void;
@@ -4919,9 +4980,32 @@ function ChannelCapabilitiesDialog({
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [customName, setCustomName] = useState("");
   const [capability, setCapability] = useState<ChannelCapability | "all">(
     "all",
   );
+  // 自定义渠道名：小写英文/数字/中划线/下划线/中文，与后端 provider 归一化(lower)对齐。
+  const CUSTOM_PROVIDER_NAME_PATTERN = /^[\w一-鿿-]+$/;
+  const handleAddCustom = () => {
+    const name = customName.trim().toLocaleLowerCase();
+    if (!name) return;
+    if (!CUSTOM_PROVIDER_NAME_PATTERN.test(name)) {
+      toast.error(
+        t("settings.modelConfig.featureModels.customChannelInvalid"),
+      );
+      return;
+    }
+    if (configuredProviders.has(name) || channelTypes.some((item) => item.provider === name)) {
+      toast.error(
+        t("settings.modelConfig.featureModels.customChannelExists", {
+          provider: name,
+        }),
+      );
+      return;
+    }
+    onAdd(name);
+    setCustomName("");
+  };
   const filteredChannelTypes = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return channelTypes.filter((item) => {
@@ -5127,6 +5211,76 @@ function ChannelCapabilitiesDialog({
                   {t("settings.modelConfig.featureModels.noMatchingChannels")}
                 </p>
               )}
+              <div className="border-t border-border px-5 py-4">
+                <h5 className="text-[11px] font-medium text-muted-foreground">
+                  {t("settings.modelConfig.featureModels.customChannelSection")}
+                </h5>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    value={customName}
+                    onChange={(event) => setCustomName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") handleAddCustom();
+                    }}
+                    aria-label={t(
+                      "settings.modelConfig.featureModels.customChannelNamePlaceholder",
+                    )}
+                    placeholder={t(
+                      "settings.modelConfig.featureModels.customChannelNamePlaceholder",
+                    )}
+                    className="h-8 max-w-xs"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleAddCustom}
+                  >
+                    <Plus className="size-3.5" />
+                    {t("settings.modelConfig.featureModels.customChannelAdd")}
+                  </Button>
+                </div>
+                {customProviders.length > 0 ? (
+                  <div className="mt-3 space-y-1.5">
+                    {customProviders.map((provider) => (
+                      <div
+                        key={provider}
+                        className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-foreground">
+                            {featureProviderLabel(provider)}
+                          </p>
+                          {!CUSTOM_PROVIDER_CHANNEL_TYPES[provider] ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              {t(
+                                "settings.modelConfig.featureModels.customChannelTypeLabel",
+                              )}
+                            </span>
+                          ) : null}
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => onRemove(provider)}
+                          disabled={removingProvider !== null}
+                        >
+                          {removingProvider === provider ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-3.5" />
+                          )}
+                          {t(
+                            "settings.modelConfig.featureModels.removeChannelShort",
+                          )}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           )}
         </div>
@@ -5897,14 +6051,23 @@ function FeatureModelCapabilitySection({
             ))}
           </SelectContent>
         </Select>
-        <Input
+        <UpstreamModelField
           value={bulkModel}
-          onChange={(event) => setBulkModel(event.target.value)}
+          onChange={setBulkModel}
+          provider={bulkProvider || undefined}
+          upstreamKey={
+            bulkProvider
+              ? providerChannels[bulkProvider]?.upstreamKey
+              : undefined
+          }
+          baseUrl={
+            bulkProvider ? providerChannels[bulkProvider]?.baseUrl : undefined
+          }
           placeholder={t(
             "settings.modelConfig.featureModels.bulkModelPlaceholder",
           )}
-          className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
           disabled={capableProviders.length === 0}
+          inputClassName="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
         />
         <Button
           type="button"
@@ -6009,6 +6172,91 @@ function FeatureModelGroupBlock({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// 上游模型名输入 + 一键拉取上游模型列表：datalist 原生下拉，既能手输也能选。
+function UpstreamModelField({
+  value,
+  onChange,
+  provider,
+  upstreamKey,
+  baseUrl,
+  placeholder,
+  disabled,
+  inputClassName,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  provider: string | undefined;
+  upstreamKey?: string;
+  baseUrl?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  inputClassName?: string;
+}) {
+  const { t } = useTranslation();
+  const fetchModels = useFetchProviderModels();
+  const [models, setModels] = useState<string[]>([]);
+  const listId = useId();
+  const handleFetch = async () => {
+    if (!provider) return;
+    try {
+      const res = await fetchModels.mutateAsync({
+        provider,
+        upstreamKey,
+        baseUrl,
+      });
+      if (res.ok !== true) {
+        toast.error(
+          getResponseErrorMessage(
+            res,
+            t("settings.modelConfig.requestFailed"),
+          ),
+        );
+        return;
+      }
+      setModels(res.data.models);
+      if (res.data.models.length === 0) {
+        toast.info(
+          t("settings.modelConfig.featureModels.fetchModelsEmpty"),
+        );
+      }
+    } catch {
+      toast.error(t("settings.modelConfig.requestFailed"));
+    }
+  };
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <Input
+        list={listId}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={inputClassName}
+        disabled={disabled}
+      />
+      <datalist id={listId}>
+        {models.map((model) => (
+          <option key={model} value={model} />
+        ))}
+      </datalist>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="shrink-0"
+        onClick={() => void handleFetch()}
+        disabled={fetchModels.isPending || disabled || !provider}
+        title={t("settings.modelConfig.featureModels.fetchModels")}
+      >
+        {fetchModels.isPending ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          t("settings.modelConfig.featureModels.fetchModels")
+        )}
+      </Button>
     </div>
   );
 }
@@ -6150,19 +6398,22 @@ function FeatureModelRow({
         </SelectContent>
       </Select>
       <div className="flex items-center gap-2">
-        <Input
+        <UpstreamModelField
           value={model}
-          onChange={(e) =>
+          onChange={(value) =>
             updateFeatureModel(featureId, {
               provider: provider ?? fallbackProvider,
-              model: e.target.value,
+              model: value,
             })
           }
+          provider={provider}
+          upstreamKey={providerChannels[provider]?.upstreamKey}
+          baseUrl={providerChannels[provider]?.baseUrl}
           placeholder={t(
             "settings.modelConfig.featureModels.upstreamModelPlaceholder",
           )}
-          className="h-9 flex-1 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
           disabled={capableProviders.length === 0}
+          inputClassName="h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
         />
         <Button
           type="button"

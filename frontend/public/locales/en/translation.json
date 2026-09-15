@@ -5468,7 +5468,13 @@
       "confirmBar": {
         "close": "Close",
         "submit": "Generate",
-        "cost": "Compute cost"
+        "cost": "Compute cost",
+        "modelLabel": "Model",
+        "sizeLabel": "Size",
+        "qualityLabel": "Quality",
+        "aspectLabel": "Aspect",
+        "aspectFollowSource": "Follow source",
+        "aspectNote": "The output aspect ratio of a grid template is fixed by the template itself (follow source, or a fixed value such as 3:2 for three-view) and cannot be changed."
       }
     },
     "video": {
@@ -7105,6 +7111,14 @@
         "channelUnavailable": "Unavailable",
         "noCapabilityData": "No capability data",
         "noMatchingChannels": "No matching channels.",
+        "customChannelSection": "Custom Channels",
+        "customChannelNamePlaceholder": "Channel name (letters / digits / Chinese)",
+        "customChannelAdd": "Add Custom Channel",
+        "customChannelTypeLabel": "OpenAI-compatible",
+        "customChannelExists": "Channel name \"{{provider}}\" already exists.",
+        "customChannelInvalid": "Channel name only supports letters, digits, hyphen, underscore or Chinese.",
+        "fetchModels": "Fetch Models",
+        "fetchModelsEmpty": "Upstream returned no models. Check the channel key and base URL.",
         "channelTypesLoading": "Loading provider channels…",
         "channelTypesLoadFailed": "Failed to load provider channels. Check that RelayClaw CE is running, then try again.",
         "retryChannelTypes": "Reload",
@@ -7234,7 +7248,11 @@
       },
       "mediaModels": {
         "title": "Image / Video / Audio Generation Models",
-        "description": "Models come from the current custom local configuration. Add image or video models and configure the capabilities shown in XiaHua.",
+        "description": "Models configured here appear in the canvas generation nodes' model pickers: image models → image generation / edit nodes, video models → the video generation node. The internal model ID on the left is the name shown in the canvas; the upstream model name must match the selected provider channel's real model (use \"Fetch Models\" to pull it from upstream). Text / vision feature models are configured in the feature model mapping above.",
+        "usageImage": "Image models appear in: the canvas image generation / edit node's model picker, and model selection for image features such as prop reference images.",
+        "usageVideo": "Video models appear in: the canvas video generation node's model picker, and model selection for beat video generation in episode production.",
+        "usageAudio": "Audio models are used for model selection in audio generation features.",
+        "usageNote": "Default models for episode sketches / scene reference images (LingShan-G2 / LingShan-NB-2) are set by backend environment variables, not here; they also appear in the canvas model pickers.",
         "addModel": "Add model",
         "addModelTitle": "Add media model",
         "editModelTitle": "Edit media model",

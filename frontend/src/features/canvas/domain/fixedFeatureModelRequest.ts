@@ -55,15 +55,29 @@ export interface FixedFeatureModelRequest {
 const PREFERRED_SIZE = '2K';
 const PREFERRED_QUALITY = 'medium';
 
+/**
+ * 用户在面板上显式选择的档位；缺省时回落到 PREFERRED_*。
+ * 传入的值仍会经 `pickAllowedOption` 收敛到模型实际支持的档位里。
+ */
+export interface FixedFeaturePreferredOptions {
+  size?: string;
+  quality?: string;
+}
+
 export function resolveFixedFeatureModelRequest(
   model: FixedFeatureModel | null | undefined,
   extraBillingParams: Record<string, unknown> = {},
+  preferred: FixedFeaturePreferredOptions = {},
 ): FixedFeatureModelRequest {
-  const imageSize = pickAllowedOption(PREFERRED_SIZE, resolveModelSizeOptions(model));
+  const sizeOptions = resolveModelSizeOptions(model);
   const qualityOptions = resolveModelQualityOptions(model);
+  const imageSize = pickAllowedOption(
+    preferred.size ?? PREFERRED_SIZE,
+    sizeOptions,
+  );
   const quality =
     qualityOptions.length > 0
-      ? pickAllowedOption(PREFERRED_QUALITY, qualityOptions)
+      ? pickAllowedOption(preferred.quality ?? PREFERRED_QUALITY, qualityOptions)
       : undefined;
   const apiModel = String(model?.apiModel ?? '').trim();
   const catalogId = String(model?.catalogId ?? '').trim();
