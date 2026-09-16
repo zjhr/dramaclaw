@@ -4984,8 +4984,9 @@ function ChannelCapabilitiesDialog({
   const [capability, setCapability] = useState<ChannelCapability | "all">(
     "all",
   );
-  // 自定义渠道名：小写英文/数字/中划线/下划线/中文，与后端 provider 归一化(lower)对齐。
-  const CUSTOM_PROVIDER_NAME_PATTERN = /^[\w一-鿿-]+$/;
+  // 自定义渠道名：与 store 的 normalizeFeatureModelProvider 对齐（仅小写
+  // 英文/数字/中划线/下划线）。中文等字符会被归一化替换成默认渠道名。
+  const CUSTOM_PROVIDER_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
   const handleAddCustom = () => {
     const name = customName.trim().toLocaleLowerCase();
     if (!name) return;
