@@ -7867,14 +7867,7 @@ async def _require_scoped_media_model(
     if catalog is None:
         return None
     clean_requested = str(requested or "").strip()
-    entry = next(
-        (
-            item
-            for item in catalog
-            if clean_requested in _catalog_entry_identifiers(item)
-        ),
-        None,
-    )
+    entry = _find_catalog_entry(catalog, clean_requested)
     if entry is None:
         raise _media_model_unavailable(media_type, catalog)
     return entry
@@ -7920,20 +7913,51 @@ def _merge_media_model_catalog_defaults(
 
 
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
-    """Return new and legacy identifiers accepted at the API boundary."""
+    """Return the entry's own identity keys (catalogId/id/apiModel/aliases)."""
     identifiers = {
         str(entry.get("catalogId") or ""),
         str(entry.get("catalog_id") or ""),
         str(entry.get("id") or ""),
         str(entry.get("apiModel") or ""),
         str(entry.get("api_model") or ""),
-        str(entry.get("gatewayModel") or ""),
-        str(entry.get("gateway_model") or ""),
     }
     aliases = entry.get("aliases")
     if isinstance(aliases, list):
         identifiers.update(str(alias) for alias in aliases)
     return {identifier for identifier in identifiers if identifier}
+
+
+def _catalog_entry_gateway_keys(entry: dict[str, Any]) -> set[str]:
+    """Gateway-facing model names for an entry.
+
+    In custom-gateway mode every catalog entry shares the same gatewayModel
+    (the user's single upstream mapping), so these keys are ambiguous and may
+    only be matched after identity keys miss — see _find_catalog_entry."""
+    keys = {
+        str(entry.get("gatewayModel") or ""),
+        str(entry.get("gateway_model") or ""),
+    }
+    return {key for key in keys if key}
+
+
+def _find_catalog_entry(
+    catalog: list[dict[str, Any]] | None, requested: str
+) -> dict[str, Any] | None:
+    """Match a requested model name against a media model catalog.
+
+    Identity keys win first: requesting the gateway model name (e.g. the
+    user-configured upstream) must resolve to the entry that owns that name,
+    not to whichever earlier entry happens to carry it as its gatewayModel."""
+    text = str(requested or "").strip()
+    if not text or not catalog:
+        return None
+    for entry in catalog:
+        if text in _catalog_entry_identifiers(entry):
+            return entry
+    for entry in catalog:
+        if text in _catalog_entry_gateway_keys(entry):
+            return entry
+    return None
 
 
 def _catalog_entry_id(entry: dict[str, Any] | None) -> str:
@@ -7968,7 +7992,9 @@ def _catalog_image_execution_selection(
         raise HTTPException(400, "model provider does not match configured media model")
 
     clean_model = str(requested_model or "").strip()
-    if clean_model and clean_model not in _catalog_entry_identifiers(entry):
+    if clean_model and clean_model not in (
+        _catalog_entry_identifiers(entry) | _catalog_entry_gateway_keys(entry)
+    ):
         raise HTTPException(400, "model does not match configured media model")
     return provider, model
 
@@ -7990,14 +8016,7 @@ async def _resolve_catalog_request(
         if requester_user_id is not None
         else await _ee_media_model_catalog(media_type)
     )
-    entry = next(
-        (
-            item
-            for item in catalog or []
-            if requested in _catalog_entry_identifiers(item)
-        ),
-        None,
-    )
+    entry = _find_catalog_entry(catalog, requested)
     if entry is None:
         # In EE the catalog is authoritative. Never fall back to CE's static
         # model map when no enabled model matches the submitted identifier.
@@ -8206,9 +8225,9 @@ async def _resolve_catalog_video_backend(
             if requester_user_id is not None
             else await _ee_media_model_catalog("video")
         )
-        for entry in catalog or []:
-            if requested in _catalog_entry_identifiers(entry):
-                return str(entry.get("apiModel") or requested)
+        entry = _find_catalog_entry(catalog, requested)
+        if entry is not None:
+            return str(entry.get("apiModel") or requested)
     return resolve_freezone_video_backend(model)
 
 
