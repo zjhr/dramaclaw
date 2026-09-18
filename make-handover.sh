@@ -233,10 +233,10 @@ settings.db / one-api.db / 画布 JSON 会被 macOS 版本替换，**Windows 端
 
 1. **\`.env\` 新增变量**：新功能若引入新环境变量，本机旧 \`.env\` 里没有。先比对：
    \`\`\`powershell
-   # 列出新包 env 里有、而本机 .env 里没有的键
-   $new = (Get-Content <新包>\\data\\env) -replace '=.*$' | Where-Object { $_ -match '^[A-Z_]+$' }
-   $old = (Get-Content .env)          -replace '=.*$' | Where-Object { $_ -match '^[A-Z_]+$' }
-   Compare-Object $old $new | Where-Object SideIndicator -eq '=>'
+   # 列出新包 env 里有、而本机 .env 里没有的键（heredoc 里 \$ 是转义，此处为字面 PowerShell 变量）
+   \$new = (Get-Content <新包>\\data\\env) -replace '=.*\$' | Where-Object { \$_ -match '^[A-Z_]+\$' }
+   \$old = (Get-Content .env)             -replace '=.*\$' | Where-Object { \$_ -match '^[A-Z_]+\$' }
+   Compare-Object \$old \$new | Where-Object SideIndicator -eq '=>'
    \`\`\`
    有输出就把对应行补进 \`.env\`，重启 API 生效。
 2. **网关新增渠道**：macOS 端新配的渠道（channels + abilities 表）**不会**同步，
