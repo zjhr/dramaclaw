@@ -28,6 +28,22 @@ if [ -n "$(cd "$GATEWAY" && git status --short -- relay service)" ]; then
   echo "⚠ 网关 relay/service 有未提交改动，exe 将包含它们（提交后更可追溯）"
 fi
 
+# 主仓库有未推送提交时警告：Windows 端靠 git clone 拿代码，未推送 = 效果不一致
+UNPUSHED="$(cd "$REPO" && git log origin/main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$UNPUSHED" -gt 0 ]; then
+  echo "✗ 主仓库有 ${UNPUSHED} 个未推送提交，Windows 端 git clone 拿不到，效果必然不一致！"
+  (cd "$REPO" && git log origin/main..HEAD --oneline | sed 's/^/    /')
+  echo "  → 请先 cd $REPO && git push origin main 再重新生成交接包"
+  exit 1
+fi
+
+# 已跟踪文件有未提交改动时提醒（Windows 端 clone 同样拿不到，如 start.ps1 本身）
+DIRTY="$(cd "$REPO" && git status --short --untracked-files=no | wc -l | tr -d ' ')"
+if [ "$DIRTY" -gt 0 ]; then
+  echo "⚠ 主仓库有 ${DIRTY} 个已跟踪文件未提交，Windows 端 clone 拿不到："
+  (cd "$REPO" && git status --short --untracked-files=no | sed 's/^/    /')
+fi
+
 # ---------- 1. 交叉编译 Windows 网关 ----------
 echo "▸ 编译 Windows amd64 网关..."
 (cd "$GATEWAY" && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
@@ -51,6 +67,20 @@ done
 echo "▸ 拷贝生成产物 output/..."
 cp -R "$REPO/output" "$STAGE/data/output"
 
+# 任务信封签名密钥环（state/ 直属文件，不在 state/local/ 下，漏了签名校验会失败）
+[ -f "$REPO/state/task_envelope_keyring.json" ] \
+  && cp "$REPO/state/task_envelope_keyring.json" "$STAGE/data/state-keyring.json"
+
+# 前端本地状态（settings.db + 密钥环，在 .gitignore 里，不入库）
+[ -d "$REPO/frontend/state" ] && cp -R "$REPO/frontend/state" "$STAGE/data/frontend-state"
+
+# 风格图墙素材（225 张图，不在 git 也不在客户端里，前端 public 目录）
+[ -d "$REPO/frontend/public/style-gallery" ] \
+  && cp -R "$REPO/frontend/public/style-gallery" "$STAGE/data/style-gallery"
+
+# 运行时目录（agent_test 等，多为空骨架，带上保持结构一致）
+[ -d "$REPO/runtime" ] && cp -R "$REPO/runtime" "$STAGE/data/runtime"
+
 echo "▸ 拷贝 .env（含敏感 Key，注意传输安全）..."
 cp "$REPO/.env" "$STAGE/data/env"
 
@@ -58,6 +88,13 @@ cp "$REPO/.env" "$STAGE/data/env"
 DC_COMMIT="$(cd "$REPO" && git rev-parse --short HEAD)"
 GW_COMMIT="$(cd "$GATEWAY" && git rev-parse --short HEAD)"
 STAMP="$(date '+%Y-%m-%d %H:%M')"
+
+# 网关未提交改动数（exe 会带上它们，但 git 里没有 → 将来重编译会丢）
+GW_DIRTY="$(cd "$GATEWAY" && git status --short | wc -l | tr -d ' ')"
+GW_DIRTY_NOTE=""
+if [ "$GW_DIRTY" -gt 0 ]; then
+  GW_DIRTY_NOTE="⚠ 注意：本包的 newapi.exe 交叉编译自 macOS 端网关工作区，除 public-proxy 补丁外还包含 ${GW_DIRTY} 个未提交改动（DeepSeek 视觉能力、Agnes 时长/画幅字段映射、elevenlabs/senseaudio 渠道适配器等）。这些改动尚未进入 git——Windows 端若重编译网关会全部丢失，需要时请回 macOS 端提交推送后再编译。"
+fi
 
 # ---------- 4. 交接文档 ----------
 echo "▸ 生成 HANDOVER.md..."
@@ -72,12 +109,20 @@ cat > "$STAGE/HANDOVER.md" <<EOF
 ## 0. 本交接包内容
 
 \`\`\`
-newapi.exe            Windows amd64 网关二进制（含 public-proxy 补丁，Go 交叉编译）
-data/one-api.db       网关 SQLite 库（渠道/上游 Key/额度/账号）
-data/env              DramaClaw 的 .env 模板（原样拷自 macOS 环境）
-data/state-local/     DramaClaw API 的本地状态（settings.db / projects.db / 项目数据）
-data/output/          生成产物（画布图片/视频等）
+newapi.exe                    Windows amd64 网关二进制（含 public-proxy 补丁，Go 交叉编译）
+data/one-api.db               网关 SQLite 库（渠道/上游 Key/额度/账号）
+data/env                      DramaClaw 的 .env 模板（原样拷自 macOS 环境）
+data/state-local/             DramaClaw API 的本地状态（settings.db / projects.db / 项目数据）
+data/state-keyring.json       任务信封签名密钥环 → 还原为 state/task_envelope_keyring.json
+data/output/                  生成产物（画布图片/视频等）
+data/frontend-state/          前端本地状态 → 还原为 frontend/state/（settings.db + 密钥环）
+data/style-gallery/           风格图墙素材 225 张 → 还原为 frontend/public/style-gallery/
+data/runtime/                 运行时目录 → 还原为 runtime/
 \`\`\`
+
+> 这份包的目标是**和 macOS 端当前状态逐字节一致**：凡是不在 git 里的本地数据
+> （.gitignore 覆盖的 .env / state / runtime / output / frontend/state / style-gallery），
+> 全部都在包内，按第 3 节还原即可。
 
 注意：\`data/\` 里含**上游 API Key 等敏感信息**，仅在可信设备间传输使用。
 
@@ -98,12 +143,16 @@ data/output/          生成产物（画布图片/视频等）
 （HMAC 签名 24h 有效免鉴权）。**若日后从上游 \`dramaclaw/dramaclaw-gateway\` 同步代码，
 冲突时必须保住 \`relay/relay_task.go\` 和 \`service/task_polling.go\` 里的 \`BuildPublicProxyURL\` 四处。**
 
+${GW_DIRTY_NOTE}
+
 ## 2. 前置安装（Windows）
 
 1. **uv**（Python 管理）：\`winget install astral-sh.uv\` 或官网安装器
 2. **Node.js + pnpm**：装 Node 20+，然后 \`npm i -g pnpm\`（前端 dev 需要）
 3. **不需要 Go**——网关二进制已随包提供（\`newapi.exe\`）
 4. git
+5. **磁盘空间**：\`uv sync --extra world\` 会拉 torch 等大包（数 GB），首次较慢；
+   这段由 \`start.ps1\` 自动执行，无需手动。若 Windows 端不跑 3D 导演台可自行跳过。
 
 ## 3. 部署步骤（极简版：只 clone 主仓库）
 
@@ -114,23 +163,30 @@ data/output/          生成产物（画布图片/视频等）
 # 1. clone 主仓库
 cd C:\\Users\\<你>\\ai
 git clone https://github.com/zjhr/dramaclaw.git
+cd dramaclaw
+git log --oneline -1        # 应为本包生成时的提交号，见文档开头
 
 # 2. 建网关目录（不 clone），放入交接包里的两样东西
 mkdir dramaclaw-gateway
 copy <交接包>\\newapi.exe            dramaclaw-gateway\\newapi.exe
 copy <交接包>\\data\\one-api.db       dramaclaw-gateway\\one-api.db
 
-# 3. 放数据（本交接包的 data/）
-copy <交接包>\\data\\env              dramaclaw\\.env
-# state-local 整个目录内容放入 dramaclaw\\state\\local\\
-# output 整个目录放入 dramaclaw\\output\\
+# 3. 还原数据（本交接包的 data/）——逐项对应，缺一项效果就不一致
+copy <交接包>\\data\\env                   dramaclaw\\.env
+copy <交接包>\\data\\state-keyring.json    dramaclaw\\state\\task_envelope_keyring.json
+# 以下目录整份递归覆盖（xcopy /E /I 会自动建目标目录）
+xcopy /E /I /Y <交接包>\\data\\state-local     dramaclaw\\state\\local
+xcopy /E /I /Y <交接包>\\data\\output          dramaclaw\\output
+xcopy /E /I /Y <交接包>\\data\\frontend-state  dramaclaw\\frontend\\state
+xcopy /E /I /Y <交接包>\\data\\style-gallery   dramaclaw\\frontend\\public\\style-gallery
+xcopy /E /I /Y <交接包>\\data\\runtime         dramaclaw\\runtime
 
 # 4. 修改 .env（唯一必改项）
 # 找到 NEWAPI_SQLITE_PATH，改为 Windows 实际路径，例如：
 #   NEWAPI_SQLITE_PATH=C:/Users/<你>/ai/dramaclaw-gateway/one-api.db
 # （原值是 macOS 绝对路径 /Users/mac/...，不改则"供应商渠道管理"弹窗会 502 空白）
 
-# 5. 一键启动（首次会自动 uv sync + pnpm install）
+# 5. 一键启动（首次自动: uv sync --extra world + pnpm install + 装 splat-transform）
 cd dramaclaw
 .\\start.ps1
 \`\`\`
@@ -163,6 +219,9 @@ cd dramaclaw
 1. **yyds 上游 images/edits 间歇性故障**：同请求时成时败（502 "Please retry later"），
    属中转站侧问题。曾配过自动重试容灾，主人明确要求撤除（"不是根源问题"）。失败让用户手动重试。
 2. 画布模型清单里的 \`seedance-*\` / \`LingShan-NB-Pro\` 是官方目录模型，自定义渠道模式下不可选。
+3. **3D 导演台在 Windows 上可能装不上**：world extra 依赖 \`sharp\`（apple/ml-sharp 源码构建）
+   与 \`gsplat\`（CUDA 扩展），Windows 侧 wheel 匹配不保证。\`start.ps1\` 已做降级——
+   装失败会退回基础依赖并提示，**不影响其余全部功能**。macOS 端（Metal/MPS）是验证过可用的。
 
 ## 6. 验证清单（部署完成后逐项过）
 
@@ -188,6 +247,17 @@ curl http://127.0.0.1:8780/api/v1/model-gateway/custom/newapi/channel-types
 # 5. 视频验证（验证 public-proxy 补丁在 exe 里生效）
 #    - 画布视频节点生成（agnes-video-2.5-flash），完成后能正常播放
 #    - 若下载 401，说明 exe 不是带补丁的版本
+
+# 6. 风格图墙 / 提示词画廊（验证 style-gallery 数据就位）
+#    - 打开提示词画廊（风格图墙）应能看到 225 张风格图，不是空白/裂图
+
+# 7. 3D 导演台（验证 --extra world 装好了）
+#    在仓库根跑下面这条，两个都应为 True：
+#      uv run python -c "from novelvideo.director_world import pano_sharp; print(pano_sharp.sharp_available(), pano_sharp.da2_available())"
+#    - False 说明 world extra 没装上：重跑 uv sync --extra world
+#    - 另需 splat-transform 在 PATH：Get-Command splat-transform
+#    - 首次做全景世界会在首次推理时下载模型权重（Apple CDN + HuggingFace），属正常
+#    - Windows 上 gsplat/torch 的 wheel 匹配不保证（见第 5 节已知问题 3）
 \`\`\`
 
 ## 7. 常见坑速查

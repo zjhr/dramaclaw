@@ -29,13 +29,33 @@ function Wait-Up([string]$Url, [string]$Name, [string]$LogFile) {
 
 function Start-All {
     # 首次初始化：缺啥补啥，已装过则跳过
+    # --extra world 是 3D 导演台/全景世界的硬依赖（pano_sharp.py 的 sharp_available/da2_available），
+    # 缺了会抛 SHARP_3D_UNAVAILABLE。其中 gsplat/torch 需匹配的 wheel，Windows 上不保证装得上，
+    # 因此失败时降级为普通 uv sync —— 3D 导演台不可用，但其余功能照常，不能因可选依赖拖垮全局。
     if (-not (Test-Path (Join-Path $Repo ".venv"))) {
-        Write-Host "首次运行: uv sync 安装依赖..."
-        Start-Process -FilePath "uv" -ArgumentList "sync" -WorkingDirectory $Repo -Wait -NoNewWindow
+        Write-Host "首次运行: uv sync --extra world 安装依赖（含 3D 世界推理，耗时较长）..."
+        $worldOk = $false
+        try {
+            # 注意: Start-Process -Wait 不设置 $LASTEXITCODE，必须用 -PassThru 读 ExitCode
+            $p = Start-Process -FilePath "uv" -ArgumentList "sync", "--extra", "world" `
+                -WorkingDirectory $Repo -Wait -NoNewWindow -PassThru -ErrorAction Stop
+            $worldOk = ($p.ExitCode -eq 0)
+        } catch { $worldOk = $false }
+        if (-not $worldOk) {
+            Write-Host "⚠ world extra 安装失败（3D 导演台将不可用），退回基础依赖..."
+            Start-Process -FilePath "uv" -ArgumentList "sync" -WorkingDirectory $Repo -Wait -NoNewWindow
+        }
     }
     if (-not (Test-Path (Join-Path $Repo "frontend\node_modules"))) {
         Write-Host "首次运行: pnpm install 安装前端依赖..."
         Start-Process -FilePath "pnpm" -ArgumentList "install" -WorkingDirectory (Join-Path $Repo "frontend") -Wait -NoNewWindow
+    }
+    # 3D 世界的 splat 转换工具（全局 npm 包），已装则跳过；失败同样不阻断启动
+    if (-not (Get-Command splat-transform -ErrorAction SilentlyContinue)) {
+        Write-Host "首次运行: npm i -g @playcanvas/splat-transform..."
+        try {
+            Start-Process -FilePath "npm" -ArgumentList "i", "-g", "@playcanvas/splat-transform" -Wait -NoNewWindow -ErrorAction Stop
+        } catch { Write-Host "⚠ splat-transform 安装失败（3D 世界导出将不可用）" }
     }
     if (-not (Test-Path $Gateway)) { Write-Host "✗ 网关目录不存在: $Gateway (可用环境变量 DRAMACLAW_GATEWAY 指定)"; exit 1 }
 
