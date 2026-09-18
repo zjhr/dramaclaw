@@ -60,8 +60,10 @@ for db in "$REPO"/state/local/*.db; do
   sqlite3 "$db" ".backup '$STAGE/data/state-local/$(basename "$db")'"
 done
 # 项目数据目录（画布/生成索引等非 db 文件）直接拷贝
+# 注意用 ${dir%/} 去掉 glob 带来的尾斜杠 —— cp -R "src/" 是拷*内容*，
+# 会把 agent_test/ 里的 data.db / freezone/ 拍平进 state-local 根，导致项目数据错位
 for dir in "$REPO"/state/local/*/; do
-  [ -d "$dir" ] && cp -R "$dir" "$STAGE/data/state-local/"
+  [ -d "$dir" ] && cp -R "${dir%/}" "$STAGE/data/state-local/"
 done
 
 echo "▸ 拷贝生成产物 output/..."
