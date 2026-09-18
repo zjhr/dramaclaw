@@ -125,6 +125,11 @@ data/runtime/                 运行时目录 → 还原为 runtime/
 > 这份包的目标是**和 macOS 端当前状态逐字节一致**：凡是不在 git 里的本地数据
 > （.gitignore 覆盖的 .env / state / runtime / output / frontend/state / style-gallery），
 > 全部都在包内，按第 3 节还原即可。
+>
+> **两类用途，别走错**：
+> - **首次部署**（目标机器是空的）→ 走 **第 3 节**，全量还原 data/。
+> - **功能更新**（机器已部署过，只是想跟上 macOS 的新代码/新功能）
+>   → 走 **第 3b 节**，只拉代码 + 换 exe，**数据全部保留不动**。
 
 注意：\`data/\` 里含**上游 API Key 等敏感信息**，仅在可信设备间传输使用。
 
@@ -156,7 +161,7 @@ ${GW_DIRTY_NOTE}
 5. **磁盘空间**：\`uv sync --extra world\` 会拉 torch 等大包（数 GB），首次较慢；
    这段由 \`start.ps1\` 自动执行，无需手动。若 Windows 端不跑 3D 导演台可自行跳过。
 
-## 3. 部署步骤（极简版：只 clone 主仓库）
+## 3. 部署步骤（首次部署：目标机器是空的）
 
 主仓库必须 clone（API + 前端源码）；**网关不需要 clone**——\`newapi.exe\` 已带全部补丁，
 建一个普通目录放二进制和库即可（源码留到将来要重编译网关时再 clone）。
@@ -197,6 +202,49 @@ cd dramaclaw
 > 将来若要重编译网关或同步上游（\`dramaclaw/dramaclaw-gateway\`），再 clone 它。
 > 注意：上游合并冲突时必须保住 \`relay/relay_task.go\` / \`service/task_polling.go\` 的
 > \`BuildPublicProxyURL\` 四处（视频下载免鉴权补丁）。
+
+## 3b. 二次迁移：Windows 已部署过，只更新功能
+
+> 适用场景：Windows 上已按第 3 节部署并跑起来过，之后 macOS 端更新了代码/网关，
+> 想同步过去。**原则：数据以 Windows 端为准，全部保留；只更新代码与网关二进制。**
+
+macOS 端重新生成包后，在 Windows 上执行以下步骤（**不要**重复第 3 节的 data/ 还原）：
+
+\`\`\`powershell
+cd dramaclaw
+.\\start.ps1 -Action stop                     # 1. 停服务（避免文件占用与 SQLite 写锁）
+
+git pull origin main                          # 2. 更新代码
+git log --oneline -1                          #    与文档开头的提交号核对
+
+uv sync --extra world                         # 3. 补齐 Python 依赖（幂等，新功能加了依赖必须跑）
+cd frontend; pnpm install; cd ..              # 4. 补齐前端依赖（同上）
+
+copy <新包>\\newapi.exe <网关目录>\\newapi.exe    # 5. 换网关二进制
+
+.\\start.ps1                                  # 6. 重启三件套
+\`\`\`
+
+**明确不要做的**：不要执行第 3 节的 \`data/\` 还原 —— xcopy 是整文件覆盖，
+settings.db / one-api.db / 画布 JSON 会被 macOS 版本替换，**Windows 端积累的数据会全部丢失**；
+也不要覆盖 \`.env\`。
+
+**两个不会被自动同步的项（需手动确认）**：
+
+1. **\`.env\` 新增变量**：新功能若引入新环境变量，本机旧 \`.env\` 里没有。先比对：
+   \`\`\`powershell
+   # 列出新包 env 里有、而本机 .env 里没有的键
+   $new = (Get-Content <新包>\\data\\env) -replace '=.*$' | Where-Object { $_ -match '^[A-Z_]+$' }
+   $old = (Get-Content .env)          -replace '=.*$' | Where-Object { $_ -match '^[A-Z_]+$' }
+   Compare-Object $old $new | Where-Object SideIndicator -eq '=>'
+   \`\`\`
+   有输出就把对应行补进 \`.env\`，重启 API 生效。
+2. **网关新增渠道**：macOS 端新配的渠道（channels + abilities 表）**不会**同步，
+   新功能若依赖新渠道会报 503 "No available channel"。在网关管理台
+   （http://127.0.0.1:18780）手动补，或对照第 4 节渠道布局。
+
+> 为什么不做自动合并：settings.db / one-api.db 是整库文件，覆盖只能单向 ——
+> 两端都写过必然丢一边。渠道这类低频配置手动同步，比引入双向同步机制划算得多。
 
 ## 4. 环境关键状态（迁移后应当保持的事实）
 
