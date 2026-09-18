@@ -3655,6 +3655,89 @@ def test_unknown_style_template_does_not_break_prompt_merge() -> None:
     assert merged == "一个女人站在窗前"
 
 
+def test_remote_style_template_falls_back_to_inline_prompt() -> None:
+    """前端有些风格源是运行时从远端拉的,不在本仓清单里。
+
+    这类请求会把风格的 label / style_prompt 一起带上。若后端仍按「未知 id 静默
+    忽略」处理,用户在图墙上选中风格后什么都不会发生 —— 比报错更难发现。
+    """
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    config = FreezoneImageStyleConfig(
+        template_id="cookbook:crimson-ink-manga-dossier",
+        label="Crimson Ink Manga Dossier",
+        style_prompt="Warm paper white, carbon black, deep blood-crimson accents.",
+    )
+
+    block = freezone_routes._build_style_prompt(config)
+
+    assert block.startswith("风格模板:\n- Crimson Ink Manga Dossier\n- ")
+    assert "deep blood-crimson accents" in block
+
+
+def test_inline_prompt_never_overrides_a_builtin_style() -> None:
+    """内置清单优先于请求正文。
+
+    清单是服务端的,前端可能拿的是旧文本。若让请求正文覆盖,一次前端发版过期就能
+    把更新过的内置提示词顶掉,而且没人会察觉。
+    """
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    config = FreezoneImageStyleConfig(
+        template_id="golden_age",
+        label="伪造的名字",
+        style_prompt="伪造的正文",
+    )
+
+    block = freezone_routes._build_style_prompt(config)
+
+    assert "黄金时代" in block
+    assert "美式复古好莱坞黄金时代风格" in block
+    assert "伪造" not in block
+
+
+def test_inline_fallback_needs_a_nonblank_prompt() -> None:
+    """只有 label 没有正文时仍按未知 id 处理 —— 空正文选不出任何效果。"""
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    for blank in ("", "   ", "\n"):
+        config = FreezoneImageStyleConfig(
+            template_id="cookbook:x",
+            label="有名字没正文",
+            style_prompt=blank,
+        )
+        assert freezone_routes._resolve_freezone_image_style_template(config) is None
+        assert freezone_routes._build_style_prompt(config) == ""
+
+
+def test_inline_fallback_label_defaults_to_template_id() -> None:
+    """请求没带 label 时用 id 顶上,别在提示词里留一个空的风格名。"""
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    config = FreezoneImageStyleConfig(
+        template_id="cookbook:no-label",
+        style_prompt="some style text",
+    )
+
+    block = freezone_routes._build_style_prompt(config)
+
+    assert block.startswith("风格模板:\n- cookbook:no-label\n- some style text")
+
+
+def test_blank_style_template_id_still_short_circuits() -> None:
+    """id 为空就直接返回,不看正文 —— 没有 id 的「风格」不该被拼进提示词。"""
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    config = FreezoneImageStyleConfig(
+        template_id="  ",
+        label="无名",
+        style_prompt="有正文也没用",
+    )
+
+    assert freezone_routes._resolve_freezone_image_style_template(config) is None
+    assert freezone_routes._build_style_prompt(config) == ""
+
+
 def test_style_asset_base_defaults_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("STYLE_GALLERY_ASSET_BASE", raising=False)
 

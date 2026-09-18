@@ -69,6 +69,7 @@ import {
   useSaveMediaModels,
   useSaveProviderChannels,
   useClearComfyUIConfig,
+
   useSaveMediaRelayConfig,
   useSyncProviderChannel,
   type GatewayMode,
@@ -92,6 +93,11 @@ import {
   type MediaModelEntry,
   type MediaStorageProvider,
 } from "@/stores/settingsStore";
+import {
+  isVirtualMediaProvider,
+  VIRTUAL_MEDIA_MODEL_PROVIDERS,
+  withVirtualMediaDefaults,
+} from "@/features/canvas/domain/virtualMediaModels";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -1185,6 +1191,11 @@ const MEDIA_MODEL_ROWS: readonly {
   { model: "happyhorse-1.0", kind: "video" },
   { model: "index-tts-2", kind: "audio" },
   { model: "LingShan-MU-11", kind: "audio" },
+  { model: "eleven-music", kind: "audio" },
+  { model: "eleven-tts", kind: "audio" },
+  // 音效现在也走媒体模型映射：网关侧 ElevenLabs (type 65) 与 SenseAudio
+  // (type 64) 都有音效能力，按各自的上游模型名配置即可。
+  { model: "eleven-sfx", kind: "audio" },
 ];
 
 const MAINLINE_MEDIA_MODEL_IDS = new Set(
@@ -1422,6 +1433,10 @@ const HYBRID_COMFYUI_WORKFLOWS = {
 const CUSTOM_PROVIDER_CHANNEL_TYPES: Readonly<Record<string, number>> = {
   fal_ai: 61,
   comfyui: 63,
+  // SenseAudio：音乐走私有异步任务协议，网关侧有专属适配器（type 64）。
+  senseaudio: 64,
+  // ElevenLabs：xi-api-key 认证 + voice_id 在路径里，网关侧有专属适配器（type 65）。
+  elevenlabs: 65,
 };
 
 function customProviderChannelType(provider: string): number | undefined {
@@ -1513,6 +1528,18 @@ const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
   "LingShan-MU-11": {
     channel: "fal_ai",
     model: "fal-ai/elevenlabs/music",
+    mediaType: "audio",
+  },
+  // 直连 ElevenLabs 官方 API（经虚拟 provider "elevenlabs"，不推给 NewAPI）。
+  // 与上面的 LingShan-MU-11 是**两条并存的路线**：那条经 fal.ai，这两条直达官方。
+  "eleven-music": {
+    channel: "elevenlabs",
+    model: "music_v2_5",
+    mediaType: "audio",
+  },
+  "eleven-tts": {
+    channel: "elevenlabs",
+    model: "eleven_turbo_v2_5",
     mediaType: "audio",
   },
 };
@@ -2484,6 +2511,8 @@ function QuickLocalNewApiSetup({
 
 const FEATURE_PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
+  // 虚拟 provider：不对应 NewAPI 渠道，直连 ElevenLabs 官方 API。
+  elevenlabs: "ElevenLabs",
   midjourney: "Midjourney",
   azure: "Azure",
   ollama: "Ollama",
@@ -3475,10 +3504,12 @@ function MediaModelsBlock({
       ),
     );
     const next = fromBackend;
-    const nextKey = JSON.stringify(next ?? {});
-    setLocalMediaModels((current) =>
-      JSON.stringify(current ?? {}) === nextKey ? current : (next ?? {}),
-    );
+    setLocalMediaModels((current) => {
+      const merged = withVirtualMediaDefaults(next ?? {});
+      return JSON.stringify(current ?? {}) === JSON.stringify(merged)
+        ? current
+        : merged;
+    });
   }, [savedMediaModels, savedMediaModelsKey]);
 
   useEffect(() => {
@@ -3523,7 +3554,14 @@ function MediaModelsBlock({
     for (const row of mediaModelRows) {
       if (row.officialOnly) continue;
       const entry = mediaModels[row.model];
-      if (entry?.provider && configuredProviders.includes(entry.provider)) {
+      // 虚拟 provider 不对应 NewAPI 渠道，因此不在 configuredProviders 里；
+      // 只对映射表里登记过虚拟 provider 的模型放行。
+      const isVirtualProvider =
+        VIRTUAL_MEDIA_MODEL_PROVIDERS[row.model] === entry?.provider;
+      if (
+        entry?.provider &&
+        (configuredProviders.includes(entry.provider) || isVirtualProvider)
+      ) {
         next[row.model] = {
           provider: entry.provider,
           upstreamModel: entry.upstreamModel.trim(),
@@ -3553,6 +3591,8 @@ function MediaModelsBlock({
           .filter(
             (provider) =>
               provider !== "comfyui" &&
+              // 虚拟 provider 的凭据由 ElevenLabs 配置区管理，不走渠道密钥。
+              !isVirtualMediaProvider(provider) &&
               !(providerChannels[provider]?.upstreamKey ?? "").trim() &&
               !savedChannelByProvider.get(provider)?.configured,
           ),
@@ -3715,12 +3755,18 @@ function MediaModelsBlock({
         {mediaModelRows.map((row, index) => {
           const entry = mediaModels[row.model];
           const value = entry?.provider ?? "";
-          const capableProviders = providersSupportingCapability(
+          const baseProviders = providersSupportingCapability(
             configuredProviders,
             channelTypeByProvider,
             row.kind,
             entry?.provider,
           );
+          // 虚拟 provider 不在 configuredProviders 里，只对这几个模型开放，
+          // 避免污染文本/视觉等其他模型下拉。
+          const virtualProvider = VIRTUAL_MEDIA_MODEL_PROVIDERS[row.model];
+          const capableProviders = virtualProvider
+            ? Array.from(new Set([...baseProviders, virtualProvider]))
+            : baseProviders;
           return (
             <div
               key={row.model}

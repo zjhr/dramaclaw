@@ -797,7 +797,7 @@ def _media_model_catalog(
     from novelvideo.media_model_request_schema import normalize_media_model_catalog_config
 
     wanted = str(media_type or "").strip().lower()
-    if wanted not in {"image", "video"}:
+    if wanted not in {"image", "video", "audio"}:
         return []
     result: list[dict[str, Any]] = []
     for model, item in mappings.items():
@@ -808,17 +808,20 @@ def _media_model_catalog(
             continue
         config = item.get("config") if isinstance(item.get("config"), dict) else {}
         config = normalize_media_model_catalog_config(config)
-        config.setdefault(
-            "request",
-            {
-                "endpoint": (
-                    "images/generations" if wanted == "image" else "video/generations"
-                ),
-                "parameters": [],
-            },
-        )
+        if wanted in {"image", "video"}:
+            config.setdefault(
+                "request",
+                {
+                    "endpoint": (
+                        "images/generations" if wanted == "image" else "video/generations"
+                    ),
+                    "parameters": [],
+                },
+            )
         gateway_model = str(item.get("upstreamModel") or model)
-        api_model = model if wanted == "image" else f"newapi_{model}"
+        # audio 用裸模型名：`newapi_` 前缀是图片/视频那条网关路径的约定，
+        # 而音频既可能走网关也可能走 ElevenLabs 直连，前缀会把它带偏。
+        api_model = model if wanted in {"image", "audio"} else f"newapi_{model}"
         aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
         result.append(
             {
@@ -1386,4 +1389,140 @@ def build_media_relay_status(
             if effective.provider == "cloudinary"
             else aliyun_configured
         ),
+    }
+
+
+# --- ElevenLabs 直连 ------------------------------------------------------ #
+#
+# 与 `custom_newapi_api_key` 同一套存法（`runtime_settings` 键值对），同样只在
+# CE 生效——`get_model_gateway_settings()` 在 EE 下返回空，组织的密钥由控制面
+# 统一管。所以读取必须写成「界面优先、环境变量兜底」，两条路都留着：环境变量
+# 是 EE 与容器化部署的唯一来源，不能因为 CE 有界面配置就把它删掉。
+
+
+# ElevenLabs 的 provider 名（渠道管理里的渠道类型 65）。
+#
+# 定义在这一层而不是路由层：`freezone.audio_node` 也要用它做分流，让那层去
+# import `api.routes.*` 是下往上依赖，会成环。
+ELEVENLABS_PROVIDER = "elevenlabs"
+
+
+@dataclass(frozen=True)
+class EffectiveElevenLabsConfig:
+    """ElevenLabs 凭据的最终生效配置。``source`` 记录来源，供界面回显。"""
+
+    api_key: str
+    base_url: str
+    source: str  # "channel" | "settings" | "env" | "none"
+
+    @property
+    def configured(self) -> bool:
+        """key 是否就位。"""
+        return bool(self.api_key)
+
+
+def get_effective_elevenlabs_config() -> EffectiveElevenLabsConfig:
+    """解析 ElevenLabs 凭据：渠道管理 > 界面设置 > 环境变量 > 内置默认。
+
+    **渠道管理是唯一入口**：那把 key 同时供网关转发与项目侧直连使用（音色克隆
+    要上传参考音频、模型列表要走官方接口，网关是无状态转发层接不了），所以它在
+    最前面；界面设置与 ``ELEVENLABS_API_KEY`` 保留为兜底——EE 与容器化部署不写
+    本地 DB，只认环境变量。
+    """
+    from novelvideo import config as _config
+
+    channel = get_newapi_provider_channel(ELEVENLABS_PROVIDER) or {}
+    channel_key = normalize_api_key(str(channel.get("upstreamKey") or ""))
+    settings = get_model_gateway_settings()
+    settings_key = normalize_api_key(settings.get("elevenlabs_api_key", ""))
+    env_key = normalize_api_key(_config.ELEVENLABS_API_KEY)
+
+    if channel_key:
+        api_key, source = channel_key, "channel"
+    elif settings_key:
+        api_key, source = settings_key, "settings"
+    elif env_key:
+        api_key, source = env_key, "env"
+    else:
+        api_key, source = "", "none"
+
+    return EffectiveElevenLabsConfig(
+        api_key=api_key,
+        base_url=(
+            str(channel.get("baseUrl") or "").strip().rstrip("/")
+            or str(settings.get("elevenlabs_base_url", "")).strip().rstrip("/")
+            or str(_config.ELEVENLABS_BASE_URL).strip().rstrip("/")
+        ),
+        source=source,
+    )
+
+
+def save_elevenlabs_config(
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> None:
+    """保存 ElevenLabs 兜底凭据，``None`` 表示该项不动。
+
+    渠道管理是主入口；这里写入的是兜底值，只在渠道未配置时生效。
+
+    空字符串回退到已保存的值（照 `save_newapi_provider_channels` 里
+    ``upstreamKey`` 的口径）：前端提交空 key 的语义是「不改」而不是「清空」，
+    否则一次局部保存就会把已配好的密钥抹掉。
+    """
+    current = get_model_gateway_settings()
+    existing_key = str(current.get("elevenlabs_api_key", "")).strip()
+
+    def _merge_secret(value: str, saved: str) -> str:
+        """空值或全星号掩码值都表示「不改」。
+
+        全星号是脱敏预览被原样贴回来的情形（与 `/media-relay/config` 的
+        ``merge_field`` 同款处理）——存进去等于把密钥换成 ``****``，而且从界面上
+        看不出任何异常，只会一直 401。
+        """
+        normalized = value.strip()
+        if not normalized or set(normalized) == {"*"}:
+            return saved
+        return normalized
+
+    values: dict[str, str] = {}
+    if api_key is not None:
+        values["elevenlabs_api_key"] = _merge_secret(api_key, existing_key)
+    if base_url is not None:
+        values["elevenlabs_base_url"] = base_url.strip().rstrip("/")
+    if values:
+        _write_many(values)
+
+
+def resolve_media_model_route(model: str) -> dict[str, Any]:
+    """把一个媒体模型名解析成它的路由：``{provider, upstreamModel, mediaType}``。
+
+    音频链路原先硬编码 ``LingShan-MU-11``，既用不上这张映射表，也没法在画布上
+    换模型。这个函数是那两者之间的桥：调用方拿到 ``provider`` 就能决定走网关
+    （推给 NewAPI 的 channel）还是走直连（虚拟 provider ``elevenlabs``）。
+
+    查不到时返回空 provider——调用方应当退回原有默认路径，而不是报错：用户没配
+    映射是完全正常的状态。
+    """
+    clean = str(model or "").strip()
+    if not clean:
+        return {}
+    mapping = get_newapi_media_model_mappings().get(clean)
+    if not isinstance(mapping, dict):
+        return {}
+    return {
+        "provider": str(mapping.get("provider") or "").strip().lower(),
+        "upstreamModel": str(mapping.get("upstreamModel") or "").strip(),
+        "mediaType": str(mapping.get("mediaType") or "").strip().lower(),
+    }
+
+
+def build_elevenlabs_status() -> dict[str, Any]:
+    """给界面回显的 ElevenLabs 凭据状态（密钥脱敏）。"""
+    effective = get_effective_elevenlabs_config()
+    return {
+        "source": effective.source,
+        "configured": effective.configured,
+        "baseUrl": effective.base_url,
+        "apiKeyPreview": mask_secret(effective.api_key),
     }

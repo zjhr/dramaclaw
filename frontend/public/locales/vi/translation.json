@@ -5100,6 +5100,48 @@
       "loading": "Đang tải…",
       "empty": "Chưa có mẫu phong cách nào"
     },
+    "promptGallery": {
+      "title": "Thư viện câu lệnh",
+      "chip": "Câu lệnh",
+      "chipTitle": "Chọn một câu lệnh từ thư viện và chèn vào vị trí con trỏ",
+      "search": "Tìm theo tiêu đề, nội dung, mô tả hoặc thẻ",
+      "refresh": "Làm mới",
+      "refreshTitle": "Tải lại toàn bộ nguồn câu lệnh",
+      "sourceLabel": "Nguồn",
+      "allSources": "Tất cả nguồn",
+      "tagLabel": "Thẻ",
+      "moreTags": "Thêm",
+      "resultCount": "{{n}} câu lệnh",
+      "loading": "Đang tải nguồn câu lệnh…",
+      "empty": "Không có câu lệnh nào khớp bộ lọc",
+      "allFailed": "Không kết nối được nguồn câu lệnh nào. Kiểm tra mạng rồi bấm làm mới.",
+      "sourceFailed": "{{n}} nguồn tải thất bại",
+      "offline": "{{n}} nguồn dùng bộ đệm ngoại tuyến — nội dung có thể không mới nhất",
+      "retryFetch": "Tải lại",
+      "loadMore": "Hiện thêm {{n}}",
+      "copy": "Sao chép",
+      "copied": "Đã sao chép câu lệnh",
+      "copyFailed": "Sao chép thất bại — hãy chọn thủ công trong phần chi tiết",
+      "copyAria": "Sao chép câu lệnh của {{title}}",
+      "apply": "Chèn",
+      "applied": "Đã chèn câu lệnh",
+      "detailAria": "Xem chi tiết {{title}}",
+      "noCover": "Câu lệnh này không có ảnh",
+      "promptLabel": "Nội dung câu lệnh",
+      "loadImage": "Tải ảnh",
+      "loadingImage": "Đang tải…",
+      "loadImageFailed": "Tải thất bại, chạm để thử lại",
+      "loadImageAria": "Tải ảnh: {{title}}",
+      "videoBadge": "Video",
+      "origin": "Nguồn",
+      "byAuthor": "· {{author}}",
+      "searchTags": "Tìm trong {{n}} thẻ",
+      "noMatchingTags": "Không có thẻ phù hợp",
+      "selectedTags": "Đã chọn {{n}}",
+      "clearTags": "Xóa",
+      "tagPanelAria": "Chọn thẻ",
+      "removeTagAria": "Bỏ thẻ {{tag}}"
+    },
     "commitHint": {
       "title": "Khi commit, kết quả này được ghi về slot nào trong luồng chính",
       "sketch": "phác thảo",
@@ -5611,6 +5653,7 @@
       "script": "Kịch bản",
       "pano360Viewer": "Góc nhìn 360°",
       "threeDWorld": "Thế giới 3D",
+      "directorDesk": "Bàn đạo diễn 3D",
       "sectionAddNode": "Thêm node",
       "sectionAddResource": "Thêm tài nguyên",
       "sectionSkillNode": "Node kỹ năng",
@@ -5678,6 +5721,25 @@
       "assetLibraryTitle": "Chọn một tham chiếu từ thư viện asset (nhân vật / bối cảnh / đạo cụ)",
       "assetLibrary": "Thư viện asset",
       "insertRef": "Chèn {{label}}"
+    },
+    "promptEnhance": {
+      "button": "Tăng cường prompt",
+      "title": "Tăng cường prompt",
+      "description": "Viết lại prompt của node theo phương ngữ của model đích và bổ sung các trường cấu trúc còn thiếu.",
+      "dialect": "Model đích",
+      "strength": "Mức độ viết lại",
+      "strengthOption": {
+        "conservative": "Thận trọng",
+        "standard": "Tiêu chuẩn",
+        "aggressive": "Mạnh"
+      },
+      "strengthHint": {
+        "conservative": "Giữ nguyên câu chữ, chỉ lấp chỗ trống",
+        "standard": "Chuẩn hóa theo phương ngữ, giữ trọn ý",
+        "aggressive": "Có thể mở rộng chi tiết hình ảnh"
+      },
+      "confirm": "Tăng cường",
+      "cancel": "Hủy"
     },
     "imageGen": {
       "contextPalette": {
@@ -5838,7 +5900,8 @@
         "textToVideo": "Text to Video",
         "imageToPrompt": "Image to Prompt",
         "textToMusic": "Nhân bản giọng",
-        "textToMusicGen": "Text to Music"
+        "textToMusicGen": "Text to Music",
+        "textToSoundEffect": "Chữ sang hiệu ứng âm thanh"
       },
       "placeholder": "Viết một câu chuyện, một cảnh hoặc ý tưởng nhân vật. Ví dụ: trong một nhà ga cũ giữa đêm mưa, một lá thư đến muộn làm thay đổi lựa chọn của tất cả mọi người.",
       "generatePlaceholder": "Mô tả câu chuyện, bối cảnh, nhân vật, lời thoại hoặc ý tưởng bạn muốn tạo…",
@@ -5850,6 +5913,7 @@
         "textToVideo": "Nhóm chữ sang video",
         "imageToPrompt": "Nhóm ảnh sang prompt",
         "textToMusic": "Nhóm chữ sang nhạc",
+        "textToSoundEffect": "Nhóm chữ sang hiệu ứng âm thanh",
         "cloneAudio": "Nhóm nhân bản giọng"
       },
       "detachUpstreamImage": "Gỡ tham chiếu này"
@@ -6174,14 +6238,28 @@
         "5m": "5 phút",
         "10m": "10 phút"
       },
+      "sfxDuration": {
+        "auto": "Tự động",
+        "1s": "1 giây",
+        "3s": "3 giây",
+        "5s": "5 giây",
+        "10s": "10 giây",
+        "22s": "22 giây"
+      },
+      "sfxDurationLabel": "Thời lượng hiệu ứng",
+      "sfxDurationHelp": "Đặt độ dài hiệu ứng âm thanh; Tự động để mô hình quyết định theo mô tả.",
       "promptLabel": {
         "music": "Mô tả bản nhạc",
+        "sfx": "Mô tả hiệu ứng âm thanh",
         "speech": "Văn bản cần đọc"
       },
       "promptPlaceholder": {
         "music": "Mô tả bản nhạc bạn muốn: phong cách, nhạc cụ, tốc độ, tâm trạng…",
+        "sfx": "Mô tả âm thanh bạn muốn: sấm, tiếng bước chân, tiếng mở cửa, tiếng gió…",
         "speech": "Văn bản cần đọc"
       },
+      "modelLabel": "Model",
+      "modelDefault": "Model mặc định",
       "emotionLabel": "Gợi ý cách diễn",
       "emotionOptional": "(tuỳ chọn, viết tự do)",
       "emotionPlaceholder": "ví dụ căng thẳng, thì thào, hơi sợ",
@@ -6295,6 +6373,7 @@
       "scriptNode": "Bộ tạo kịch bản",
       "pano360ViewerNode": "Trình xem toàn cảnh 360°",
       "threeDWorldNode": "Thế giới 3D",
+      "directorDeskNode": "Bàn đạo diễn 3D",
       "skillNode": "Kỹ năng",
       "styleNode": "Phong cách"
     },
@@ -6430,6 +6509,44 @@
       "directorCaptureSizeFailed": "Không đọc được kích thước ảnh chụp thế giới đạo diễn",
       "directorElement": "Phần tử đạo diễn",
       "directorExportLabel": "Xuất thế giới đạo diễn"
+    },
+    "directorDesk": {
+      "open": "Mở",
+      "emptyHint": "Dàn dựng cảnh trong 3D rồi gửi ảnh chụp về canvas",
+      "previewAlt": "Ảnh xem trước bàn đạo diễn",
+      "dialogTitle": "Bàn đạo diễn 3D",
+      "dialogDescription": "Dàn dựng cảnh, bố trí máy quay và gửi ảnh chụp về canvas",
+      "iframeTitle": "Trình biên tập bàn đạo diễn 3D",
+      "connecting": "Đang kết nối bàn đạo diễn…",
+      "connected": "Đã kết nối · giao thức v{{version}}",
+      "connectFailed": "Không kết nối được bàn đạo diễn",
+      "retry": "Thử lại",
+      "close": "Đóng",
+      "capabilityCount": "{{count}} giao diện khả dụng",
+      "persistenceLocal": "Dự án chỉ lưu trong trình duyệt này",
+      "readProject": "Đọc dự án",
+      "reading": "Đang đọc…",
+      "projectReadout": "Dấu vân tay {{fingerprint}} · {{objects}} đối tượng · {{cameras}} máy quay",
+      "exportVideo": "Xuất video tham chiếu",
+      "exportingVideo": "Đang xuất…",
+      "importingCaptures": "Đang nhập ảnh chụp…",
+      "captureImported": "Đã thêm {{count}} ảnh chụp vào canvas",
+      "videoExported": "Đã ghi video tham chiếu vào node này",
+      "hasVideo": "Đã có video tham chiếu",
+      "noProject": "Không xác định được dự án hiện tại — bỏ qua tải lên",
+      "uploadFailed": "Nhập thất bại: {{message}}",
+      "exportFailed": "Xuất thất bại: {{message}}",
+      "savingProject": "Đang lưu trữ dự án…",
+      "projectSaved": "Đã lưu trữ dự án vào tài nguyên của dự án này",
+      "projectArchivedAt": "Dự án đã lưu trữ · {{time}}",
+      "saveProject": "Lưu dự án",
+      "upstreamPanorama": "Toàn cảnh từ: {{name}}",
+      "upstreamText": "Đã nối văn bản tham chiếu",
+      "upstreamHint": "Ảnh thượng nguồn được nạp vào bàn đạo diễn làm nền toàn cảnh. Văn bản chỉ là tham chiếu phía canvas, không tự động ghi vào cảnh của bàn đạo diễn.",
+      "projectSaveTimeout": "Lưu trữ quá thời gian — bàn đạo diễn vẫn giữ bản lưu cục bộ",
+      "projectSaveFailed": "Không lưu trữ được dự án: {{message}}",
+      "snapshotTooLarge": "Dự án quá lớn để lưu trữ",
+      "snapshotUnavailable": "Không có bản chụp dự án — dùng bản lưu cục bộ của bàn đạo diễn"
     }
   },
   "viewer": {
@@ -7104,6 +7221,7 @@
           "SCENE_BUILD": "Phân tích và làm giàu mô tả bối cảnh",
           "FREEZONE_TRANSLATION": "Dịch prompt Trung/Anh",
           "FREEZONE_TEXT_WRITER": "Tạo văn bản bằng AI",
+          "FREEZONE_PROMPT_ENHANCE": "Tăng cường prompt cho node",
           "FREEZONE_STORY_SCRIPT": "Tạo kịch bản truyện",
           "FREEZONE_VISION": "Phân tích nội dung ảnh và video",
           "STYLE_ANALYZER": "Phân tích phong cách tuỳ chỉnh từ ảnh tham chiếu",

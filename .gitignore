@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 .env
+.env.*
 .env1
 /.venv/
 /.playwright-mcp
@@ -13,6 +14,9 @@ __pycache__/
 logs/
 jr_error.log
 /launchd/
+
+# Supergoal 运行产物（规划/状态文件，不跟踪）
+/.supergoal/
 
 # 测试数据与产物，勿提交
 /data/
@@ -42,6 +46,8 @@ node_modules/
 /docs/issues
 scripts/incident_drills/.drill.local.env
 .obsidian/
+.serena
+.prototype-ui
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/

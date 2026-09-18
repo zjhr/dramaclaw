@@ -20,6 +20,7 @@ import {
   ImageIcon,
   Languages,
   Loader2,
+  Sparkles,
   Upload,
   User,
   Video,
@@ -58,6 +59,11 @@ import {
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
 import { OperationPanelShell } from '@/features/canvas/ui/OperationPanelShell';
+import { EnhancePromptDialog } from '@/features/canvas/nodes/EnhancePromptDialog';
+import {
+  VIDEO_PROMPT_DIALECTS,
+  usePromptEnhance,
+} from '@/features/canvas/nodes/usePromptEnhance';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
@@ -1182,6 +1188,12 @@ function ScriptOperationsPanel({
     }
   }, [isGenerating, isTranslating, nodeId, prompt, updateNodeData, t]);
 
+  const applyEnhancedPrompt = useCallback(
+    (text: string) => updateNodeData(nodeId, { prompt: text }),
+    [nodeId, updateNodeData],
+  );
+  const promptEnhance = usePromptEnhance(nodeId, applyEnhancedPrompt);
+
   // 文本 / 视频 / 角色图任一有内容即可提交（与 useScriptStorySubmit 的分流一致）。
   const hasContent =
     prompt.trim().length > 0 ||
@@ -1249,6 +1261,20 @@ function ScriptOperationsPanel({
               <Languages className="h-4 w-4" />
             )}
           </IconButton>
+          <IconButton
+            title={t('node.promptEnhance.button')}
+            onClick={() => promptEnhance.setOpen(true)}
+            disabled={
+              isGenerating || promptEnhance.busy || prompt.trim().length === 0
+            }
+            active={promptEnhance.busy}
+          >
+            {promptEnhance.busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+          </IconButton>
           <CreditCostPill
             display={
               translateCost.data?.data.cost === 0
@@ -1306,6 +1332,16 @@ function ScriptOperationsPanel({
           />
         </div>
       )}
+      <EnhancePromptDialog
+        open={promptEnhance.open}
+        onOpenChange={promptEnhance.setOpen}
+        dialects={VIDEO_PROMPT_DIALECTS}
+        defaultDialect="video-generic"
+        busy={promptEnhance.busy}
+        onConfirm={(dialect, strength) => {
+          void promptEnhance.run(prompt, dialect, strength);
+        }}
+      />
     </OperationPanelShell>
   );
 }

@@ -353,10 +353,10 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         )}
       </div>
 
-      {/* 节点一旦有音频内容（手动上传 or TTS 合成），就不再展示底部操作区 ——
-          这条规则覆盖手动上传 / TTS 合成完成两种情况。
-          想要重新合成只能先清掉音频（暂时通过删节点重建）。 */}
-      {selected && !isBoxSelecting && !data.audioUrl && (
+      {/* 有音频时同样展示操作区：早先的规则是"一旦有产物就收起面板"，结果是
+          生成一次之后就再也改不了 prompt、也无法重新合成，只能删节点重建。
+          现在保留面板，重新生成会覆盖 audioUrl。 */}
+      {selected && !isBoxSelecting && (
         <AudioOperationsPanel nodeId={id} data={data} />
       )}
     </div>

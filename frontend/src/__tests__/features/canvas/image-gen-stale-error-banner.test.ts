@@ -123,6 +123,10 @@ vi.mock("@/features/canvas/hooks/useFreezoneCameraOptions", () => ({
 vi.mock("@/features/canvas/hooks/useFreezoneStyleTemplates", () => ({
   useFreezoneStyleTemplates: () => ({ templates: [] }),
 }));
+// 远端风格包要 QueryClient，这个用例没包 provider：给空数组，只验错误横幅。
+vi.mock("@/features/canvas/hooks/useCookbookStyles", () => ({
+  useCookbookStyles: () => [],
+}));
 vi.mock("@/features/canvas/application/useUpstreamGraph", () => ({
   useUpstreamContents: () => [],
   useUpstreamNodes: () => [],

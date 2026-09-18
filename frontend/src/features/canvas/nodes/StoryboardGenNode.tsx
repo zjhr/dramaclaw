@@ -12,7 +12,7 @@ import {
   useRef,
 } from 'react';
 import { Handle, Position, useUpdateNodeInternals, useViewport } from '@xyflow/react';
-import { Minus, Plus, Sparkles } from 'lucide-react';
+import { Loader2, Minus, Plus, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CreditSparkIcon } from '@/components/credits/credit-visual';
 
@@ -26,6 +26,11 @@ import {
   type StoryboardRatioControlMode,
   type StoryboardGenNodeData,
 } from '@/features/canvas/domain/canvasNodes';
+import { EnhancePromptDialog } from '@/features/canvas/nodes/EnhancePromptDialog';
+import {
+  IMAGE_PROMPT_DIALECTS,
+  usePromptEnhance,
+} from '@/features/canvas/nodes/usePromptEnhance';
 import { EXPORT_RESULT_DISPLAY_NAME, localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -1352,6 +1357,19 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     [id, incomingImages.length, nodeData.frames, updateNodeData]
   );
 
+  // 每格是独立画面，强化必须落到被点的那一格。目标索引存 ref 而不是 state：
+  // 弹窗确认时读的是「此刻点的是哪格」，同一轮里 setState 还读不到新值。
+  const enhanceTargetFrameRef = useRef<number | null>(null);
+  const applyEnhancedFrameDescription = useCallback(
+    (text: string) => {
+      const index = enhanceTargetFrameRef.current;
+      if (index === null) return;
+      handleFrameDescriptionChange(index, text);
+    },
+    [handleFrameDescriptionChange]
+  );
+  const promptEnhance = usePromptEnhance(id, applyEnhancedFrameDescription);
+
   const closeImagePicker = useCallback(() => {
     setShowImagePicker(false);
     setPickerFrameIndex(null);
@@ -1608,9 +1626,27 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
             return (
               <div
                 key={frame.id}
-                className="relative overflow-hidden rounded-[8px] border border-white/18 bg-[#17181b]/92 transition-colors focus-within:border-white/34 hover:border-white/28"
+                className="group relative overflow-hidden rounded-[8px] border border-white/18 bg-[#17181b]/92 transition-colors focus-within:border-white/34 hover:border-white/28"
                 style={{ aspectRatio: frameLayout.cellAspectRatio }}
               >
+                <button
+                  type="button"
+                  className="nodrag absolute right-1 top-1 z-20 rounded-[5px] border border-white/18 bg-black/60 p-1 text-text-muted opacity-0 transition-opacity hover:text-text-dark focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                  disabled={promptEnhance.busy}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    enhanceTargetFrameRef.current = index;
+                    promptEnhance.setOpen(true);
+                  }}
+                  title={t('node.promptEnhance.button')}
+                >
+                  {promptEnhance.busy && enhanceTargetFrameRef.current === index ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                </button>
                 <div
                   ref={(element) => {
                     frameHighlightRefs.current[frame.id] = element;
@@ -1815,6 +1851,24 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         minHeight={baseFrameLayout.nodeHeight}
         maxWidth={1800}
         maxHeight={1400}
+      />
+      <EnhancePromptDialog
+        open={promptEnhance.open}
+        onOpenChange={promptEnhance.setOpen}
+        dialects={IMAGE_PROMPT_DIALECTS}
+        defaultDialect="image"
+        busy={promptEnhance.busy}
+        onConfirm={(dialect, strength) => {
+          const index = enhanceTargetFrameRef.current;
+          if (index === null) return;
+          const frame = nodeData.frames[index];
+          if (!frame) return;
+          void promptEnhance.run(
+            frameDescriptionDrafts[frame.id] ?? frame.description,
+            dialect,
+            strength
+          );
+        }}
       />
     </div>
   );

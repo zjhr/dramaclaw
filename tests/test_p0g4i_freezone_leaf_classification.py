@@ -469,7 +469,11 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    assert len(named) == 20
+    # 20 → 21：提示词强化 `enhance_freezone_prompt`，与 translate / generate
+    # 同走 EG-18a 的网关文本调用。
+    # 21 → 22：音效 `generate_freezone_audio_sound_effect`，直连 ElevenLabs，
+    # 登记 EG-15a（与 speech / music 同一个出网口径）。
+    assert len(named) == 22
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

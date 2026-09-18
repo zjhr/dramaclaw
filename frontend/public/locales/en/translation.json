@@ -5196,6 +5196,48 @@
       "loading": "Loading…",
       "empty": "No style templates yet"
     },
+    "promptGallery": {
+      "title": "Prompt gallery",
+      "chip": "Prompts",
+      "chipTitle": "Pick a prompt from the gallery and insert it at the cursor",
+      "search": "Search title, prompt, description or tag",
+      "refresh": "Refresh",
+      "refreshTitle": "Re-fetch every prompt source",
+      "sourceLabel": "Source",
+      "allSources": "All sources",
+      "tagLabel": "Tags",
+      "moreTags": "More",
+      "resultCount": "{{n}} prompts",
+      "loading": "Fetching prompt sources…",
+      "empty": "No prompts match these filters",
+      "allFailed": "No prompt source could be reached. Check your network, then hit refresh.",
+      "sourceFailed": "{{n}} source(s) failed",
+      "offline": "{{n}} source(s) served from offline cache — content may be stale",
+      "retryFetch": "Retry",
+      "loadMore": "Show {{n}} more",
+      "copy": "Copy",
+      "copied": "Prompt copied",
+      "copyFailed": "Copy failed — select the text manually in the detail view",
+      "copyAria": "Copy the prompt for {{title}}",
+      "apply": "Insert",
+      "applied": "Prompt inserted",
+      "detailAria": "View details for {{title}}",
+      "noCover": "No image for this prompt",
+      "promptLabel": "Prompt text",
+      "loadImage": "Load image",
+      "loadingImage": "Loading…",
+      "loadImageFailed": "Load failed, tap to retry",
+      "loadImageAria": "Load image: {{title}}",
+      "videoBadge": "Video",
+      "origin": "Source",
+      "byAuthor": "· {{author}}",
+      "searchTags": "Search {{n}} tags",
+      "noMatchingTags": "No matching tags",
+      "selectedTags": "{{n}} selected",
+      "clearTags": "Clear",
+      "tagPanelAria": "Select tags",
+      "removeTagAria": "Remove tag {{tag}}"
+    },
     "commitHint": {
       "title": "How this output is written back to a mainline slot on commit",
       "sketch": "sketch",
@@ -5713,6 +5755,7 @@
       "script": "Script",
       "pano360Viewer": "360° View",
       "threeDWorld": "3D World",
+      "directorDesk": "3D Director Desk",
       "sectionAddNode": "Add Node",
       "sectionAddResource": "Add Resource",
       "sectionSkillNode": "Skill Nodes",
@@ -5780,6 +5823,25 @@
       "assetLibraryTitle": "Pick a reference from the asset library (characters / scenes / props)",
       "assetLibrary": "Asset library",
       "insertRef": "Insert {{label}}"
+    },
+    "promptEnhance": {
+      "button": "Enhance prompt",
+      "title": "Enhance prompt",
+      "description": "Rewrite this node's prompt in the target model's dialect and fill in the missing structural fields.",
+      "dialect": "Target model",
+      "strength": "Rewrite strength",
+      "strengthOption": {
+        "conservative": "Conservative",
+        "standard": "Standard",
+        "aggressive": "Aggressive"
+      },
+      "strengthHint": {
+        "conservative": "Keep your wording, fill gaps only",
+        "standard": "Normalize to the dialect, keep all intent",
+        "aggressive": "May expand visual detail"
+      },
+      "confirm": "Enhance",
+      "cancel": "Cancel"
     },
     "imageGen": {
       "contextPalette": {
@@ -5940,7 +6002,8 @@
         "textToVideo": "Text to Video",
         "imageToPrompt": "Image to Prompt",
         "textToMusic": "Clone Audio",
-        "textToMusicGen": "Text to Music"
+        "textToMusicGen": "Text to Music",
+        "textToSoundEffect": "Text to Sound Effect"
       },
       "placeholder": "Write a story, scene, or character idea. For example: in an old station on a rainy night, a late letter changes everyone's choice.",
       "generatePlaceholder": "Describe the story, scene, character, dialogue, or creative prompt you want to generate…",
@@ -5952,6 +6015,7 @@
         "textToVideo": "Text-to-video group",
         "imageToPrompt": "Image-to-prompt group",
         "textToMusic": "Text-to-music group",
+        "textToSoundEffect": "Text-to-sound-effect group",
         "cloneAudio": "Voice clone group"
       },
       "detachUpstreamImage": "Detach this reference"
@@ -6276,14 +6340,28 @@
         "5m": "5 min",
         "10m": "10 min"
       },
+      "sfxDuration": {
+        "auto": "Auto",
+        "1s": "1s",
+        "3s": "3s",
+        "5s": "5s",
+        "10s": "10s",
+        "22s": "22s"
+      },
+      "sfxDurationLabel": "Sound length",
+      "sfxDurationHelp": "Set the length of the sound effect; Auto lets the model decide from the description.",
       "promptLabel": {
         "music": "Describe the music",
+        "sfx": "Describe the sound effect",
         "speech": "Text to synthesize"
       },
       "promptPlaceholder": {
         "music": "Describe the music you want: style, instruments, tempo, mood…",
+        "sfx": "Describe the sound you want: thunder, footsteps, a door, wind…",
         "speech": "Text to synthesize"
       },
+      "modelLabel": "Model",
+      "modelDefault": "Default model",
       "emotionLabel": "Delivery cues",
       "emotionOptional": "(optional, free text)",
       "emotionPlaceholder": "e.g. tense, hushed, a little fearful",
@@ -6397,6 +6475,7 @@
       "scriptNode": "Script generator",
       "pano360ViewerNode": "360° panorama viewer",
       "threeDWorldNode": "3D world",
+      "directorDeskNode": "3D director desk",
       "skillNode": "Skill",
       "styleNode": "Style"
     },
@@ -6532,6 +6611,44 @@
       "directorCaptureSizeFailed": "Could not read the director world capture dimensions",
       "directorElement": "Director element",
       "directorExportLabel": "Director world export"
+    },
+    "directorDesk": {
+      "open": "Open",
+      "emptyHint": "Stage the shot in 3D, then send captures back to the canvas",
+      "previewAlt": "Director desk preview",
+      "dialogTitle": "3D Director Desk",
+      "dialogDescription": "Stage the shot, set up cameras and send captures back to the canvas",
+      "iframeTitle": "3D director desk editor",
+      "connecting": "Connecting to the director desk…",
+      "connected": "Connected · protocol v{{version}}",
+      "connectFailed": "Could not reach the director desk",
+      "retry": "Retry",
+      "close": "Close",
+      "capabilityCount": "{{count}} interfaces available",
+      "persistenceLocal": "Project lives in this browser only",
+      "readProject": "Read project",
+      "reading": "Reading…",
+      "projectReadout": "Fingerprint {{fingerprint}} · {{objects}} objects · {{cameras}} cameras",
+      "exportVideo": "Export reference video",
+      "exportingVideo": "Exporting…",
+      "importingCaptures": "Importing captures…",
+      "captureImported": "Added {{count}} capture(s) to the canvas",
+      "videoExported": "Reference video added to this node",
+      "hasVideo": "Has reference video",
+      "noProject": "Could not determine the current project — upload skipped",
+      "uploadFailed": "Import failed: {{message}}",
+      "exportFailed": "Export failed: {{message}}",
+      "savingProject": "Archiving project…",
+      "projectSaved": "Project archived into this project's assets",
+      "projectArchivedAt": "Project archived · {{time}}",
+      "saveProject": "Save project",
+      "upstreamPanorama": "Panorama from: {{name}}",
+      "upstreamText": "Reference text attached",
+      "upstreamHint": "Upstream images are loaded into the director desk as its panorama background. Text is canvas-side reference only and is not written into the desk scene.",
+      "projectSaveTimeout": "Archiving timed out — the director desk keeps its own local copy",
+      "projectSaveFailed": "Could not archive the project: {{message}}",
+      "snapshotTooLarge": "Project is too large to archive",
+      "snapshotUnavailable": "Project snapshot unavailable — using the director desk's local copy"
     }
   },
   "viewer": {
@@ -7214,6 +7331,7 @@
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
           "FREEZONE_TEXT_WRITER": "AI text generation",
+          "FREEZONE_PROMPT_ENHANCE": "Node prompt enhancement",
           "FREEZONE_STORY_SCRIPT": "Story script generation",
           "FREEZONE_VISION": "Image and video content analysis",
           "STYLE_ANALYZER": "Analyze a custom style from reference images",

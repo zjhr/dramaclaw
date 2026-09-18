@@ -24,6 +24,7 @@ export const CANVAS_NODE_TYPES = {
   script: 'scriptNode',
   pano360Viewer: 'pano360ViewerNode',
   threeDWorld: 'threeDWorldNode',
+  directorDesk: 'directorDeskNode',
   skill: 'skillNode',
   style: 'styleNode',
 } as const;
@@ -255,7 +256,9 @@ export type TextNodeMode =
   // textToMusic: 历史命名,实为「克隆音频」(语音克隆 TTS),派生语音音频节点。
   | 'textToMusic'
   // textToMusicGen: 「文字生成音乐」,派生 audioKind='music' 的音频节点(走 /freezone/audio/music)。
-  | 'textToMusicGen';
+  | 'textToMusicGen'
+  // textToSoundEffect: 「文字生成音效」,派生 audioKind='sfx' 的音频节点(走 /freezone/audio/sound-effect)。
+  | 'textToSoundEffect';
 
 export interface TextAnnotationNodeData extends NodeDisplayData {
   content: string;
@@ -487,8 +490,18 @@ export interface AudioNodeData extends NodeDisplayData {
    * 音频节点的生成类型：
    * - 'speech'(默认/缺省)：克隆音频,文本转语音(/freezone/audio/speech),用 voiceRef/语气词。
    * - 'music'：文字生成音乐(/freezone/audio/eleven-music),用 text 作为音乐描述 prompt。
+   *   - 'sfx'：文字生成音效(/freezone/audio/sound-effect),用 text 作为音效描述 prompt。
    */
-  audioKind?: 'speech' | 'music';
+  audioKind?: 'speech' | 'music' | 'sfx';
+  /** sfx 模式：目标时长(秒)，范围 0.5–22，缺省由模型按描述自选。 */
+  sfxDurationSeconds?: number;
+  /** sfx 模式：提示词影响力 0–1，越高越贴近描述，缺省 0.3。 */
+  sfxPromptInfluence?: number;
+  /**
+   * 媒体模型名（见媒体模型映射表）。留空 = 用后端默认模型。
+   * 填映射到虚拟 provider `elevenlabs` 的模型（如 `eleven-tts`）时走官方直连。
+   */
+  audioModel?: string;
   /** music 模式：生成长度(毫秒),范围 3000–600000,缺省按后端默认 30000。 */
   musicLengthMs?: number;
   /** music 模式：是否强制纯音乐(force_instrumental),缺省 true。 */
@@ -672,6 +685,33 @@ export interface ThreeDWorldNodeData extends NodeDisplayData {
   [key: string]: unknown;
 }
 
+/**
+ * 3D 导演台节点。节点本身只是一层壳：真正的编辑器是 `frontend/public/director-desk/`
+ * 里的一个独立 SPA，在弹窗内的 iframe 里运行，双方通过 postMessage 桥（见
+ * [[directorDeskBridge]]）通信 —— 桥的契约由导演台自己声明，画布只消费它上报的
+ * capability。本接口只保存「会话结束后还该留在画布上」的东西：产物与工程快照引用。
+ */
+export interface DirectorDeskNodeData extends NodeDisplayData {
+  /** 弹窗是否处于打开状态。仅内存态，节点卸载即失效。 */
+  isOpen: boolean;
+  /**
+   * 导演台工程快照在项目资产里的引用（上传后的项目内 URL）。
+   * 关节点时写入，重开节点时通过桥回灌给导演台；为 null 表示还没存过。
+   */
+  directorProjectRef: string | null;
+  /** 导演台导出视频的项目内资产 URL。 */
+  videoUrl: string | null;
+  /** 节点缩略图：优先导演台回传的截图，其次上游图片节点的图。 */
+  previewImageUrl: string | null;
+  /** 上游连接节点 id，仅用作 audit。 */
+  sourceNodeId?: string | null;
+  /** 上游素材种类，决定把哪种上游当作全景图喂给导演台。 */
+  sourceKind?: 'image' | 'text' | null;
+  /** 错误消息（桥握手失败、上传失败时显示）。 */
+  errorMessage?: string | null;
+  [key: string]: unknown;
+}
+
 export interface SkillNodeData extends NodeDisplayData {
   skill_id: string;
   skill_schema_version?: string;
@@ -714,6 +754,7 @@ export type CanvasNodeData =
   | ScriptNodeData
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
+  | DirectorDeskNodeData
   | SkillNodeData
   | StyleNodeData;
 

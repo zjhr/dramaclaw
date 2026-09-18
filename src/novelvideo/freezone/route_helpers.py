@@ -188,6 +188,11 @@ def resolve_freezone_image_style_template(style: Optional[FreezoneImageStyleConf
 
     风格库换代后旧 id 会作废,已存画布节点里保存的旧 id 不应该让生成整个失败,
     降级成「这次不加风格」即可,前端 chip 也会回落显示「风格」。
+
+    例外是「自带正文」的请求:前端有些风格源是运行时从远端拉的(风格包不在本仓
+    清单里),选中时会把 label / style_prompt 一并送过来。清单是服务端的,风格
+    正文不必是,所以照收 —— 但只在清单里查不到时才走这条路,内置风格仍以服务端
+    清单为准,免得前端拿旧文本覆盖掉更新过的内置提示词。
     """
     if style is None:
         return None
@@ -197,6 +202,13 @@ def resolve_freezone_image_style_template(style: Optional[FreezoneImageStyleConf
     for item in load_style_templates():
         if item["id"] == template_id:
             return item
+    inline_prompt = str(style.style_prompt or "").strip()
+    if inline_prompt:
+        return {
+            "id": template_id,
+            "label": str(style.label or "").strip() or template_id,
+            "style_prompt": inline_prompt,
+        }
     return None
 
 

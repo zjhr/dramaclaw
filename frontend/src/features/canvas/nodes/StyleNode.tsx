@@ -29,6 +29,8 @@ import {
   CANVAS_NODE_INPUT_SURFACE_CLASS,
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
+import { useCookbookStyles } from '@/features/canvas/hooks/useCookbookStyles';
+import { isCookbookStyleId } from '@/features/canvas/domain/styleCookbook';
 import { useFreezoneStyleTemplates } from '@/features/canvas/hooks/useFreezoneStyleTemplates';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -59,18 +61,30 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const templateId =
+    typeof data.styleTemplateId === 'string' && data.styleTemplateId.length > 0
+      ? data.styleTemplateId
+      : null;
 
   const {
-    templates,
+    templates: backendTemplates,
     assetBase,
     isLoading: templatesLoading,
     error: templatesError,
     retry: retryTemplates,
   } = useFreezoneStyleTemplates();
-  const templateId =
-    typeof data.styleTemplateId === 'string' && data.styleTemplateId.length > 0
-      ? data.styleTemplateId
-      : null;
+  // 内置清单（走项目后端）+ 远端风格包（直连上游 raw）。远端拉不到就是少 130 条，
+  // 内置那 45 条照常可选。
+  //
+  // 除了「图墙开着」，已选中远端风格时也要拉：画布只存 id，正文得现查，否则
+  // 恢复画布后这个节点会一直显示不出风格名。
+  const cookbookStyles = useCookbookStyles(
+    galleryOpen || isCookbookStyleId(templateId),
+  );
+  const templates = useMemo(
+    () => [...backendTemplates, ...cookbookStyles],
+    [backendTemplates, cookbookStyles],
+  );
   const template = describeStyleSelection(templateId, templates);
   const selectionState = resolveStyleSelectionState(templateId, template, {
     isLoading: templatesLoading,

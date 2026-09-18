@@ -28,6 +28,7 @@ import {
 } from 'react';
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 
+import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
   LOD_SHELL_EXEMPT_TYPES,
   isCanvasGestureActive,
@@ -74,6 +75,7 @@ export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; heigh
   videoComposeNode: { width: 240, height: 136 },
   pano360ViewerNode: { width: 900, height: 540 },
   threeDWorldNode: { width: 340, height: 210 },
+  directorDeskNode: { width: 340, height: 210 },
   storyboardNode: { width: 800, height: 600 },
   storyboardGenNode: { width: 800, height: 600 },
   styleNode: { width: 220, height: 124 },
@@ -219,8 +221,19 @@ export function withLodShell(
     const isActiveSelection = useCanvasStore(
       (state) => state.selectedNodeId === props.id
     );
+    // 自带全屏弹窗的节点（导演台）在弹窗打开时必须留在完整档：那个弹窗就是这个
+    // 组件渲染的，「降级成壳」等于卸载组件 —— 用户正用着的弹窗会被直接抽掉。
+    // 触发路径很常见：回传截图会新建节点并把它设为选中，导演台节点随即失去选中态，
+    // 在低缩放档就被降级，弹窗凭空消失。
+    const holdsOpenOverlay =
+      type === CANVAS_NODE_TYPES.directorDesk &&
+      (props.data as { isOpen?: unknown } | undefined)?.isOpen === true;
     const wantShell =
-      lowDetail && !exempt && !isActiveSelection && !isNodeMediaActive(props.id);
+      lowDetail &&
+      !exempt &&
+      !isActiveSelection &&
+      !isNodeMediaActive(props.id) &&
+      !holdsOpenOverlay;
 
     // shell → 完整组件的切换永远经过升级队列（每帧限量放行，手势中不放行）：
     //   - 手势进行中新挂载的节点（视口裁剪把它换进来的）从 shell 起步，避免

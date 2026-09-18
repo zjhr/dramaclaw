@@ -1652,6 +1652,94 @@ def test_freezone_single_image_generation_routes_newapi(monkeypatch, tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    ("content", "content_type", "should_deliver"),
+    [
+        # Cloudflare 挑战页：HTTP 200 + text/html（线上坏图实况）
+        (
+            b"<!doctype html><html><title>OpenAI Widgets</title></html>",
+            "text/html",
+            False,
+        ),
+        # 同一个挑战页，但被 CDN 标成图片 —— content-type 不可信时的兜底
+        (
+            b"<!doctype html><html><title>OpenAI Widgets</title></html>",
+            "image/png",
+            False,
+        ),
+        # 正常 PNG 必须放行，避免校验误杀
+        (b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, "image/png", True),
+    ],
+)
+def test_newapi_image_url_fetch_rejects_non_image_payload(
+    monkeypatch, content, content_type, should_deliver
+):
+    """NewAPI 返 URL 时二次 GET 的内容必须是真图片。
+
+    回归：freezone_gen 曾把 Cloudflare 挑战页（HTTP 200 + HTML）落盘成 1426B
+    的 .png —— 任务状态 completed、服务端 200，前端 <img> 只显示破损图标。
+    """
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    class FakeResponse:
+        def __init__(self, *, status_code, content, headers, payload=None):
+            self.status_code = status_code
+            self.content = content
+            self.headers = headers
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            return FakeResponse(
+                status_code=200,
+                content=b"",
+                headers={},
+                payload={"data": [{"url": "https://cdn.test/out.png"}]},
+            )
+
+        async def get(self, url):
+            return FakeResponse(
+                status_code=200,
+                content=content,
+                headers={"content-type": content_type},
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="gpt-image-2.5-flare",
+            prompt="a portrait",
+            image_config={"aspect_ratio": "3:4", "image_size": "1K"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    if should_deliver:
+        assert image_bytes == content
+        assert error == ""
+    else:
+        assert image_bytes is None
+        assert "文本响应" in error
+
+
 def run_async(coro):
     import asyncio
 

@@ -13,6 +13,7 @@ import {
   Repeat,
   Settings2,
   SlidersHorizontal,
+  Sparkles,
 } from 'lucide-react';
 
 import {
@@ -23,6 +24,12 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
+import { EnhancePromptDialog } from '@/features/canvas/nodes/EnhancePromptDialog';
+import { useFreezoneAudioModels } from '@/features/canvas/hooks/useFreezoneAudioModels';
+import {
+  AUDIO_PROMPT_DIALECTS,
+  usePromptEnhance,
+} from '@/features/canvas/nodes/usePromptEnhance';
 import {
   fetchFreezoneTextTranslateResult,
   submitFreezoneTextTranslate,
@@ -87,6 +94,17 @@ function musicBillingSecondsFromMs(ms: number): number {
   return Math.max(Math.ceil(Math.max(ms, 0) / 1000), 1);
 }
 
+// 音效时长档位。ElevenLabs 的 sound-generation 接受 0.5–30 秒，缺省时由模型
+// 依据描述自行决定，所以保留一个「自动」项。
+const SFX_DURATION_PRESETS: ReadonlyArray<{ seconds: number; labelKey: string }> = [
+  { seconds: 0, labelKey: 'node.audioPanel.sfxDuration.auto' },
+  { seconds: 1, labelKey: 'node.audioPanel.sfxDuration.1s' },
+  { seconds: 3, labelKey: 'node.audioPanel.sfxDuration.3s' },
+  { seconds: 5, labelKey: 'node.audioPanel.sfxDuration.5s' },
+  { seconds: 10, labelKey: 'node.audioPanel.sfxDuration.10s' },
+  { seconds: 22, labelKey: 'node.audioPanel.sfxDuration.22s' },
+];
+
 function countBillableTextChars(text: string): number {
   return text.replace(/[\s\u3000]+/gu, '').length;
 }
@@ -105,8 +123,15 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   // music 模式：高级设置（音乐时长等）默认收起，点底部设置按钮展开。
   const [showMusicSettings, setShowMusicSettings] = useState(false);
+  const [showSfxSettings, setShowSfxSettings] = useState(false);
   // 'music'：文字生成音乐(走 /freezone/audio/eleven-music)；缺省/'speech'：克隆音频(TTS)。
   const isMusic = data.audioKind === 'music';
+  const isSfx = data.audioKind === 'sfx';
+  /** 只有语音档才涉及声线；音效和音乐都不该看到那些控件。 */
+  const isSpeech = !isMusic && !isSfx;
+  const { models: audioModels } = useFreezoneAudioModels();
+  const selectedModel =
+    typeof data.audioModel === 'string' ? data.audioModel : '';
   // 生成逻辑(含失败重试)抽到 useAudioGeneration，与节点本体的重试共用同一实现。
   const {
     generate: handleSubmit,
@@ -182,6 +207,8 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
     [nodeId, updateNodeData],
   );
 
+  const promptEnhance = usePromptEnhance(nodeId, handleTextChange);
+
   const handleEmotionChange = useCallback(
     (next: string) => {
       updateNodeData(nodeId, { emotionPrompt: next });
@@ -223,7 +250,8 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   }, [handleTextChange, isGenerating, isTranslating, modelTaskAccess.blocked, t, text]);
 
   // 文本框为空但引用了非空文本时也允许提交（effectivePrompt 会回退到上游引用）。
-  const voiceMissing = !isMusic && data.voiceAvailable === false;
+  // 声线只与语音档有关；用 isSpeech 而不是 !isMusic，否则音效档也会冒出声线提示。
+  const voiceMissing = isSpeech && data.voiceAvailable === false;
   const submitDisabled =
     isGenerating || billingRuleMissing || modelTaskAccess.blocked ||
     effectivePrompt.length === 0 || voiceMissing;
@@ -260,11 +288,40 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
       )}
 
       <div className="px-3 pt-3">
+        {/* 音效同样可选模型：它既可以走网关渠道（ElevenLabs / SenseAudio 的
+            音效能力），也保留"没配映射时用默认"的行为。 */}
+        {audioModels.length > 0 ? (
+          <label className="mb-2 flex items-center gap-2">
+            <span className={AUDIO_INPUT_LABEL_CLASS}>
+              {t('node.audioPanel.modelLabel')}
+            </span>
+            <select
+              value={selectedModel}
+              onChange={(event) => {
+                event.stopPropagation();
+                updateNodeData(nodeId, { audioModel: event.target.value });
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              className={`${AUDIO_INPUT_FIELD_CLASS} h-8 flex-1`}
+              disabled={isGenerating}
+            >
+              {/* 空值 = 用后端默认模型；只有配了媒体模型映射时才列得出具体项。 */}
+              <option value="">{t('node.audioPanel.modelDefault')}</option>
+              {audioModels.map((item) => (
+                <option key={item.id} value={item.apiModel}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="flex flex-col gap-2">
           <span className={AUDIO_INPUT_LABEL_CLASS}>
             {isMusic
               ? t('node.audioPanel.promptLabel.music')
-              : t('node.audioPanel.promptLabel.speech')}
+              : isSfx
+                ? t('node.audioPanel.promptLabel.sfx')
+                : t('node.audioPanel.promptLabel.speech')}
           </span>
           <textarea
             value={textDraft}
@@ -288,7 +345,9 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
             placeholder={
               isMusic
                 ? t('node.audioPanel.promptPlaceholder.music')
-                : t('node.audioPanel.promptPlaceholder.speech')
+                : isSfx
+                  ? t('node.audioPanel.promptPlaceholder.sfx')
+                  : t('node.audioPanel.promptPlaceholder.speech')
             }
             disabled={isGenerating}
             className={`${AUDIO_INPUT_FIELD_CLASS} ui-scrollbar resize-none py-2 leading-[1.65] ${
@@ -298,7 +357,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         </label>
       </div>
 
-      {!isMusic && (
+      {isSpeech && (
       <div className="px-3 pb-3 pt-4">
         <label className="flex flex-col gap-2">
           <span className={AUDIO_INPUT_LABEL_CLASS}>
@@ -359,7 +418,26 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
             <Languages className="h-4 w-4" />
           )}
         </IconButton>
-        {!isMusic && (
+        {isMusic && (
+          <IconButton
+            title={t('node.promptEnhance.button')}
+            onClick={() => promptEnhance.setOpen(true)}
+            disabled={
+              modelTaskAccess.blocked
+              || isGenerating
+              || promptEnhance.busy
+              || text.trim().length === 0
+            }
+            active={promptEnhance.busy}
+          >
+            {promptEnhance.busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+          </IconButton>
+        )}
+        {isSpeech && (
           <IconButton
             title={t('node.audioPanel.voiceSettings')}
             onClick={() => setShowVoiceSettings((v) => !v)}
@@ -373,6 +451,15 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
             title={t('node.audioPanel.advancedSettings')}
             onClick={() => setShowMusicSettings((v) => !v)}
             active={showMusicSettings}
+          >
+            <Settings2 className="h-4 w-4" />
+          </IconButton>
+        )}
+        {isSfx && (
+          <IconButton
+            title={t('node.audioPanel.advancedSettings')}
+            onClick={() => setShowSfxSettings((v) => !v)}
+            active={showSfxSettings}
           >
             <Settings2 className="h-4 w-4" />
           </IconButton>
@@ -405,12 +492,28 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         </button>
       </div>
 
-      {!isMusic && showVoiceSettings && (
+      {isSpeech && showVoiceSettings && (
         <AudioVoiceSettingsPanel nodeId={nodeId} data={data} />
       )}
 
       {isMusic && showMusicSettings && (
         <AudioMusicSettingsPanel nodeId={nodeId} data={data} />
+      )}
+
+      {isSfx && showSfxSettings && (
+        <AudioSfxSettingsPanel nodeId={nodeId} data={data} />
+      )}
+      {isMusic && (
+        <EnhancePromptDialog
+          open={promptEnhance.open}
+          onOpenChange={promptEnhance.setOpen}
+          dialects={AUDIO_PROMPT_DIALECTS}
+          defaultDialect="audio-music"
+          busy={promptEnhance.busy}
+          onConfirm={(dialect, strength) => {
+            void promptEnhance.run(text, dialect, strength);
+          }}
+        />
       )}
     </OperationPanelShell>
   );
@@ -591,8 +694,54 @@ function AudioMusicSettingsPanel({
   );
 }
 
-function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps) {
+// 音效档的高级设置。与音乐档分开：音效的上游参数集完全不同（没有纯音乐、
+// 段落时长这类概念），共用一个面板只会让两边都塞进用不上的开关。
+function AudioSfxSettingsPanel({
+  nodeId,
+  data,
+}: {
+  nodeId: string;
+  data: AudioNodeData;
+}) {
   const { t } = useTranslation();
+  const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const durationSeconds = data.sfxDurationSeconds ?? 0;
+  return (
+    <div className="border-t border-white/[0.04] px-4 pb-3 pt-1">
+      <div className="flex items-center justify-between py-2">
+        <span className="text-[12px] font-semibold text-text-muted">
+          {t('node.audioPanel.advancedSettings')}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-3 py-1">
+        <span className="inline-flex items-center gap-1.5 text-[13px] text-text-dark">
+          {t('node.audioPanel.sfxDurationLabel')}
+          <MusicSettingHelp text={t('node.audioPanel.sfxDurationHelp')} />
+        </span>
+        <UiSelect
+          aria-label={t('node.audioPanel.sfxDurationLabel')}
+          value={String(durationSeconds)}
+          onChange={(event) =>
+            updateNodeData(nodeId, {
+              sfxDurationSeconds: Number(event.target.value),
+            })
+          }
+          onMouseDown={(event) => event.stopPropagation()}
+          className={MUSIC_LENGTH_SELECT_CLASS}
+          menuClassName={MUSIC_LENGTH_SELECT_MENU_CLASS}
+        >
+          {SFX_DURATION_PRESETS.map((preset) => (
+            <option key={preset.seconds} value={String(preset.seconds)}>
+              {t(preset.labelKey)}
+            </option>
+          ))}
+        </UiSelect>
+      </div>
+    </div>
+  );
+}
+
+function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps) {  const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   // 默认音色的拉取放在 AudioNode 里完成（音频节点一挂载就会触发）；这里只负责展示。
   // 显示兜底改为「加载中…」而不是「项目解说人」——避免在 references 落地前误导用户。

@@ -113,6 +113,9 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "translate_freezone_text": LeafEgressRule(
         "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
     ),
+    "enhance_freezone_prompt": LeafEgressRule(
+        "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
+    ),
     "generate_freezone_text": LeafEgressRule(
         "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
     ),
@@ -129,6 +132,10 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     # 音乐与语音是同一个出网点的两个一跳调用方：都经 `_write_newapi_audio_speech`，
     # claim 的 capability 也都是 `audio.tts.gateway`（`audio_node.py:558`）。
     "generate_freezone_audio_eleven_music": LeafEgressRule(
+        "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-15a"
+    ),
+    # 音效是新增链路，直连 ElevenLabs 官方 API（不经网关），无网关版本可回退。
+    "generate_freezone_audio_sound_effect": LeafEgressRule(
         "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-15a"
     ),
     # EG-09a/09b：经 NanoBananaGridGenerator 出图，newapi 走网关，其余 provider 在
@@ -1029,6 +1036,65 @@ async def _run_freezone_text_translate_async(
     return result
 
 
+async def _run_freezone_text_enhance_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.jobs import ensure_freezone_dirs
+    from novelvideo.freezone.paths import outputs_dir
+    from novelvideo.freezone.text_node import enhance_freezone_prompt
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    dialect = str(payload.get("dialect") or "image")
+    strength = str(payload.get("strength") or "standard")
+    _update(ctx, "freezone_text_enhance", job_id, 0.1, "开始强化提示词...")
+    enhanced_text, changes = await _call_freezone_leaf(
+        envelope,
+        enhance_freezone_prompt,
+        "enhance_freezone_prompt",
+        text=str(payload.get("text") or ""),
+        dialect=dialect,
+        strength=strength,
+    )
+    data = {
+        "enhanced_text": enhanced_text,
+        "dialect": dialect,
+        "strength": strength,
+        "changes": changes,
+    }
+    out = outputs_dir(project_dir, "freezone_text_enhance") / f"{job_id}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    import json
+
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    rel = out.relative_to(project_dir).as_posix()
+    result = {
+        "job_id": job_id,
+        "output_format": "json",
+        "output_path": str(out),
+        "output_url": make_static_url_for_context(ctx, rel),
+        **data,
+    }
+    history_record = _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_text_enhance",
+        job_id=job_id,
+        media_type="text",
+        node_type="generic",
+        input_preview=str(payload.get("text") or "")[:240],
+        result=result,
+    )
+    if history_record:
+        result["generation_history_record"] = history_record
+    return result
+
+
 async def _run_freezone_text_generate_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -1265,6 +1331,12 @@ def run_freezone_text_generate(
     return _run_cancellable(envelope, _run_freezone_text_generate_async(envelope, ctx))
 
 
+def run_freezone_text_enhance(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_text_enhance_async(envelope, ctx))
+
+
 def run_freezone_story_script(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
@@ -1317,6 +1389,7 @@ async def _run_freezone_audio_speech_async(
             project_dir=project_dir,
             job_id=job_id,
             text=str(payload.get("text") or ""),
+            model=str(payload.get("model") or ""),
             emotion_prompt=str(payload.get("emotion_prompt") or ""),
             voice_ref=payload.get("voice_ref"),
             projection=projection,
@@ -1407,6 +1480,53 @@ def run_freezone_audio_eleven_music(
     )
 
 
+async def _run_freezone_audio_sfx_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.audio_node import generate_freezone_audio_sound_effect
+    from novelvideo.freezone.jobs import ensure_freezone_dirs
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    _update(ctx, "freezone_audio_sfx", job_id, 0.1, "开始生成音效...")
+    raw_duration = payload.get("duration_seconds")
+    result = await _call_freezone_leaf(
+        envelope,
+        generate_freezone_audio_sound_effect,
+        "generate_freezone_audio_sound_effect",
+        project_dir=project_dir,
+        job_id=job_id,
+        prompt=str(payload.get("input") or ""),
+        model=str(payload.get("model") or ""),
+        duration_seconds=(
+            float(raw_duration) if raw_duration is not None else None
+        ),
+        prompt_influence=float(payload.get("prompt_influence") or 0.3),
+    )
+    rel = result.audio_path.relative_to(project_dir).as_posix()
+    audio_url = make_static_url_for_context(ctx, rel)
+    return {
+        "job_id": job_id,
+        "url": audio_url,
+        "audio_url": audio_url,
+        "audio_size": result.audio_path.stat().st_size,
+        "duration_ms": result.duration_ms,
+        "mime_type": result.mime_type,
+        "model": result.model,
+    }
+
+
+def run_freezone_audio_sfx(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_audio_sfx_async(envelope, ctx))
+
+
 register_project_task_runner("freezone_gen", run_freezone_gen, requires_home_node=False)
 register_project_task_runner("freezone_edit", run_freezone_edit, requires_home_node=False)
 register_project_task_runner(
@@ -1455,6 +1575,9 @@ register_project_task_runner(
     "freezone_text_generate", run_freezone_text_generate, requires_home_node=False
 )
 register_project_task_runner(
+    "freezone_text_enhance", run_freezone_text_enhance, requires_home_node=False
+)
+register_project_task_runner(
     "freezone_story_script", run_freezone_story_script, requires_home_node=False
 )
 register_project_task_runner(
@@ -1470,5 +1593,10 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_audio_eleven_music",
     run_freezone_audio_eleven_music,
+    requires_home_node=False,
+)
+register_project_task_runner(
+    "freezone_audio_sfx",
+    run_freezone_audio_sfx,
     requires_home_node=False,
 )

@@ -481,11 +481,46 @@ def freezone_audio_music_billing_params(params: dict) -> dict:
     }
 
 
+def freezone_audio_sfx_billing_params(params: dict) -> dict:
+    """Resolve Freezone sound-effect metadata for quotes and reservations.
+
+    音效按**时长**计价，与音乐同一口径：ElevenLabs 的 sound-generation 按秒
+    计费，按次或按字符都会算错。
+    """
+    try:
+        pricing_quantity = max(int(params.get("pricing_quantity") or 0), 0)
+    except (TypeError, ValueError):
+        pricing_quantity = 0
+    if pricing_quantity <= 0:
+        try:
+            seconds = float(params.get("duration_seconds") or 0.0)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        pricing_quantity = max(int(seconds), 1)
+    pricing_model = str(
+        params.get("pricing_model") or "elevenlabs:sound-generation"
+    ).strip() or "elevenlabs:sound-generation"
+    return {
+        **params,
+        "pricing_kind": "audio",
+        "pricing_model": pricing_model,
+        "pricing_params": {},
+        "pricing_quantity": pricing_quantity,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": pricing_quantity,
+        },
+    }
+
+
 def freezone_audio_task_billing(feature_key: str, params: dict) -> dict:
     if feature_key == "freezone.audio_speech":
         resolved = freezone_audio_speech_billing_params(params)
     elif feature_key == "freezone.audio_music":
         resolved = freezone_audio_music_billing_params(params)
+    elif feature_key == "freezone.audio_sfx":
+        resolved = freezone_audio_sfx_billing_params(params)
     else:
         raise ValueError(f"unsupported Freezone audio feature: {feature_key}")
     return {"feature_key": feature_key, **resolved}

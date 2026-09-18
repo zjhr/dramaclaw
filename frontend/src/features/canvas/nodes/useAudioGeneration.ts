@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import {
   fetchFreezoneJobResult,
   submitFreezoneAudioMusic,
+  submitFreezoneAudioSfx,
   submitFreezoneAudioSpeech,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
@@ -49,6 +50,12 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     [upstreamContents],
   );
   const isMusic = data.audioKind === 'music';
+  const isSfx = data.audioKind === 'sfx';
+  // 音效不需要声线，只有语音档才校验 voiceAvailable。
+  const isSpeech = !isMusic && !isSfx;
+  // 选中的媒体模型名；空 = 用后端默认。见 AudioOperationsPanel 的模型下拉。
+  const selectedModel =
+    typeof data.audioModel === 'string' ? data.audioModel : '';
   // 有效 prompt：上游引用的文本不回显进输入框，仅在提交时与本地输入「拼接」成最终
   // prompt（上游在前、本地在后，与 joinUpstreamText 一致用空行分隔，过滤空段）。
   const ownText = deriveAudioText(data);
@@ -69,7 +76,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       }
       return;
     }
-    if (!isMusic && data.voiceAvailable === false) {
+    if (isSpeech && data.voiceAvailable === false) {
       updateNodeData(nodeId, { generationError: t('node.audioNode.selectVoiceFirst') });
       return;
     }
@@ -89,22 +96,42 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       const ref = isMusic
         ? await submitFreezoneAudioMusic(project, {
             prompt: trimmed,
+            model: selectedModel || undefined,
             musicLengthMs:
               typeof data.musicLengthMs === 'number' ? data.musicLengthMs : undefined,
             forceInstrumental: data.forceInstrumental ?? true,
             respectSectionsDurations: data.respectSectionsDurations ?? true,
           })
-        : await submitFreezoneAudioSpeech(project, {
-            text: trimmed,
-            emotionPrompt: emotionPrompt.trim() || undefined,
-            voiceRef: data.voiceRef ?? { scope: 'project_narrator' },
-          });
+        : isSfx
+          ? await submitFreezoneAudioSfx(project, {
+              prompt: trimmed,
+              // 音效现在也走媒体模型映射：配了 ElevenLabs / SenseAudio 的音效
+              // 模型就走网关，没配则由后端回退到默认路径。
+              model: selectedModel || undefined,
+              // 0 表示「由模型自动决定时长」，此时不能把 0 发给上游。
+              durationSeconds:
+                typeof data.sfxDurationSeconds === 'number' &&
+                data.sfxDurationSeconds > 0
+                  ? data.sfxDurationSeconds
+                  : undefined,
+              promptInfluence: data.sfxPromptInfluence,
+            })
+          : await submitFreezoneAudioSpeech(project, {
+              text: trimmed,
+              model: selectedModel || undefined,
+              emotionPrompt: emotionPrompt.trim() || undefined,
+              voiceRef: data.voiceRef ?? { scope: 'project_narrator' },
+            });
       // Persist the task handle so a page refresh can resume this job.
       updateNodeData(nodeId, generationTaskDescriptor(ref));
       await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const result = await fetchFreezoneJobResult(
         project,
-        isMusic ? 'freezone_audio_eleven_music' : 'freezone_audio_speech',
+        isMusic
+          ? 'freezone_audio_eleven_music'
+          : isSfx
+            ? 'freezone_audio_sfx'
+            : 'freezone_audio_speech',
         ref.job_id,
       );
       updateNodeData(nodeId, {
@@ -115,7 +142,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       });
     } catch (error) {
       console.error(
-        `[audio-node] ${isMusic ? 'music' : 'speech'} generation failed`,
+        `[audio-node] ${isMusic ? 'music' : isSfx ? 'sfx' : 'speech'} generation failed`,
         error,
       );
       updateNodeData(nodeId, {
@@ -128,7 +155,11 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     isGenerating,
     modelTaskAccess,
     isMusic,
+    isSfx,
+    selectedModel,
     data.musicLengthMs,
+    data.sfxDurationSeconds,
+    data.sfxPromptInfluence,
     data.forceInstrumental,
     data.respectSectionsDurations,
     data.voiceAvailable,

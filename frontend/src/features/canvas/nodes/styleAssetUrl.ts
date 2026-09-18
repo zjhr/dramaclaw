@@ -7,9 +7,13 @@
  * 图片不随仓库发布:后端配 STYLE_GALLERY_ASSET_BASE(OSS/CDN 域名)后由接口
  * 下发前缀,这里直接拼。assetBase 为空时回落到同源 /style-gallery/ —— 那个
  * 目录默认是空的,交给 StyleAssetImage 显示占位块。
+ *
+ * 远端风格源(如 VigoZhao cookbook 那 130 条)的图是绝对地址,原样返回:那批图
+ * 挂在 GitHub 上,和内置那 45 条不同源,拿 assetBase 去拼只会拼出个 404。
  */
 export function resolveStyleAssetUrl(rel: string, assetBase: string): string {
   if (!rel) return '';
+  if (/^https?:\/\//i.test(rel)) return rel;
   if (!assetBase) return `/style-gallery/${rel}`;
   return `${assetBase.replace(/\/+$/, '')}/${rel}`;
 }

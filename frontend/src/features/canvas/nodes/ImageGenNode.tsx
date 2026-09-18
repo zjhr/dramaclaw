@@ -20,6 +20,7 @@ import {
   Languages,
   Library,
   Loader2,
+  Sparkles,
   Upload,
   X,
 } from 'lucide-react';
@@ -164,10 +165,14 @@ import {
   describeStyleSelection,
   resolveStyleSelectionState,
 } from '@/features/canvas/ui/StyleGalleryModal';
+import { PromptGalleryChip } from '@/features/canvas/ui/PromptGalleryChip';
+import { PromptGalleryModal } from '@/features/canvas/ui/PromptGalleryModal';
 import {
   StyleThumbnail,
   StyleTriggerChip,
 } from '@/features/canvas/nodes/StyleChip';
+import { useCookbookStyles } from '@/features/canvas/hooks/useCookbookStyles';
+import { isCookbookStyleId } from '@/features/canvas/domain/styleCookbook';
 import { useFreezoneStyleTemplates } from '@/features/canvas/hooks/useFreezoneStyleTemplates';
 import {
   STYLE_NODE_HEIGHT,
@@ -218,6 +223,11 @@ import {
   NodeSideActionRail,
 } from '@/features/canvas/ui/NodeSideActionRail';
 import { NodeContextPromptPaletteButton } from '@/features/canvas/nodes/ContextPromptPaletteButton';
+import { EnhancePromptDialog } from '@/features/canvas/nodes/EnhancePromptDialog';
+import {
+  IMAGE_PROMPT_DIALECTS,
+  usePromptEnhance,
+} from '@/features/canvas/nodes/usePromptEnhance';
 import { ReferencePickChip } from '@/features/canvas/nodes/shared/ReferencePickChip';
 import {
   contextPromptPaletteInsertionText,
@@ -519,13 +529,27 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   }, [imageBillingRuleMissing, imageCreditCost.data?.data.display, t]);
   const { options: cameraOptions } = useFreezoneCameraOptions();
   const cameraSummary = describeCameraSelection(cameraSelection, cameraOptions);
+  // 图墙打开时才去拉远端风格包（2.25MB），所以这个开关必须声明在它前面。
+  const [stylePickerOpen, setStylePickerOpen] = useState(false);
   const {
-    templates: styleTemplates,
+    templates: backendStyleTemplates,
     assetBase: styleAssetBase,
     isLoading: styleTemplatesLoading,
     error: styleTemplatesError,
     retry: retryStyleTemplates,
   } = useFreezoneStyleTemplates();
+  // 内置清单（走项目后端）+ 远端风格包（直连上游 raw）。远端拉不到就是少 130 条，
+  // 内置那 45 条照常可选 —— 不为此把整个风格入口卡住。
+  //
+  // 除了「图墙开着」，已选中远端风格时也要拉：画布只存 id，正文得现查。否则
+  // 用户选完关掉图墙直接生成，风格会因为查不到正文而被后端静默忽略。
+  const cookbookStyles = useCookbookStyles(
+    stylePickerOpen || isCookbookStyleId(styleTemplateId),
+  );
+  const styleTemplates = useMemo(
+    () => [...backendStyleTemplates, ...cookbookStyles],
+    [backendStyleTemplates, cookbookStyles],
+  );
   const selectedStyle = describeStyleSelection(styleTemplateId, styleTemplates);
   const styleSelectionState = resolveStyleSelectionState(
     styleTemplateId,
@@ -869,7 +893,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
   // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
   const [panelExpanded, setPanelExpanded] = useState(false);
-  const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  const [promptGalleryOpen, setPromptGalleryOpen] = useState(false);
   // 打开图墙是个明确的用户动作，顺手把上次失败的清单重拉一遍（成功态是空操作）。
   const openStylePicker = useCallback(() => {
     retryStyleTemplates();
@@ -1132,6 +1156,15 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     }
   }, [id, isGenerating, isTranslatingPrompt, prompt, updateNodeData]);
 
+  const applyEnhancedPrompt = useCallback(
+    (text: string) => {
+      setPromptDraft(text);
+      updateNodeData(id, { prompt: text });
+    },
+    [id, updateNodeData],
+  );
+  const promptEnhance = usePromptEnhance(id, applyEnhancedPrompt);
+
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, resolvedHeight, resolvedWidth, updateNodeInternals]);
@@ -1217,7 +1250,15 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             aperture: cameraSelection?.aperture ?? null,
           }
         : null,
-      style: styleTemplateId ? { templateId: styleTemplateId } : null,
+      // 远端风格包不在后端清单里，正文得跟着请求走，否则后端按未知 id 静默忽略，
+      // 用户选了风格却什么都没发生。内置风格带上也无妨 —— 后端以清单为准。
+      style: styleTemplateId
+        ? {
+            templateId: styleTemplateId,
+            label: selectedStyle?.label ?? null,
+            stylePrompt: selectedStyle?.style_prompt ?? null,
+          }
+        : null,
     };
 
     // 后端不再支持一次出多张，改为按「生成数量」并发调用 N 次接口，每次出
@@ -1372,6 +1413,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     effectiveQuality,
     supportsImageQuality,
     modelId,
+    // 目录参数（模型参数面板填的值）直接进 payload，必须进依赖：否则只改参数、
+    // 不动提示词时闭包不重建，二次提交会把上一次的 modelParams 发出去。
+    data.modelParams,
     orderedReferenceUrls,
     prompt,
     quality,
@@ -2096,6 +2140,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               nodeId={id}
               onInsert={insertContextPaletteEntry}
             />
+            <PromptGalleryChip onOpen={() => setPromptGalleryOpen(true)} />
             <button
               type="button"
               onClick={(event) => {
@@ -2217,6 +2262,18 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             />
           )}
 
+          {/* 提示词画廊：套用走 insertTextAtCursor，和上下文调色盘同一个语义 ——
+              插在光标处，不覆盖用户已经写好的内容。 */}
+          {promptGalleryOpen && (
+            <PromptGalleryModal
+              onApply={(item) => {
+                promptEditorRef.current?.insertTextAtCursor(item.prompt);
+                setPromptGalleryOpen(false);
+              }}
+              onClose={() => setPromptGalleryOpen(false)}
+            />
+          )}
+
           <PromptMentionEditor
             ref={promptEditorRef}
             getMaterials={getMentionMaterials}
@@ -2311,6 +2368,26 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                   <Languages className="h-4 w-4" />
                 )}
               </button>
+              <button
+                type="button"
+                title={t('node.promptEnhance.button')}
+                disabled={
+                  promptEnhance.busy || isGenerating || prompt.trim().length === 0
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  promptEnhance.setOpen(true);
+                }}
+                className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
+                  promptEnhance.busy ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
+                }`}
+              >
+                {promptEnhance.busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+              </button>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <CreditCostPill
@@ -2339,7 +2416,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           </div>
         </OperationPanelShell>
       )}
-      {selected && !isBoxSelecting && !hasActiveOverlay && !panelExpanded && !stylePickerOpen && hasCompletedHistoryRecords(historyRecords) && (
+      {selected && !isBoxSelecting && !hasActiveOverlay && !panelExpanded && !stylePickerOpen && !promptGalleryOpen && hasCompletedHistoryRecords(historyRecords) && (
         <div
           className={`nodrag absolute left-1/2 z-[300] -translate-x-1/2 rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
           style={{
@@ -2433,6 +2510,16 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         allowedMedia={['image']}
         onClose={() => setIsAssetLibraryOpen(false)}
         onConfirm={(selections) => spawnAssetLibraryReferences(selections)}
+      />
+      <EnhancePromptDialog
+        open={promptEnhance.open}
+        onOpenChange={promptEnhance.setOpen}
+        dialects={IMAGE_PROMPT_DIALECTS}
+        defaultDialect="image"
+        busy={promptEnhance.busy}
+        onConfirm={(dialect, strength) => {
+          void promptEnhance.run(prompt, dialect, strength);
+        }}
       />
     </div>
   );

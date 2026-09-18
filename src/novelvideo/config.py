@@ -440,6 +440,20 @@ INDEXTTS2_FAL_ENDPOINT = os.environ.get(
 )
 INDEXTTS2_TIMEOUT_SECONDS = float(os.environ.get("INDEXTTS2_TIMEOUT_SECONDS", "1800"))
 
+# ElevenLabs 凭据的**兜底**来源。
+#
+# 主入口是「渠道管理」里的 elevenlabs 渠道（那把 key 同时供网关转发与项目侧
+# 音色克隆使用）。这组环境变量只在本地没有渠道配置时生效——EE 与容器化部署不写
+# 本地 DB，组织的密钥由控制面统一管，那个部署形态依赖这里的值。解析顺序见
+# `model_gateway_settings.get_effective_elevenlabs_config`。
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+ELEVENLABS_BASE_URL = os.environ.get(
+    "ELEVENLABS_BASE_URL", "https://api.elevenlabs.io"
+)
+ELEVENLABS_TIMEOUT_SECONDS = float(
+    os.environ.get("ELEVENLABS_TIMEOUT_SECONDS", "900")
+)
+
 NEWAPI_BASE_URL = os.environ.get("NEWAPI_BASE_URL", "")
 NEWAPI_API_KEY = os.environ.get("NEWAPI_API_KEY", "")
 

@@ -12,7 +12,7 @@ import {
   useRef,
 } from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
-import { ImageIcon, Maximize2, Sparkles, UploadCloud } from 'lucide-react';
+import { ImageIcon, Loader2, Maximize2, Sparkles, UploadCloud } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -27,6 +27,11 @@ import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { coerceSlotTarget } from '@/features/canvas/domain/mainlineNodeTypes';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
+import { EnhancePromptDialog } from '@/features/canvas/nodes/EnhancePromptDialog';
+import {
+  IMAGE_PROMPT_DIALECTS,
+  usePromptEnhance,
+} from '@/features/canvas/nodes/usePromptEnhance';
 import { ReferenceDetachButton } from '@/features/canvas/nodes/shared/ReferenceDetachButton';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
 import {
@@ -554,6 +559,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     updateNodeData(id, { prompt: nextPrompt });
   }, [id, updateNodeData]);
 
+  const promptEnhance = usePromptEnhance(id, commitPromptDraft);
+
   // 让 prompt 里的 @图N 始终跟随上游图片引用编号：删除 / 重排 / 新增引用连线后，
   // 「图N」会重新编号，这里把 prompt 里的数字一并重写、被删引用的 mention 移除。
   // 有序基线 = incomingImages（去重 URL、连接顺序，与「图N」编号一致）。
@@ -846,6 +853,9 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     data.modelParams,
     capability,
     imageModelsEmpty,
+    // payload 里下发的是推导后的 generationMode（见 handleGenerate 内注释），
+    // 漏进依赖会让「改了生成模式再提交」仍用上一次的模式。
+    generationMode,
     modelTaskAccess,
     selectedAspectRatio.value,
     selectedModel.id,
@@ -1347,6 +1357,23 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
             >
               {t('node.imageEdit.assetLibrary')}
             </button>
+            <button
+              type="button"
+              className="nodrag shrink-0 rounded-lg border border-[rgba(255,255,255,0.1)] bg-white/8 px-3 py-2 text-xs text-text-muted transition hover:bg-white/12 hover:text-text-dark disabled:opacity-50"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                promptEnhance.setOpen(true);
+              }}
+              disabled={promptEnhance.busy || promptDraft.trim().length === 0}
+              title={t('node.promptEnhance.button')}
+            >
+              {promptEnhance.busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+            </button>
             {upstreamTextContents.map((content) => (
               <ReferenceTextChip
                 key={`upstream-text-${content.nodeId}`}
@@ -1567,6 +1594,16 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         allowedMedia={['image']}
         onClose={() => setIsAssetLibraryOpen(false)}
         onConfirm={(selections) => spawnAssetLibraryReferences(selections)}
+      />
+      <EnhancePromptDialog
+        open={promptEnhance.open}
+        onOpenChange={promptEnhance.setOpen}
+        dialects={IMAGE_PROMPT_DIALECTS}
+        defaultDialect="image"
+        busy={promptEnhance.busy}
+        onConfirm={(dialect, strength) => {
+          void promptEnhance.run(promptDraft, dialect, strength);
+        }}
       />
     </div>
   );

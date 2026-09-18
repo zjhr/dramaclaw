@@ -5,6 +5,7 @@ import type { NodeTypes } from '@xyflow/react';
 import { withLodShell } from './LodShellNode';
 import { AudioNode } from './AudioNode';
 import { BeatContextNode } from './BeatContextNode';
+import { DirectorDeskNode } from './DirectorDeskNode';
 import { GroupNode } from './GroupNode';
 import { ImageEditNode } from './ImageEditNode';
 import { ImageGenNode } from './ImageGenNode';
@@ -27,6 +28,7 @@ import { VideoStoryNode } from './VideoStoryNode';
 export const nodeTypes: NodeTypes = {
   audioNode: withLodShell('audioNode', AudioNode),
   beatContextNode: withLodShell('beatContextNode', BeatContextNode),
+  directorDeskNode: withLodShell('directorDeskNode', DirectorDeskNode),
   exportImageNode: withLodShell('exportImageNode', ImageNode),
   groupNode: withLodShell('groupNode', GroupNode),
   imageGenNode: withLodShell('imageGenNode', ImageGenNode),
@@ -45,4 +47,4 @@ export const nodeTypes: NodeTypes = {
   videoStoryNode: withLodShell('videoStoryNode', VideoStoryNode),
 };
 
-export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };
+export { AudioNode, BeatContextNode, DirectorDeskNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };

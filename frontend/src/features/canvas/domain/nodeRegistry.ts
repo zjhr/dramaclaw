@@ -21,6 +21,7 @@ import {
   type StyleNodeData,
   type TextAnnotationNodeData,
   type ThreeDWorldNodeData,
+  type DirectorDeskNodeData,
   type UploadImageNodeData,
   type VideoComposeNodeData,
   type VideoNodeData,
@@ -35,7 +36,7 @@ import {
 } from '../ui/ProviderModelPicker';
 import { readLastVideoModel } from './lastVideoModel';
 
-export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose';
+export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose' | 'directorDesk';
 
 export interface CanvasNodeCapabilities {
   toolbar: boolean;
@@ -593,6 +594,38 @@ const threeDWorldNodeDefinition: CanvasNodeDefinition<ThreeDWorldNodeData> = {
   }),
 };
 
+// 3D 导演台：节点只是一层壳，真正的编辑器是 public/director-desk/ 里的独立 SPA，
+// 在弹窗内的 iframe 里跑。上游收文本（剧本/描述）与图片（全景图或参考图），
+// 下游产出截图与导出视频，所以归到图片类下游候选里那三种消费方。
+const directorDeskNodeDefinition: CanvasNodeDefinition<DirectorDeskNodeData> = {
+  type: CANVAS_NODE_TYPES.directorDesk,
+  menuLabelKey: 'node.menu.directorDesk',
+  menuIcon: 'directorDesk',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: false,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: true,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.directorDesk],
+    isOpen: false,
+    directorProjectRef: null,
+    videoUrl: null,
+    previewImageUrl: null,
+    sourceNodeId: null,
+    sourceKind: null,
+    errorMessage: null,
+  }),
+};
+
 const skillNodeDefinition: CanvasNodeDefinition<SkillNodeData> = {
   type: CANVAS_NODE_TYPES.skill,
   menuLabelKey: 'node.menu.skill',
@@ -660,6 +693,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.script]: scriptNodeDefinition,
   [CANVAS_NODE_TYPES.pano360Viewer]: pano360ViewerNodeDefinition,
   [CANVAS_NODE_TYPES.threeDWorld]: threeDWorldNodeDefinition,
+  [CANVAS_NODE_TYPES.directorDesk]: directorDeskNodeDefinition,
   [CANVAS_NODE_TYPES.skill]: skillNodeDefinition,
   [CANVAS_NODE_TYPES.style]: styleNodeDefinition,
 };
@@ -801,11 +835,21 @@ export const DOWNSTREAM_SPAWN_WHITELIST: Partial<
   Record<CanvasNodeType, readonly CanvasNodeType[]>
 > = {
   // 视频：仅允许 文本 / 视频 / 视频合成 / 脚本 —— 图片、音频、多版本不该作为下游。
+  // 导演台是例外：它以「预演 + 导出参考视频」的方式给视频节点供给素材，用户在视频
+  // 节点上直接建一个导演台是主要入口，所以两侧 + 菜单都留了它（左侧见
+  // UPSTREAM_SPAWN_WHITELIST[video]）。
   [CANVAS_NODE_TYPES.video]: [
     CANVAS_NODE_TYPES.textAnnotation,
     CANVAS_NODE_TYPES.video,
     CANVAS_NODE_TYPES.videoCompose,
     CANVAS_NODE_TYPES.script,
+    CANVAS_NODE_TYPES.directorDesk,
+  ],
+  // 导演台：产物是截图与导出视频，下游只接图片类与视频。
+  [CANVAS_NODE_TYPES.directorDesk]: [
+    CANVAS_NODE_TYPES.video,
+    CANVAS_NODE_TYPES.imageGen,
+    CANVAS_NODE_TYPES.exportImage,
   ],
   // 音频：下游只有视频（声轨素材）与视频合成（音频轨）读得懂。
   [CANVAS_NODE_TYPES.audio]: [CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.videoCompose],
@@ -853,11 +897,18 @@ export const UPSTREAM_SPAWN_WHITELIST: Partial<
     CANVAS_NODE_TYPES.upload,
   ],
   // 视频节点：上游仅允许 文本 / 图片 / 音频，跟 NodeSpawnPlusOverlay 左侧「+」
-  // 按钮的白名单保持一致。
+  // 按钮的白名单保持一致。导演台补进来是因为它会往视频节点回传导出视频 —— 用户
+  // 从一个视频节点出发建导演台，是这个节点最常见的入口。
   [CANVAS_NODE_TYPES.video]: [
     CANVAS_NODE_TYPES.textAnnotation,
     CANVAS_NODE_TYPES.imageGen,
     CANVAS_NODE_TYPES.audio,
+    CANVAS_NODE_TYPES.directorDesk,
+  ],
+  // 导演台：上游吃文本（剧本/描述）与图片（全景图/参考图）。
+  [CANVAS_NODE_TYPES.directorDesk]: [
+    CANVAS_NODE_TYPES.textAnnotation,
+    CANVAS_NODE_TYPES.imageGen,
   ],
 };
 

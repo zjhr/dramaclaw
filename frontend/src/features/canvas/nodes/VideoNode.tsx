@@ -2748,6 +2748,11 @@ export const VideoNode = memo(
       supportsAllReference,
       supportsHumanReview,
       modelId,
+      // payload 下发的是 selectedVideoModel.catalogId（不是裸 modelId）。目录在
+      // window.focus 时会强制刷新，只有 modelId 进依赖时闭包不重建，会把上一份
+      // 目录的 catalogId 提交出去——后端按 catalogId 的 schema 过滤 model_params，
+      // 对不上的参数会被静默丢弃（见 freezone.py 的 _resolve_catalog_request）。
+      selectedVideoModel,
       prompt,
       quality,
       refreshHistory,

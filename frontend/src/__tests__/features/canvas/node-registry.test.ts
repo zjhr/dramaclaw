@@ -182,6 +182,7 @@ describe("连线菜单候选", () => {
       CANVAS_NODE_TYPES.textAnnotation,
       CANVAS_NODE_TYPES.imageGen,
       CANVAS_NODE_TYPES.audio,
+      CANVAS_NODE_TYPES.directorDesk,
     ]);
     expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.imageGen)).toEqual([
       CANVAS_NODE_TYPES.textAnnotation,
@@ -195,6 +196,77 @@ describe("连线菜单候选", () => {
     // 图片类节点的下游不含音频。
     expect(getDownstreamSpawnTypes(CANVAS_NODE_TYPES.imageGen)).not.toContain(
       CANVAS_NODE_TYPES.audio,
+    );
+  });
+});
+
+describe("3D 导演台节点", () => {
+  it("类型、注册表与创建菜单都接上了", () => {
+    expect(CANVAS_NODE_TYPES.directorDesk).toBe("directorDeskNode");
+
+    const definition = canvasNodeDefinitions[CANVAS_NODE_TYPES.directorDesk];
+    expect(definition).toBeDefined();
+    expect(definition.visibleInMenu).toBe(true);
+    expect(definition.menuLabelKey).toBe("node.menu.directorDesk");
+    expect(getMenuNodeDefinitions().map((item) => item.type)).toContain(
+      CANVAS_NODE_TYPES.directorDesk,
+    );
+  });
+
+  it("默认数据带着产物字段与工程快照引用", () => {
+    const data = canvasNodeDefinitions[CANVAS_NODE_TYPES.directorDesk].createDefaultData();
+    expect(data).toMatchObject({
+      isOpen: false,
+      directorProjectRef: null,
+      videoUrl: null,
+      previewImageUrl: null,
+    });
+    expect(typeof data.displayName).toBe("string");
+    expect(data.displayName).not.toBe("");
+  });
+
+  it("两侧都能连上视频节点，且两侧 + 菜单都给出入口", () => {
+    // 建边规则：导演台 → 视频（导出视频当参考素材）、文本 → 导演台（剧本/描述）。
+    expect(
+      isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.directorDesk, CANVAS_NODE_TYPES.video),
+    ).toBe(true);
+    expect(
+      isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.textAnnotation, CANVAS_NODE_TYPES.directorDesk),
+    ).toBe(true);
+    expect(
+      isManualConnectionAllowed(CANVAS_NODE_TYPES.directorDesk, CANVAS_NODE_TYPES.video),
+    ).toBe(true);
+    expect(
+      isManualConnectionAllowed(CANVAS_NODE_TYPES.textAnnotation, CANVAS_NODE_TYPES.directorDesk),
+    ).toBe(true);
+
+    // 视频节点右侧（下游）与左侧（上游）都能建出导演台。
+    expect(getDownstreamSpawnTypes(CANVAS_NODE_TYPES.video)).toContain(
+      CANVAS_NODE_TYPES.directorDesk,
+    );
+    expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.video)).toContain(
+      CANVAS_NODE_TYPES.directorDesk,
+    );
+
+    // 导演台自己的两侧 + 菜单：上游收文本/图片。
+    expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.directorDesk)).toEqual([
+      CANVAS_NODE_TYPES.textAnnotation,
+      CANVAS_NODE_TYPES.imageGen,
+    ]);
+
+    // 下游声明的产品意图是「视频 + 图片 + 结果图」。
+    expect([...DOWNSTREAM_SPAWN_WHITELIST[CANVAS_NODE_TYPES.directorDesk]!].sort()).toEqual(
+      [
+        CANVAS_NODE_TYPES.video,
+        CANVAS_NODE_TYPES.imageGen,
+        CANVAS_NODE_TYPES.exportImage,
+      ].sort(),
+    );
+    // 但结果图节点的 connectMenu.fromSource 是 false（它由导出动作创建，不进任何
+    // + 菜单），所以运行时永远落不到候选里。这里断言的是用户实际看得见的菜单：
+    // 顺序由注册表声明顺序决定，所以按集合比较。
+    expect(new Set(getDownstreamSpawnTypes(CANVAS_NODE_TYPES.directorDesk))).toEqual(
+      new Set([CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.imageGen]),
     );
   });
 });

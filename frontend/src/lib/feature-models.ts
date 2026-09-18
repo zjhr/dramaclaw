@@ -68,6 +68,7 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
     features: [
       { id: "FREEZONE_TRANSLATION", defaultModel: "DC-freezone-translator-LLM" },
       { id: "FREEZONE_TEXT_WRITER", defaultModel: "DC-freezone-text-writer-LLM" },
+      { id: "FREEZONE_PROMPT_ENHANCE", defaultModel: "DC-freezone-text-writer-LLM" },
       { id: "FREEZONE_STORY_SCRIPT", defaultModel: "DC-freezone-story-script-writer-LLM" },
       {
         id: "FREEZONE_VISION",
@@ -131,6 +132,7 @@ export const FEATURE_MODEL_PRODUCT_GROUPS: readonly FeatureModelGroup[] = [
     features: [
       productFeature("FREEZONE_TRANSLATION"),
       productFeature("FREEZONE_TEXT_WRITER"),
+      productFeature("FREEZONE_PROMPT_ENHANCE"),
       productFeature("FREEZONE_STORY_SCRIPT"),
       productFeature("FREEZONE_VISION"),
       productFeature("STAGING_PROP"),

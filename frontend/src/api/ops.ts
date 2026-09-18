@@ -128,6 +128,13 @@ export interface FreezoneGenCamera {
 export interface FreezoneGenStyle {
   /** id from /freezone/image/style-templates */
   templateId?: string | null;
+  /**
+   * 展示名与提示词正文。只对「不在后端清单里」的风格源有用 —— 前端有一部分
+   * 风格是运行时从远端拉的，后端查不到那个 id，会把这两个字段当兜底。
+   * 内置风格不传也一样，后端以清单为准。
+   */
+  label?: string | null;
+  stylePrompt?: string | null;
 }
 
 export interface FreezoneGenPayload extends FreezoneNodeContext {
@@ -169,9 +176,11 @@ export interface FreezoneJobRef {
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
+    | "freezone_audio_sfx"
     | "freezone_image_reverse_prompt"
     | "freezone_text_generate"
     | "freezone_text_translate"
+    | "freezone_text_enhance"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
     | "stage_asset";
@@ -562,7 +571,15 @@ export async function submitFreezoneGen(
       }
     : null;
   const style = payload.style?.templateId
-    ? { template_id: payload.style.templateId }
+    ? {
+        template_id: payload.style.templateId,
+        // 后端只在内置清单里查不到 template_id 时才看这两个字段。
+        // 空串直接不发，省得请求体里堆一堆没用的键。
+        ...(payload.style.label ? { label: payload.style.label } : {}),
+        ...(payload.style.stylePrompt
+          ? { style_prompt: payload.style.stylePrompt }
+          : {}),
+      }
     : null;
   // 后端只能按静态路径打开引用图：任何 `data:` base64 先上传换成上传 URL，
   // 其余 http(s)/static 原样保留（仅剥掉 `?v=` 缓存串）。统一在此兜底，
@@ -1099,6 +1116,23 @@ export async function fetchFreezoneImageModels(
 ): Promise<FreezoneImageModelInfo[]> {
   const payload = await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/image/models`,
+  );
+  return coerceModelList(payload);
+}
+
+// /freezone/audio/models -------------------------------------------------- //
+
+/**
+ * 音频模型列表（含 ElevenLabs 直连项）。
+ *
+ * 音频节点原先没有模型选择器，只能吃后端硬编码默认值；这个列表让它和图片/
+ * 视频节点一样能选模型——选了映射到虚拟 provider `elevenlabs` 的模型就走官方直连。
+ */
+export async function fetchFreezoneAudioModels(
+  project: string,
+): Promise<FreezoneImageModelInfo[]> {
+  const payload = await apiCall<unknown>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/models`,
   );
   return coerceModelList(payload);
 }
@@ -1958,9 +1992,11 @@ export async function fetchFreezoneJobResult(
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
+    | "freezone_audio_sfx"
     | "freezone_image_reverse_prompt"
     | "freezone_text_generate"
     | "freezone_text_translate"
+    | "freezone_text_enhance"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
     | "stage_asset",
@@ -2078,6 +2114,8 @@ export async function fetchFreezoneAudioReferences(
 export interface FreezoneAudioSpeechPayload {
   /** 要合成的台词 / 旁白文本。 */
   text: string;
+  /** 媒体模型名；留空用后端默认。映射到虚拟 provider `elevenlabs` 时走官方直连。 */
+  model?: string;
   /** 情绪提示词，留空则用项目解说风格。例："紧张、压低声音、带一点恐惧感"。 */
   emotionPrompt?: string;
   /** 声线引用；不传则用项目默认解说人。 */
@@ -2125,6 +2163,8 @@ export async function submitFreezoneAudioSpeech(
 export interface FreezoneAudioMusicPayload {
   /** 音乐描述 prompt（风格、乐器、氛围等）；映射到后端 `input`。 */
   prompt: string;
+  /** 媒体模型名；留空用后端默认。映射到虚拟 provider `elevenlabs` 时走官方直连。 */
+  model?: string;
   /** 生成长度（毫秒），范围 3000–600000，留空走后端默认 30000。 */
   musicLengthMs?: number;
   /** 是否强制纯音乐，留空走后端默认 true。 */
@@ -2150,11 +2190,50 @@ export async function submitFreezoneAudioMusic(
       method: "POST",
       json: {
         input: payload.prompt,
+        model: payload.model,
         music_length_ms: payload.musicLengthMs,
         force_instrumental: payload.forceInstrumental,
         respect_sections_durations: payload.respectSectionsDurations,
         target_episode: payload.targetEpisode,
         target_beat: payload.targetBeat,
+      },
+    },
+  );
+}
+
+// /freezone/audio/sound-effect ------------------------------------------- //
+
+export interface FreezoneAudioSfxPayload {
+  /** 音效描述 prompt。 */
+  prompt: string;
+  /** 媒体模型映射里的音效模型名；留空时由后端走默认路径。 */
+  model?: string;
+  /** 目标时长（秒）。留空由模型按描述自选。 */
+  durationSeconds?: number;
+  /** 提示词影响力，0–1。越高越贴近描述，越低越发散。 */
+  promptInfluence?: number;
+}
+
+/**
+ * 文本生成音效。
+ *
+ * 音效只有 ElevenLabs 一条路（无网关版本可回退），后端缺 key 时会直接报错，
+ * 不会静默产出空文件。
+ */
+export async function submitFreezoneAudioSfx(
+  project: string,
+  payload: FreezoneAudioSfxPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/sound-effect`,
+    {
+      method: "POST",
+      json: {
+        input: payload.prompt,
+        // 只在非空时携带，保持未选模型时的请求体逐字不变。
+        ...(payload.model ? { model: payload.model } : {}),
+        duration_seconds: payload.durationSeconds,
+        prompt_influence: payload.promptInfluence ?? 0.3,
       },
     },
   );
@@ -2290,6 +2369,66 @@ export async function fetchFreezoneTextTranslateResult(
 ): Promise<FreezoneTextTranslateResult> {
   return await apiCall<FreezoneTextTranslateResult>(
     `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_text_translate/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+// /freezone/text/enhance ------------------------------------------------ //
+
+/**
+ * 提示词强化方言。Seedance 要中文括号链式结构 + `@图片N`，MiniMax H3 要英文结构
+ * 字段 + `<Picture N>`，Agnes 要三段方括号标题——套错方言产出的是执行端读不懂
+ * 的正文，所以由调用方按节点类型/选中模型点名，不从文本内容猜。
+ */
+export type FreezonePromptDialect =
+  | "image"
+  | "audio-music"
+  | "video-generic"
+  | "seedance-2.0"
+  | "seedance-2.5"
+  | "minimax-h3"
+  | "agnes-2.5";
+
+/** 改写力度。conservative 只补结构缺口，aggressive 允许扩写画面细节。 */
+export type FreezonePromptStrength = "conservative" | "standard" | "aggressive";
+
+export interface FreezoneTextEnhancePayload extends FreezoneNodeContext {
+  text: string;
+  dialect: FreezonePromptDialect;
+  strength?: FreezonePromptStrength;
+}
+
+export async function submitFreezoneTextEnhance(
+  project: string,
+  payload: FreezoneTextEnhancePayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/text/enhance`,
+    {
+      method: "POST",
+      json: {
+        text: payload.text,
+        dialect: payload.dialect,
+        strength: payload.strength ?? "standard",
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+export interface FreezoneTextEnhanceResult {
+  enhanced_text: string;
+  dialect: FreezonePromptDialect;
+  strength: FreezonePromptStrength;
+  /** 本次补全的结构要素摘要，供 UI 展示「强化了什么」。 */
+  changes: string[];
+}
+
+export async function fetchFreezoneTextEnhanceResult(
+  project: string,
+  jobId: string,
+): Promise<FreezoneTextEnhanceResult> {
+  return await apiCall<FreezoneTextEnhanceResult>(
+    `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_text_enhance/${encodeURIComponent(jobId)}/result`,
   );
 }
 

@@ -58,6 +58,12 @@ vi.mock("@/features/canvas/hooks/useFreezoneStyleTemplates", () => ({
   }),
 }));
 
+// 远端风格包走 TanStack Query，没包 provider 会直接抛。这里只验 StyleNode 的
+// 行为，给个空数组即可 —— 合并逻辑另有 style-cookbook.test.ts 覆盖。
+vi.mock("@/features/canvas/hooks/useCookbookStyles", () => ({
+  useCookbookStyles: () => [],
+}));
+
 function seedCanvas(options: { withImageNode: boolean; templateId: string | null }) {
   const nodes: CanvasNode[] = [
     {

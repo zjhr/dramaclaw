@@ -64,6 +64,41 @@ server {
         add_header Cross-Origin-Resource-Policy "same-origin" always;
     }
 
+    # Vendored 3D director desk (frontend/public/director-desk). It is a separate
+    # Vite SPA loaded in a same-origin iframe by the canvas directorDeskNode, so
+    # this path must NOT inherit the site-wide X-Frame-Options: DENY /
+    # frame-ancestors 'none' above — DENY rejects same-origin framing too, which
+    # leaves the node blank in production while still working in local dev (where
+    # no security headers are set at all).
+    #
+    # The policy below is re-declared for the sub-app rather than inherited:
+    #   * script-src 'self' — the shell's only script is a hashed ./assets/*.js
+    #     module; the root block's sha256 hash pins the main SPA bundle and would
+    #     block the director desk's own hashed chunks.
+    #   * 'wasm-unsafe-eval' — the gaussian-splat experiment page under
+    #     examples/experiments compiles WebAssembly. It permits wasm compilation
+    #     only, not string-to-code eval; 'unsafe-eval' is deliberately NOT granted.
+    #   * worker-src / media-src blob: — the splat worker and the video export
+    #     path both go through createObjectURL blobs.
+    # Referrer-Policy and X-Content-Type-Options match every other location.
+    location ^~ /director-desk/ {
+        try_files $uri $uri/ /director-desk/index.html;
+
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'${csp_upgrade}" always;
+        add_header Strict-Transport-Security $hsts_value always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # The vendored shell references its bundles relatively (./assets/...), which
+    # only resolves against /director-desk/. Serve the bare path as a redirect so
+    # the relative refs cannot be resolved against the site root.
+    location = /director-desk {
+        return 301 /director-desk/;
+    }
+
     # Exact organization-logo path only. The EE backend owns validation and
     # trusted response metadata; malformed paths fall through to /assets/ =404.
     location ~ "^/assets/org-brand/([A-Za-z0-9_-]{1,64})/logo$" {

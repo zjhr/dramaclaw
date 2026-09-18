@@ -427,6 +427,20 @@ class FreezoneImageStyleConfig(BaseModel):
     """图片节点风格模板参数。"""
 
     template_id: str = Field(description="风格模板 id")
+    label: str = Field(
+        default="",
+        description=(
+            "风格展示名。仅当 template_id 不在内置清单里时用于兜底,"
+            "内置风格一律以服务端清单为准。"
+        ),
+    )
+    style_prompt: str = Field(
+        default="",
+        description=(
+            "风格提示词正文。同样只在内置清单里查不到 template_id 时才用 —— "
+            "前端有些风格源是运行时从远端拉的,不在服务端清单里。"
+        ),
+    )
 
 
 class FreezoneGenRequest(BaseModel):
@@ -1577,6 +1591,14 @@ class FreezoneAudioSpeechRequest(BaseModel):
         description=("要合成的台词/旁白文本。"),
         examples=["她低声说：终于等到这一天了。"],
     )
+    model: str = Field(
+        default="",
+        description=(
+            "媒体模型名（见媒体模型映射表）。留空时用现有默认路径；"
+            "填 `eleven-tts` 这类映射到 elevenlabs 渠道的模型时，音色在项目侧"
+            "克隆、合成走网关。"
+        ),
+    )
     emotion_prompt: str = Field(
         default="",
         description=(
@@ -1602,6 +1624,43 @@ class FreezoneAudioSpeechRequest(BaseModel):
         ge=1,
         description="可选：目标主线 beat。提供后，任务结果会返回 beat_audio 推送目标",
     )
+
+
+class FreezoneAudioSfxRequest(BaseModel):
+    """Freezone 音频节点：文本生成音效请求。
+
+    音效是新增链路，**只有 ElevenLabs 一条路**（没有网关版本可回退），
+    所以没配 key 是配置错误，接口会直接报错而不是静默产出空文件。
+    """
+
+    input: str = Field(
+        description="音效描述 prompt。",
+        examples=["thunder cracking over a distant mountain, rain hissing"],
+    )
+    duration_seconds: Optional[float] = Field(
+        default=None,
+        ge=0.5,
+        le=22.0,
+        description="目标时长（秒）。留空由模型按描述自选。",
+    )
+    model: str = Field(
+        default="",
+        description=(
+            "媒体模型映射里的音效模型名；配了就经网关生成，留空则走默认路径。"
+        ),
+    )
+    prompt_influence: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="提示词影响力。越高越贴近描述，越低越发散。",
+    )
+    response_format: Literal["mp3"] = Field(
+        default="mp3",
+        description="音频返回格式。",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 
 
 class FreezoneAudioMusicRequest(BaseModel):
@@ -1700,6 +1759,57 @@ class FreezoneTextTranslateData(BaseModel):
 class FreezoneTextTranslateResponse(BaseModel):
     ok: Literal[True] = True
     data: FreezoneTextTranslateData
+
+
+FreezonePromptDialect = Literal[
+    "image",
+    "audio-music",
+    "video-generic",
+    "seedance-2.0",
+    "seedance-2.5",
+    "minimax-h3",
+    "agnes-2.5",
+]
+"""提示词强化方言：图片走通用视觉描述符，音乐走音乐描述结构，视频按目标模型各自的语法重写。"""
+
+FreezonePromptStrength = Literal["conservative", "standard", "aggressive"]
+"""改写力度。conservative 只补结构缺口，aggressive 允许扩写画面细节。"""
+
+
+class FreezoneTextEnhanceRequest(BaseModel):
+    """Freezone 文本工具：提示词强化请求。
+
+    ``dialect`` 不只是换个措辞——Seedance 用中文括号链式结构 + ``@图片N``，
+    MiniMax H3 用英文结构字段 + ``<Picture N>``，Agnes 用三段方括号标题。
+    套错方言会生成执行端读不懂的正文，所以由调用方显式点名，不从文本猜。
+    """
+
+    text: str = Field(description="待强化的原始提示词")
+    dialect: FreezonePromptDialect = Field(
+        default="image",
+        description="目标模型方言。图片节点用 image，视频节点按选中模型传对应方言",
+    )
+    strength: FreezonePromptStrength = Field(
+        default="standard",
+        description="改写力度。conservative 保留原句式只补缺口，aggressive 允许扩写",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+
+
+class FreezoneTextEnhanceData(BaseModel):
+    enhanced_text: str
+    dialect: FreezonePromptDialect
+    strength: FreezonePromptStrength
+    changes: list[str] = Field(
+        default_factory=list,
+        description="本次补全的结构要素摘要，供前端展示「强化了什么」",
+    )
+
+
+class FreezoneTextEnhanceResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneTextEnhanceData
 
 
 class FreezoneStoryScriptCharacterRef(BaseModel):

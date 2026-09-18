@@ -46,6 +46,7 @@ from novelvideo.api.schemas import (
     FreezoneAssetLibraryFolderRequest,
     FreezoneAssetLibraryItemPatchRequest,
     FreezoneAudioMusicRequest,
+    FreezoneAudioSfxRequest,
     FreezoneAudioSeparateRequest,
     FreezoneAudioSpeechRequest,
     FreezoneCharacterMultiViewRequest,
@@ -63,6 +64,8 @@ from novelvideo.api.schemas import (
     FreezoneMarkDetectRequest,
     FreezoneMarkDetectResponse,
     FreezoneOutpaintRequest,
+    FreezonePromptDialect,
+    FreezonePromptStrength,
     FreezoneRedrawRequest,
     FreezoneRelightRequest,
     FreezoneScene360Request,
@@ -71,6 +74,7 @@ from novelvideo.api.schemas import (
     FreezoneStoryScriptCharacterRef,
     FreezoneStoryScriptGenerateRequest,
     FreezoneTemplateEditRequest,
+    FreezoneTextEnhanceRequest,
     FreezoneTextGenerateRequest,
     FreezoneTextTranslateRequest,
     FreezoneThreeDViewerScreenshotRequest,
@@ -119,6 +123,7 @@ from novelvideo.freezone.audio_node import (
     VoicePrerequisiteError,
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
+    freezone_audio_sfx_output_path,
     freezone_audio_speech_output_path,
     generate_freezone_audio_speech,
     is_readable_audio_file,
@@ -271,6 +276,7 @@ from novelvideo.freezone.slots import (
 )
 from novelvideo.freezone.text_node import (
     bind_story_script_assets,
+    enhance_freezone_prompt,
     generate_freezone_text,
     generate_freezone_story_script,
     generate_freezone_story_script_with_vision,
@@ -2725,6 +2731,7 @@ async def _enqueue_or_start_freezone_media_job(
         "freezone_audio_separate",
         "freezone_video_compose",
         "freezone_audio_eleven_music",
+        "freezone_audio_sfx",
     ],
     job_id: str,
     payload: dict,
@@ -6159,6 +6166,10 @@ def _text_generate_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
 
 
+def _text_enhance_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_text_enhance") / f"{job_id}.json"
+
+
 def _freezone_history_preview(text: str, limit: int = 240) -> str:
     compact = " ".join(str(text or "").split())
     if len(compact) <= limit:
@@ -6308,6 +6319,124 @@ def _start_freezone_text_translate_task(
                 status="failed",
                 media_type="text",
                 node_type=node_type,
+                input_preview=_freezone_history_preview(text),
+                prompt=text,
+                error=str(exc),
+            )
+            task_manager.fail_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                error=str(exc),
+                current_task="failed",
+                logs=[f"错误: {exc}"],
+                metadata=metadata,
+            )
+
+    asyncio.create_task(_runner())
+
+
+def _start_freezone_prompt_enhance_task(
+    *,
+    username: str,
+    project: str,
+    project_dir: Path,
+    job_id: str,
+    text: str,
+    dialect: FreezonePromptDialect,
+    strength: FreezonePromptStrength,
+    canvas_id: str | None = None,
+    node_id: str | None = None,
+) -> None:
+    task_type = "freezone_text_enhance"
+    task_manager = get_task_manager()
+    metadata = {
+        "job_id": job_id,
+        "canvas_id": canvas_id or "",
+        "node_id": node_id or "",
+        "dialect": dialect,
+        "strength": strength,
+    }
+    task_manager.create_task(
+        task_type,
+        username,
+        project,
+        episode=0,
+        scope=job_id,
+        status="starting",
+        metadata=metadata,
+    )
+
+    async def _runner() -> None:
+        logs = ["开始强化提示词"]
+        try:
+            task_manager.update_progress(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                progress=0.1,
+                current_task="enhancing_prompt",
+                logs=logs,
+            )
+            enhanced_text, changes = await enhance_freezone_prompt(
+                text=text,
+                dialect=dialect,
+                strength=strength,
+            )
+            payload = {
+                "enhanced_text": enhanced_text,
+                "dialect": dialect,
+                "strength": strength,
+                "changes": changes,
+            }
+            out = _text_enhance_output_path(project_dir, job_id)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            history_record = _record_freezone_node_history(
+                project_dir=project_dir,
+                canvas_id=canvas_id,
+                node_id=node_id,
+                task_type=task_type,
+                username=username,
+                project=project,
+                job_id=job_id,
+                status="completed",
+                media_type="text",
+                node_type="generic",
+                input_preview=_freezone_history_preview(text),
+                prompt=text,
+                result={"output_format": "json", **payload},
+            )
+            result = {"output_format": "json"}
+            if history_record:
+                result["generation_history_record"] = history_record
+            task_manager.complete_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                result=result,
+                current_task="completed",
+                logs=["提示词强化完成"],
+                metadata=metadata,
+            )
+        except Exception as exc:
+            _record_freezone_node_history(
+                project_dir=project_dir,
+                canvas_id=canvas_id,
+                node_id=node_id,
+                task_type=task_type,
+                username=username,
+                project=project,
+                job_id=job_id,
+                status="failed",
+                media_type="text",
+                node_type="generic",
                 input_preview=_freezone_history_preview(text),
                 prompt=text,
                 error=str(exc),
@@ -6539,6 +6668,72 @@ async def freezone_text_translate(
 
     return _accepted_job_response(
         task_type="freezone_text_translate",
+        username=username,
+        project=project_name,
+        job_id=job_id,
+    )
+
+
+@router.post(
+    "/projects/{project}/freezone/text/enhance",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_TEXT],
+)
+async def freezone_text_enhance(
+    project: str,
+    body: FreezoneTextEnhanceRequest,
+    user: dict = Depends(get_api_user),
+):
+    """文本工具：按目标模型方言强化节点提示词。
+
+    方言由调用方点名（图片节点传 image，视频节点按选中模型传对应方言）：
+    Seedance 要中文括号链式结构，MiniMax H3 要英文结构字段，Agnes 要三段方括号
+    标题——套错方言产出的是执行端读不懂的正文，所以不从文本内容猜。
+    """
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "text is required")
+
+    try:
+        job_id = _new_job_id()
+        if ctx is not None:
+            return await _enqueue_freezone_background_job(
+                ctx=ctx,
+                project_dir=project_dir,
+                task_type="freezone_text_enhance",
+                job_id=job_id,
+                payload={
+                    "text": text,
+                    "dialect": body.dialect,
+                    "strength": body.strength,
+                    "canvas_id": body.canvas_id or "",
+                    "node_id": body.node_id or "",
+                    "billing": {
+                        "billable_chars": count_billable_text_chars(text),
+                    },
+                },
+            )
+        _start_freezone_prompt_enhance_task(
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            job_id=job_id,
+            text=text,
+            dialect=body.dialect,
+            strength=body.strength,
+            canvas_id=body.canvas_id or None,
+            node_id=body.node_id or None,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start text enhance task", exc)
+        raise HTTPException(503, f"failed to start text enhance task: {exc}") from exc
+
+    return _accepted_job_response(
+        task_type="freezone_text_enhance",
         username=username,
         project=project_name,
         job_id=job_id,
@@ -9800,6 +9995,9 @@ async def freezone_audio_speech(
                 job_id=job_id,
                 payload={
                     "text": body.text,
+                    # 只在显式选了模型时才带这个键：没选时 payload 必须逐字不变
+                    # （`tests/test_freezone_audio_enqueue_projection.py` 盯着这条）。
+                    **({"model": body.model} if body.model else {}),
                     "emotion_prompt": body.emotion_prompt,
                     "voice_ref": voice_ref_payload,
                     "account_voice_username": account_voice_username,
@@ -9895,6 +10093,100 @@ async def freezone_audio_eleven_music(
 
     return _accepted_job_response(
         task_type="freezone_audio_eleven_music",
+        username=username,
+        project=project_name,
+        job_id=job_id,
+    )
+
+
+@router.get(
+    "/projects/{project}/freezone/audio/models",
+    tags=[TAG_FREEZONE_AUDIO],
+)
+async def freezone_audio_models(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """音频：返回可见的音频模型（含 ElevenLabs 直连项）。
+
+    音频节点原先没有模型选择，只能吃后端硬编码的默认值。这个接口把音频模型
+    拉进和图片/视频同一套目录，画布上才能选到 ElevenLabs。
+    """
+    ctx, _username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    catalog = await _scoped_media_model_catalog(
+        "audio",
+        requester_user_id=ctx.requester_user_id,
+    )
+    return {"ok": True, "data": catalog or []}
+
+
+@router.post(
+    "/projects/{project}/freezone/audio/sound-effect",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_AUDIO],
+)
+async def freezone_audio_sfx(
+    project: str,
+    body: FreezoneAudioSfxRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Freezone 音频节点：文本生成音效。
+
+    配了媒体模型映射（如 `eleven-sfx` / `senseaudio-sfx-1.0`）就走网关；没配时
+    退回 ElevenLabs 官方 API——那条路没有网关版本，缺 key 由
+    `generate_freezone_audio_sound_effect` 直接报错，而不是静默产出空文件。
+    """
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    prompt = body.input.strip()
+    if not prompt:
+        raise HTTPException(400, "input is required")
+    if len(prompt) > 4100:
+        raise HTTPException(400, "input must be <= 4100 characters")
+
+    try:
+        job_id = _new_job_id()
+        if ctx is not None:
+            from novelvideo.api.routes.model_credits import (
+                freezone_audio_task_billing,
+            )
+
+            return await _enqueue_freezone_background_job(
+                ctx=ctx,
+                project_dir=project_dir,
+                task_type="freezone_audio_sfx",
+                job_id=job_id,
+                payload={
+                    "input": prompt,
+                    # 只在非空时携带：未选模型时请求体保持逐字不变。
+                    **(
+                        {"model": body.model.strip()}
+                        if str(body.model or "").strip()
+                        else {}
+                    ),
+                    "duration_seconds": body.duration_seconds,
+                    "prompt_influence": body.prompt_influence,
+                    "response_format": body.response_format,
+                    "billing": freezone_audio_task_billing(
+                        "freezone.audio_sfx",
+                        {
+                            "operation": "sfx",
+                            "duration_seconds": body.duration_seconds,
+                        },
+                    ),
+                },
+            )
+        _raise_project_context_required("freezone_audio_sfx")
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start freezone audio sfx task", exc)
+        raise HTTPException(503, f"failed to start freezone audio sfx task: {exc}") from exc
+
+    return _accepted_job_response(
+        task_type="freezone_audio_sfx",
         username=username,
         project=project_name,
         job_id=job_id,
@@ -10080,11 +10372,13 @@ async def freezone_job_result(
         "freezone_audio_separate",
         "freezone_audio_speech",
         "freezone_audio_eleven_music",
+        "freezone_audio_sfx",
         "freezone_video_compose",
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
         "freezone_text_generate",
         "freezone_text_translate",
+        "freezone_text_enhance",
         "freezone_story_script",
     ],
     job_id: str,
@@ -10237,12 +10531,16 @@ async def freezone_job_result(
         out = freezone_audio_speech_output_path(project_dir, job_id)
     if task_type == "freezone_audio_eleven_music":
         out = freezone_audio_eleven_music_output_path(project_dir, job_id)
+    if task_type == "freezone_audio_sfx":
+        out = freezone_audio_sfx_output_path(project_dir, job_id)
     if task_type == "freezone_video_compose":
         out = _video_compose_output_path(project_dir, job_id)
     if task_type == "freezone_text_translate":
         out = _text_translate_output_path(project_dir, job_id)
     if task_type == "freezone_text_generate":
         out = _text_generate_output_path(project_dir, job_id)
+    if task_type == "freezone_text_enhance":
+        out = _text_enhance_output_path(project_dir, job_id)
     if task_type == "freezone_story_script":
         out = _story_script_output_path(project_dir, job_id)
     if task_type in {"freezone_analyze", "freezone_video_story"}:
@@ -10299,6 +10597,7 @@ async def freezone_job_result(
         "freezone_image_reverse_prompt",
         "freezone_text_generate",
         "freezone_text_translate",
+        "freezone_text_enhance",
         "freezone_story_script",
     }:
         return {"ok": True, "data": json.loads(out.read_text(encoding="utf-8"))}

@@ -19,6 +19,38 @@ SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 path = [
+    "frontend/public/director-desk/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 YZ"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+    "frontend/public/director-desk/models/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "William Luque"
+SPDX-License-Identifier = "LicenseRef-Sketchfab-Standard"
+
+[[annotations]]
+path = [
+    "frontend/public/director-desk/local-assets/guo-3d-assets/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "GUO 3D asset packages"
+SPDX-License-Identifier = "LicenseRef-Upstream-Not-Declared"
+
+[[annotations]]
+path = [
+    "frontend/public/director-desk/local-assets/mixamo/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "see local-assets/mixamo/SOURCES.md"
+SPDX-License-Identifier = "LicenseRef-Upstream-Not-Declared"
+
+[[annotations]]
+path = [
     "**",
 ]
 precedence = "aggregate"

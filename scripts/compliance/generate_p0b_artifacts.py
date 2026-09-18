@@ -49,6 +49,39 @@ THIRD_PARTY_PATH_OVERRIDES: tuple[tuple[str, str, str, str], ...] = (
         "Quaternius",
         "upstream License.txt (CC0-1.0 public domain)",
     ),
+    # Vendored 3D director desk (upstream xiaozangao/3d-director-desk v0.3.1, MIT).
+    # Most specific prefixes first: _inventory_row() returns on the first match.
+    #
+    # The bundled assets are a different legal story from the app code, so they get
+    # their own expressions instead of inheriting the MIT entry. Where an upstream
+    # declares no license we record exactly that — LicenseRef-Upstream-Not-Declared
+    # is a factual statement about the artifact, not a guessed license.
+    (
+        "frontend/public/director-desk/models/",
+        "LicenseRef-Sketchfab-Standard",
+        "William Luque",
+        "upstream models/ue-mannequin-retopology.license.txt (SKETCHFAB Standard, "
+        "https://sketchfab.com/licenses)",
+    ),
+    (
+        "frontend/public/director-desk/local-assets/guo-3d-assets/",
+        "LicenseRef-Upstream-Not-Declared",
+        "GUO 3D asset packages",
+        "upstream manifest.json + README declare no license; recorded as undeclared, not inferred",
+    ),
+    (
+        "frontend/public/director-desk/local-assets/mixamo/",
+        "LicenseRef-Upstream-Not-Declared",
+        "see local-assets/mixamo/SOURCES.md",
+        "upstream SOURCES.md lists per-file sources (three.js examples, mephistia, "
+        "GameDevGuidance, MinaPecheux, MolochDaGod); none declare a license",
+    ),
+    (
+        "frontend/public/director-desk/",
+        "MIT",
+        "2026 YZ",
+        "upstream xiaozangao/3d-director-desk v0.3.1 LICENSE (MIT); vendored build output",
+    ),
 )
 
 
@@ -343,6 +376,38 @@ SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 path = [
+    "frontend/public/director-desk/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 YZ"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+    "frontend/public/director-desk/models/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "William Luque"
+SPDX-License-Identifier = "LicenseRef-Sketchfab-Standard"
+
+[[annotations]]
+path = [
+    "frontend/public/director-desk/local-assets/guo-3d-assets/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "GUO 3D asset packages"
+SPDX-License-Identifier = "LicenseRef-Upstream-Not-Declared"
+
+[[annotations]]
+path = [
+    "frontend/public/director-desk/local-assets/mixamo/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "see local-assets/mixamo/SOURCES.md"
+SPDX-License-Identifier = "LicenseRef-Upstream-Not-Declared"
+
+[[annotations]]
+path = [
     "**",
 ]
 precedence = "aggregate"
@@ -559,6 +624,42 @@ def write_notice(packages: list[PackageLicense]) -> None:
         [
             "- @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool",
             "- ffmpeg/ffprobe: external system executables; license depends on the user's system build",
+            "",
+            "Bundled 3D director desk (vendored static build)",
+            "frontend/public/director-desk/ is a verbatim build of the third-party project",
+            "3D 导演台 (3d-director-desk), vendored so the canvas can load it as a static",
+            "sub-app. It is not covered by THIRD-PARTY-LICENSES.txt, which is generated from",
+            "the pnpm production dependency tree only.",
+            "",
+            "- Upstream: https://github.com/xiaozangao/3d-director-desk",
+            "- Version: v0.3.1 (commit a6c931cd36d8263d986706f74ab4efe9d5151959)",
+            "- License: MIT, Copyright (c) 2026 YZ (upstream LICENSE file)",
+            "- Local provenance and rebuild instructions:",
+            "  frontend/public/director-desk/UPSTREAM.md",
+            "",
+            "Bundled assets carry their own provenance:",
+            "",
+            "- UE mannequin (models/ue-mannequin-retopology.glb): William Luque,",
+            "  https://sketchfab.com/3d-models/ue-mannequin-retopology-5394d9f894374a2ab7c57a21929ce4c2",
+            "  License: SKETCHFAB Standard (https://sketchfab.com/licenses) — worldwide use,",
+            "  commercial or not, in all types of derivative works, under the basic",
+            "  restrictions of that license. Full text as shipped:",
+            "  frontend/public/director-desk/models/ue-mannequin-retopology.license.txt",
+            "- Mixamo-compatible characters and animations (local-assets/mixamo/): sourced from",
+            "  the three.js examples models, mephistia/character-animations,",
+            "  GameDevGuidance/Animation-Quick-Turn-180, MinaPecheux/UnityTutorials-MixamoAnimations",
+            "  and MolochDaGod/Grudge-Studio-Game. Per-file source list:",
+            "  frontend/public/director-desk/local-assets/mixamo/SOURCES.md.",
+            "  NO LICENSE IS DECLARED for these files by their upstream sources; recorded as",
+            "  undeclared, no license inferred.",
+            "- GUO prop / scene / skeleton packages (local-assets/guo-3d-assets/, 180 mounted",
+            "  props in guo-mounted-props-200): NO LICENSE IS DECLARED. The upstream",
+            "  manifest.json and README.md state no license and no source URL. Recorded here as",
+            "  undeclared rather than assigned a license value. Resolve with the upstream author",
+            "  before redistributing this bundle outside the project.",
+            "",
+            "License expressions for all of the above are recorded in license-inventory.csv and",
+            "REUSE.toml (frontend/public/director-desk/** override annotations).",
             "",
             "Restricted Optional Components",
             "The optional world feature can use apple/ml-sharp and its model assets. The source",

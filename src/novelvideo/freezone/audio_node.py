@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
+from novelvideo.generators.elevenlabs_client import ElevenLabsClient
 from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
+from novelvideo.model_gateway_settings import (
+    ELEVENLABS_PROVIDER,
+    resolve_media_model_route,
+)
 from novelvideo.egress_context import (
     TrustedEgressContext,
     ambient_organization_egress_context,
@@ -578,6 +583,7 @@ async def generate_freezone_audio_speech(
     project_dir: Path,
     job_id: str,
     text: str,
+    model: str = "",
     emotion_prompt: str = "",
     voice_ref: dict | None = None,
     projection: Any = None,
@@ -607,6 +613,28 @@ async def generate_freezone_audio_speech(
     output_path = freezone_audio_speech_output_path(project_dir, job_id)
     if egress_context is None:
         egress_context = ambient_organization_egress_context()
+
+    # 按媒体模型映射决定走哪条路：provider=elevenlabs 走「项目侧克隆 + 网关合成」，
+    # 其余或没配映射时落回原有 IndexTTS2 路径。
+    speech_route = resolve_media_model_route(model)
+    if speech_route.get("provider") == ELEVENLABS_PROVIDER:
+        elevenlabs = ElevenLabsClient(purpose="speech", egress_context=egress_context)
+        if not elevenlabs.api_key:
+            raise RuntimeError(
+                f"ELEVENLABS_API_KEY not set: 模型 {model} 走 ElevenLabs 音色，"
+                "但当前没有可用的 ElevenLabs 密钥"
+            )
+        return await _generate_speech_via_elevenlabs(
+            client=elevenlabs,
+            username=account_voice_username or username,
+            text=clean_text,
+            voice=selected_voice,
+            output_path=output_path,
+            emotion_prompt=str(emotion_prompt or "").strip()
+            or narration_style_prompt(narration_style),
+            model_id=str(speech_route.get("upstreamModel") or "").strip(),
+        )
+
     if egress_context is None:
         generator = IndexTTS2FalClient()
     else:
@@ -634,6 +662,67 @@ async def generate_freezone_audio_speech(
         model=INDEXTTS2_RECORD_MODEL,
         voice_source=selected_voice.source,
         voice_sha256=selected_voice.sha256,
+    )
+
+
+def _elevenlabs_style_from_emotion(emotion_prompt: str) -> float:
+    """把项目的语气词映射到 ElevenLabs 的 ``style`` 强度。
+
+    ElevenLabs 没有等价的"语气提示词"参数——语气词文本本身进不去，只能表达
+    "这一段要有表现力"。这是**语义损失**，不是等价替换：项目里精细的语气
+    控制在直连路径上会明显弱化。
+    """
+    return 0.35 if str(emotion_prompt or "").strip() else 0.0
+
+
+async def _generate_speech_via_elevenlabs(
+    *,
+    client: ElevenLabsClient,
+    username: str,
+    text: str,
+    voice: FreezoneVoiceRefResolution,
+    output_path: Path,
+    emotion_prompt: str,
+    model_id: str = "",
+) -> FreezoneAudioSpeechResult:
+    """经 ElevenLabs 官方 API 合成语音（直连，不过网关）。
+
+    音色走「样本 → voice_id」的自动克隆，按样本 sha256 缓存复用；同一个音色
+    连续合成不会重复打 ``/v1/voices/add``。``model_id`` 来自媒体模型映射。
+    """
+    from novelvideo.freezone.elevenlabs_voice import resolve_elevenlabs_voice_id
+
+    voice_id = await resolve_elevenlabs_voice_id(
+        client,
+        username=username,
+        sample_path=voice.audio_path,
+        sha256=voice.sha256,
+        name=voice.source or "DramaClaw Voice",
+    )
+    # 克隆留在项目侧（要上传参考音频 + 按样本哈希缓存），合成本身走网关：
+    # ElevenLabs 已是网关渠道（ChannelTypeElevenLabs），网关适配器从请求的
+    # voice 字段取 voice_id 拼到 /v1/text-to-speech/{voice_id}。
+    resolved_model = str(model_id or "").strip() or "eleven-tts"
+    await _write_newapi_audio_speech(
+        output_path=output_path,
+        model=resolved_model,
+        input_text=text,
+        response_format="mp3",
+        voice=voice_id,
+        metadata={
+            "language_code": "zh",
+            "style": _elevenlabs_style_from_emotion(emotion_prompt),
+        },
+    )
+    if not output_path.exists() or output_path.stat().st_size <= 0:
+        raise RuntimeError("ElevenLabs speech audio file was not created")
+    return FreezoneAudioSpeechResult(
+        audio_path=output_path,
+        duration_ms=_duration_ms(output_path),
+        mime_type="audio/mpeg",
+        model=f"elevenlabs:{resolved_model}",
+        voice_source=f"elevenlabs:{voice_id}",
+        voice_sha256=voice.sha256,
     )
 
 
@@ -670,6 +759,52 @@ def _audio_suffix(response_format: str) -> str:
         "ulaw": ".ulaw",
         "alaw": ".alaw",
     }.get(fmt, ".mp3")
+
+
+_GATEWAY_ERROR_DETAIL_MAX = 200
+
+
+def _gateway_error_detail(response: object) -> str:
+    """从网关 JSON 错误体里取一段脱敏摘要。
+
+    上游响应体里可能夹带凭据，非 JSON 的自由文本一律丢弃——防泄漏契约见
+    ``tests/test_p0g4d_audio_egress.py``。
+    """
+    from novelvideo.utils.error_redaction import redact_secrets
+
+    try:
+        payload = response.json()
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    fields = error if isinstance(error, dict) else payload
+    parts: list[str] = []
+    for key in ("message", "code", "type"):
+        value = fields.get(key)
+        if isinstance(value, str) and value.strip() and value.strip() not in parts:
+            parts.append(value.strip())
+    text = " ".join(redact_secrets(" ".join(parts)).split())
+    return text[:_GATEWAY_ERROR_DETAIL_MAX]
+
+
+def _describe_gateway_audio_error(exc: Exception) -> str:
+    """把网关调用失败压成一行可操作原因。
+
+    不带原因时用户只看到「NewAPI audio generation failed」，得先翻网关日志
+    才知道上游说了什么；整段透传响应体又会泄露凭据，所以只放行状态码与
+    脱敏后的 JSON 错误信封。
+    """
+    import httpx
+
+    from novelvideo.utils.error_redaction import safe_exception_message
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        detail = _gateway_error_detail(exc.response)
+        suffix = f": {detail}" if detail else ""
+        return f"HTTP {exc.response.status_code}{suffix}"
+    return safe_exception_message(exc)
 
 
 async def _write_newapi_audio_speech(
@@ -824,8 +959,180 @@ async def _write_newapi_audio_speech(
             else:
                 await reject_audio_operation(lease)
         if isinstance(exc, Exception):
-            raise RuntimeError("NewAPI audio generation failed") from None
+            raise RuntimeError(
+                "NewAPI audio generation failed: "
+                f"{_describe_gateway_audio_error(exc)}"
+            ) from exc
         raise
+
+
+def freezone_audio_sfx_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_audio_sfx") / f"{job_id}.mp3"
+
+
+async def generate_freezone_audio_sound_effect(
+    *,
+    project_dir: Path,
+    job_id: str,
+    prompt: str,
+    model: str = "",
+    duration_seconds: float | None = None,
+    prompt_influence: float = 0.3,
+    egress_context: TrustedEgressContext | None = None,
+) -> FreezoneAudioSpeechResult:
+    """生成音效。
+
+    配了媒体模型映射就走网关（ElevenLabs / SenseAudio 各有音效适配器）；
+    没配则保持 ElevenLabs 直连——旧项目不会因为这次改动被换通路。
+
+    直连路径没有网关版本可回退，没配 key 就是配置错误，直接抛，不静默产出空
+    文件——那种"成功但没人知道是空的"最伤下游。
+    """
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        raise ValueError("prompt is required")
+
+    model_key = str(model or "").strip()
+    route = resolve_media_model_route(model_key) if model_key else {}
+    if route.get("provider"):
+        return await _generate_sfx_via_gateway(
+            model=model_key,
+            project_dir=project_dir,
+            job_id=job_id,
+            prompt=clean_prompt,
+            duration_seconds=duration_seconds,
+            prompt_influence=prompt_influence,
+            egress_context=egress_context,
+        )
+
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+    client = ElevenLabsClient(purpose="sfx", egress_context=egress_context)
+    if not client.enabled:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY not set: 音效生成依赖 ElevenLabs 官方 API，"
+            "没有网关版本可回退"
+        )
+
+    from novelvideo.ports import update_current_model_call_log
+
+    model_name = "elevenlabs:sound-generation"
+    output_path = freezone_audio_sfx_output_path(project_dir, job_id)
+    reservation_id = ""
+    try:
+        reservation_id = await _reserve_music_model_call(
+            model_name,
+            music_length_ms=int((duration_seconds or 10.0) * 1000),
+            source="freezone_audio_sfx",
+        )
+        await update_current_model_call_log(
+            request_payload={
+                "model": model_name,
+                "prompt": clean_prompt,
+                "duration_seconds": duration_seconds,
+                "prompt_influence": prompt_influence,
+                "provider": "elevenlabs_direct",
+            },
+        )
+        await client.generate_sound_effect(
+            text=clean_prompt,
+            output_path=output_path,
+            duration_seconds=duration_seconds,
+            prompt_influence=prompt_influence,
+        )
+        await update_current_model_call_log(
+            response_payload={"provider": "elevenlabs_direct", "model": model_name},
+        )
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise RuntimeError("ElevenLabs sound effect file was not created")
+        await _confirm_music_model_call(model=model_name, reservation_id=reservation_id)
+    except Exception as exc:
+        await update_current_model_call_log(error_message=type(exc).__name__)
+        await _refund_music_model_call(
+            reservation_id,
+            source="freezone_audio_sfx",
+            error=type(exc).__name__,
+        )
+        raise
+    return FreezoneAudioSpeechResult(
+        audio_path=output_path,
+        duration_ms=_duration_ms(output_path)
+        or int((duration_seconds or 0) * 1000),
+        mime_type="audio/mpeg",
+        model=model_name,
+        voice_source=model_name,
+        voice_sha256="",
+    )
+
+
+async def _generate_sfx_via_gateway(
+    *,
+    model: str,
+    project_dir: Path,
+    job_id: str,
+    prompt: str,
+    duration_seconds: float | None,
+    prompt_influence: float,
+    egress_context: TrustedEgressContext | None,
+) -> FreezoneAudioSpeechResult:
+    """音效经网关生成。
+
+    模型名由媒体模型映射决定，供应商差异（ElevenLabs 的 sound-generation、
+    SenseAudio 的 sound-effects）由网关适配器吸收。
+    """
+    from novelvideo.ports import update_current_model_call_log
+
+    output_path = freezone_audio_sfx_output_path(project_dir, job_id)
+    metadata: dict[str, Any] = {"prompt_influence": float(prompt_influence)}
+    if duration_seconds:
+        metadata["duration_seconds"] = float(duration_seconds)
+
+    reservation_id = ""
+    try:
+        reservation_id = await _reserve_music_model_call(
+            model,
+            music_length_ms=int((duration_seconds or 10.0) * 1000),
+            source="freezone_audio_sfx",
+        )
+        await update_current_model_call_log(
+            request_payload={
+                "model": model,
+                "prompt": prompt,
+                "duration_seconds": duration_seconds,
+                "prompt_influence": prompt_influence,
+                "provider": "gateway",
+            },
+        )
+        await _write_newapi_audio_speech(
+            output_path=output_path,
+            model=model,
+            input_text=prompt,
+            response_format="mp3",
+            metadata=metadata,
+            egress_context=egress_context,
+        )
+        await update_current_model_call_log(
+            response_payload={"provider": "gateway", "model": model},
+        )
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise RuntimeError("gateway sound effect file was not created")
+        await _confirm_music_model_call(model=model, reservation_id=reservation_id)
+    except Exception as exc:
+        await update_current_model_call_log(error_message=type(exc).__name__)
+        await _refund_music_model_call(
+            reservation_id,
+            source="freezone_audio_sfx",
+            error=type(exc).__name__,
+        )
+        raise
+    return FreezoneAudioSpeechResult(
+        audio_path=output_path,
+        duration_ms=_duration_ms(output_path) or int((duration_seconds or 0) * 1000),
+        mime_type="audio/mpeg",
+        model=model,
+        voice_source=model,
+        voice_sha256="",
+    )
 
 
 async def generate_freezone_audio_eleven_music(
@@ -865,6 +1172,10 @@ async def generate_freezone_audio_eleven_music(
     }
 
     model_name = str(model or "LingShan-MU-11").strip() or "LingShan-MU-11"
+
+    # 音乐统一走网关：ElevenLabs 自 2026-09 起也是网关渠道
+    # （ChannelTypeElevenLabs / type 65），不再保留项目侧直连分支——同一能力
+    # 两套通路会让计费、egress 与错误处理各自漂移。
     reservation_id = ""
     try:
         reservation_id = await _reserve_music_model_call(

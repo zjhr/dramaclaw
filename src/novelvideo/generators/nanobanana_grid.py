@@ -3897,6 +3897,14 @@ async def _call_newapi_image_api(
                     len(image_response.content),
                 )
                 image_response.raise_for_status()
+                # CF 挑战页/登录页会以 HTTP 200 返回 HTML，raise_for_status 拦不住；
+                # 直接落盘会产出"名为 .png 实为 HTML"的坏资产，前端只显示破损图标。
+                validate_huimeng_media_download(
+                    image_response.content,
+                    image_response.headers.get("content-type"),
+                    expected_media_type="image",
+                    url=image_url,
+                )
                 image_bytes = image_response.content
                 await _confirm(
                     reservation_id,

@@ -5196,6 +5196,48 @@
       "loading": "加载中…",
       "empty": "暂无风格模板"
     },
+    "promptGallery": {
+      "title": "提示词画廊",
+      "chip": "提示词",
+      "chipTitle": "从提示词画廊挑一条，插入到光标处",
+      "search": "搜索标题、正文、描述或标签",
+      "refresh": "刷新",
+      "refreshTitle": "重新拉取全部提示词源",
+      "sourceLabel": "来源",
+      "allSources": "全部来源",
+      "tagLabel": "标签",
+      "moreTags": "更多",
+      "resultCount": "{{n}} 条",
+      "loading": "正在拉取提示词源…",
+      "empty": "没有符合条件的提示词",
+      "allFailed": "提示词源一个都没拉到，检查网络后点刷新重试",
+      "sourceFailed": "{{n}} 个源没拉到",
+      "offline": "{{n}} 个源用的是离线缓存，内容可能不是最新的",
+      "retryFetch": "重新拉取",
+      "loadMore": "再显示 {{n}} 条",
+      "copy": "复制",
+      "copied": "提示词已复制",
+      "copyFailed": "复制失败，请在详情里手动选择",
+      "copyAria": "复制{{title}}的提示词",
+      "apply": "插入",
+      "applied": "提示词已插入",
+      "detailAria": "查看{{title}}详情",
+      "noCover": "这条没有配图",
+      "promptLabel": "提示词正文",
+      "loadImage": "取图",
+      "loadingImage": "取图中…",
+      "loadImageFailed": "取图失败，点击重试",
+      "loadImageAria": "取图：{{title}}",
+      "videoBadge": "视频",
+      "origin": "出处",
+      "byAuthor": "· {{author}}",
+      "searchTags": "搜索 {{n}} 个标签",
+      "noMatchingTags": "没有匹配的标签",
+      "selectedTags": "已选 {{n}} 个",
+      "clearTags": "清除",
+      "tagPanelAria": "选择标签",
+      "removeTagAria": "移除标签 {{tag}}"
+    },
     "commitHint": {
       "title": "生成后的产物在 commit 时如何写回主线槽位",
       "sketch": "草图",
@@ -5713,6 +5755,7 @@
       "script": "脚本",
       "pano360Viewer": "360° 全景",
       "threeDWorld": "导演世界",
+      "directorDesk": "3D 导演台",
       "sectionAddNode": "添加节点",
       "sectionAddResource": "添加资源",
       "sectionSkillNode": "技能节点",
@@ -5780,6 +5823,25 @@
       "assetLibraryTitle": "从资产库选择参考图（人物 / 场景 / 道具）",
       "assetLibrary": "资产库",
       "insertRef": "插入 {{label}}"
+    },
+    "promptEnhance": {
+      "button": "强化提示词",
+      "title": "强化提示词",
+      "description": "按目标模型的提示词方言重写节点里的提示词，补齐缺失的结构要素。",
+      "dialect": "目标模型",
+      "strength": "改写力度",
+      "strengthOption": {
+        "conservative": "保守",
+        "standard": "标准",
+        "aggressive": "增强"
+      },
+      "strengthHint": {
+        "conservative": "保留原句式，只补缺口",
+        "standard": "按方言规范化，保留原意",
+        "aggressive": "允许扩写画面细节"
+      },
+      "confirm": "开始强化",
+      "cancel": "取消"
     },
     "imageGen": {
       "contextPalette": {
@@ -5940,7 +6002,8 @@
         "textToVideo": "文生视频",
         "imageToPrompt": "图片反推提示词",
         "textToMusic": "克隆音频",
-        "textToMusicGen": "文字生成音乐"
+        "textToMusicGen": "文字生成音乐",
+        "textToSoundEffect": "文字生成音效"
       },
       "placeholder": "写下故事、场景或角色灵感。例如：雨夜旧车站里，一封迟到的信改变了所有人的选择。",
       "generatePlaceholder": "描述你想生成的故事、场景、角色设定、对白或创作提示词…",
@@ -5952,6 +6015,7 @@
         "textToVideo": "文生视频组",
         "imageToPrompt": "图片反推提示词组",
         "textToMusic": "文字生成音乐组",
+        "textToSoundEffect": "文字生成音效组",
         "cloneAudio": "克隆音频组"
       },
       "detachUpstreamImage": "取消引用此素材"
@@ -6276,14 +6340,28 @@
         "5m": "5分钟",
         "10m": "10分钟"
       },
+      "sfxDuration": {
+        "auto": "自动",
+        "1s": "1秒",
+        "3s": "3秒",
+        "5s": "5秒",
+        "10s": "10秒",
+        "22s": "22秒"
+      },
+      "sfxDurationLabel": "音效时长",
+      "sfxDurationHelp": "设定音效长度；选择自动时由模型根据描述决定。",
       "promptLabel": {
         "music": "输入音乐描述",
+        "sfx": "输入音效描述",
         "speech": "输入要合成的文本"
       },
       "promptPlaceholder": {
         "music": "描述想要的音乐：风格、乐器、节奏、氛围…",
+        "sfx": "描述想要的声音：雷声、脚步、开门、风声…",
         "speech": "输入要合成的文本"
       },
+      "modelLabel": "模型",
+      "modelDefault": "默认模型",
       "emotionLabel": "语气词",
       "emotionOptional": "（可选，自由输入）",
       "emotionPlaceholder": "如：紧张、压低声音、带一点恐惧感",
@@ -6397,6 +6475,7 @@
       "scriptNode": "脚本生成器",
       "pano360ViewerNode": "360° 全景查看器",
       "threeDWorldNode": "3D 世界",
+      "directorDeskNode": "3D 导演台",
       "skillNode": "技能",
       "styleNode": "风格"
     },
@@ -6532,6 +6611,44 @@
       "directorCaptureSizeFailed": "无法解析导演世界截图尺寸",
       "directorElement": "导演元素",
       "directorExportLabel": "导演世界导出"
+    },
+    "directorDesk": {
+      "open": "打开",
+      "emptyHint": "在 3D 里摆位预演，截图可回传到画布",
+      "previewAlt": "导演台预览",
+      "dialogTitle": "3D 导演台",
+      "dialogDescription": "摆位预演、布置机位，并把截图回传到画布",
+      "iframeTitle": "3D 导演台编辑器",
+      "connecting": "正在连接导演台…",
+      "connected": "已连接 · 协议 v{{version}}",
+      "connectFailed": "连接导演台失败",
+      "retry": "重试",
+      "close": "关闭",
+      "capabilityCount": "可用接口 {{count}} 个",
+      "persistenceLocal": "工程目前只存在本浏览器",
+      "readProject": "读取工程",
+      "reading": "读取中…",
+      "projectReadout": "工程指纹 {{fingerprint}} · {{objects}} 个物体 · {{cameras}} 个机位",
+      "exportVideo": "导出参考视频",
+      "exportingVideo": "导出中…",
+      "importingCaptures": "回传截图中…",
+      "captureImported": "已把 {{count}} 张截图放到画布上",
+      "videoExported": "参考视频已回写到本节点",
+      "hasVideo": "已有参考视频",
+      "noProject": "无法确定当前项目，已跳过上传",
+      "uploadFailed": "回传失败：{{message}}",
+      "exportFailed": "导出失败：{{message}}",
+      "savingProject": "正在存档工程…",
+      "projectSaved": "工程已存档到本项目资产",
+      "projectArchivedAt": "工程已存档 · {{time}}",
+      "saveProject": "保存工程",
+      "upstreamPanorama": "已载入全景图：{{name}}",
+      "upstreamText": "参考文本已接上",
+      "upstreamHint": "上游图片会被载入导演台作为全景图背景；文本只作画布侧参考，不会自动写进导演台场景。",
+      "projectSaveTimeout": "工程存档超时，导演台自身的本地存档仍然可用",
+      "projectSaveFailed": "工程存档失败：{{message}}",
+      "snapshotTooLarge": "工程过大，已跳过存档",
+      "snapshotUnavailable": "工程快照不可用，已回落到导演台的本地存档"
     }
   },
   "viewer": {
@@ -7214,6 +7331,7 @@
           "SCENE_BUILD": "解析并完善场景描述",
           "FREEZONE_TRANSLATION": "文本提示词中英互译",
           "FREEZONE_TEXT_WRITER": "AI 文本生成",
+          "FREEZONE_PROMPT_ENHANCE": "节点提示词强化",
           "FREEZONE_STORY_SCRIPT": "故事脚本生成",
           "FREEZONE_VISION": "图片与视频内容解析",
           "STYLE_ANALYZER": "从参考图分析自定义风格",

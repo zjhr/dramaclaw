@@ -277,14 +277,21 @@ def validate_huimeng_media_download(
     content_type = str(content_type or "").split(";", 1)[0].strip().lower()
     context = f" ({url})" if url else ""
     if not content:
-        raise RuntimeError(f"HuiMeng 下载结果为空{context}")
+        raise RuntimeError(f"下载结果为空{context}")
+    # 文本响应无论 content-type 声称什么都不可能是媒体：CF 挑战页、登录页、
+    # 错误页常以 HTTP 200（甚至被 CDN 标成 image/*）返回。下面的 content-type
+    # 分支是 `image/* or 魔数` 的宽松放行，单靠它会被伪造的 content-type 绕过。
+    if content[:64].lstrip()[:1] in (b"<", b"{", b"["):
+        raise RuntimeError(
+            f"下载结果不是有效{label}: 疑似文本响应{context}"
+        )
     if content_type.startswith("text/") or content_type in {
         "application/json",
         "application/problem+json",
         "application/xml",
     }:
         raise RuntimeError(
-            f"HuiMeng 下载结果不是有效{label}: content-type={content_type or 'unknown'}{context}"
+            f"下载结果不是有效{label}: content-type={content_type or 'unknown'}{context}"
         )
     if expected_media_type == "image":
         if content_type.startswith("image/") or content.startswith(
@@ -303,7 +310,7 @@ def validate_huimeng_media_download(
         if content.startswith(b"RIFF") and content[8:12] == b"AVI ":
             return
     raise RuntimeError(
-        f"HuiMeng 下载结果不是有效{label}: content-type={content_type or 'unknown'}{context}"
+        f"下载结果不是有效{label}: content-type={content_type or 'unknown'}{context}"
     )
 
 

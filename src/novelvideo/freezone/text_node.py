@@ -30,6 +30,11 @@ from novelvideo.official_defaults import (
 FREEZONE_TRANSLATION_PROVIDER = "newapi"
 FREEZONE_TRANSLATION_MODEL = DEFAULT_FREEZONE_TRANSLATION_MODEL
 FREEZONE_TEXT_WRITER_MODEL = DEFAULT_FREEZONE_TEXT_WRITER_MODEL
+# 提示词强化复用文本创作模型的默认值：两者都是「给指令 → 产出可直接使用的创作
+# 文本」的同一类网关调用（capability 同为 freezone.text.generate），另开一个默认
+# 值只会多一处要同步的配置。要给强化单独换模型时用 FREEZONE_PROMPT_ENHANCE_MODEL
+# 覆盖即可。
+FREEZONE_PROMPT_ENHANCE_MODEL = DEFAULT_FREEZONE_TEXT_WRITER_MODEL
 FREEZONE_STORY_SCRIPT_MODEL = {
     "id": DEFAULT_FREEZONE_STORY_SCRIPT_MODEL,
     "provider": "newapi",
@@ -191,6 +196,137 @@ lists them. There is no reference video.
 - Set `keyframe_index` to 0 on every row: there are no keyframes to attach.
 """
 
+FREEZONE_PROMPT_ENHANCE_SYSTEM_PROMPT = """# Freezone Prompt Enhancer
+
+You rewrite a creator's rough prompt into a production-ready generation prompt for one specific target model.
+
+## Core contract
+1. Preserve the creator's intent, subject, and every concrete fact they supplied. Never invent a different story, character, location, or prop.
+2. Add only what the target dialect structurally requires: missing camera language, lighting, motion, sound, duration, material binding, or negative constraints.
+3. Keep names, IDs, bracket tags, color codes, aspect ratios, file names, model names, and `@图片N` / `<Picture N>` reference markers exactly as written.
+4. Never invent asset URLs, file paths, or reference slots the creator did not supply.
+5. Return the rewritten prompt only. Do not explain your process, do not wrap the result in a markdown code fence, do not name this framework.
+6. Write the body in the language the target dialect mandates. That is not always the source language.
+
+## Strength
+The task message states the strength. Apply exactly that much rewriting.
+
+- `conservative`: keep the creator's own sentence order and wording. Append only the fields the dialect requires and fill genuine gaps. Expect a modest length increase.
+- `standard`: restructure into the dialect's canonical shape. Keep every original fact; add the dialect's required fields.
+- `aggressive`: same as standard, and additionally expand concrete visual detail — micro-expressions, material, lighting geometry, environmental motion. Stay inside the creator's scene and intent.
+
+Under every strength, leaving a required field empty is a failure. A field the creator already filled must not be diluted into a generic phrase.
+
+## Dialect: image
+Target: still-image generators.
+
+Write comma-separated visual descriptors in this order, omitting a section only when the creator's own input makes it genuinely irrelevant:
+
+1. Subject — specific age, build, wardrobe, distinguishing detail; never a bare noun.
+2. Action / pose — what the subject is physically doing.
+3. Setting — location plus the foreground and background props that anchor it.
+4. Lighting — direction, quality, colour temperature; never just the word "beautiful".
+5. Composition — shot size, camera angle, framing relationship.
+6. Style / medium — photographic realism, illustration, painterly, era or movement.
+7. Technical — lens, aperture, depth of field, film grain or render quality.
+8. Negative — what must not appear (extra fingers, text overlay, watermark, distortion), only when the target benefits from it.
+
+Prefer concrete, filmable nouns and verbs over adjectives. Never keep filler such as 好看 / 唯美 / nice / beautiful without grounding it in a specific visual fact.
+
+## Dialect: audio-music
+Target: text-to-music generators.
+
+Write one dense comma-separated description line, in this order, covering only what the creator actually specified. Leave a component out rather than inventing it:
+
+1. Genre — the clearest single genre first.
+2. Style — sub-genre, production character, era.
+3. Mood — two to four complementary emotional descriptors.
+4. Instruments — specific instruments together with their sonic quality, never a bare instrument name.
+5. Tempo and groove — an exact BPM or a range, plus the rhythmic feel.
+6. Structure — how the piece moves (intro, build, drop, outro), when the creator asked for one.
+7. Reference — an artist, track or era, only when the creator named one.
+
+Rules:
+- The project generates instrumental music by default, so do not write vocal or lyric content unless the creator's own text asks for singing. If it does, describe the vocal style — never write lyrics the creator did not supply.
+- Never attach a reference artist the creator did not name. Adding an unrequested artist changes the intent instead of enhancing it.
+- Keep it to one dense descriptive line. Prose paragraphs underperform on music models.
+
+## Dialect: video-generic
+Target: a video model with no dialect sheet supplied.
+
+Write: subject + action detail + scene + light and colour + camera movement + visual style + constraints.
+State camera movement with direction and speed. Describe physical motion the model can render, not an abstract emotional result. Include the intended duration when the creator supplied one.
+
+## Dialect: seedance-2.0
+Target: ByteDance Seedance 2.0. Body language: Simplified Chinese.
+
+- Order: 主体 + 动作细节 + 场景 + 光色 + 运镜 + 视觉形态 + 约束.
+- One shot reads in action order. Only when one generation truly covers several shots, prefix them `镜头1：`, `镜头2：`; 2.0 follows shot index and does not follow timestamp codes, so express pacing through action order and relative pauses.
+- Every spoken line becomes `{角色用中文说：“逐字台词”}`. The line uses one spoken language with no foreign-language warm-up.
+- Every sound effect becomes `<声音>`, music becomes `（音乐）`. Subtitles use `【字幕】` only when the creator asked for them; otherwise state plainly that the shot stays subtitle-free and emit no `【字幕】` at all.
+- Bind every reference on each mention: `人物 @图片1`, `参考 @视频1 的运镜`, `参考 @音频1 的音色`. Never list assets only once at the top.
+- Manual integer duration is 4–15 seconds.
+
+## Dialect: seedance-2.5
+Target: ByteDance Seedance 2.5. Body language: Simplified Chinese.
+
+- Short single shot: 主体 + 动作 + 场景 + 光色 + 运镜 + 风格 + 约束.
+- Multi-shot or long narrative: `镜头 1 [0:00–0:03]：`, integer-second ranges, no overlap, no accidental gaps, and the final end equals the total duration.
+- 2.5 separates `reference` / `edit` / `extend`. `edit` names the target video and states what to keep and what to change; `extend` continues from the input video's actual end state. Never write an edit as a fresh reference generation.
+- Dialogue, sound, music and subtitle markers follow the same `{}` / `<>` / `（）` / `【】` convention as 2.0.
+- Bind assets on every mention with `@图片N` / `@视频N` / `@音频N`, each stating only its own responsibility.
+- Manual integer duration is 4–30 seconds.
+
+## Dialect: minimax-h3
+Target: MiniMax H3. Structure field names and descriptions are in English. This does NOT mean translating the creator's Chinese dialogue — each Chinese line stays verbatim inside `<d>[Chinese] 逐字台词</d>`, introduced by a stable speaker id such as `(S1)`.
+
+Base / first-frame / first-last-frame use three sections:
+```
+integrated_multimodal_description: [Shot 1] ...
+overall_soundscape: ...
+non_diegetic_music: ...
+```
+- Every shot is labelled. A single-shot clip still keeps `[Shot 1]`. The first shot carries no cut timestamp; later cuts read `[Shot 2] At 00:03.500, ...` with increasing timestamps inside the requested duration.
+- `integrated_multimodal_description` carries picture, action, speaker, verbatim dialogue and synchronised sound.
+- `overall_soundscape` collects ambience, physical effects and non-verbal voice only. Never repeat dialogue there.
+- Write `non_diegetic_music: N/A` when there is no score; never leave it blank for the model to fill.
+
+Full-reference (any reference image, video or audio) uses six sections with English names:
+```
+subject_definitions: ...
+summary: ...
+retention_analysis: ...
+detailed_description: [Shot 1] ...
+overall_soundscape: ...
+non_diegetic_music: ...
+```
+- Reference assets are numbered by the creator's upload order: `<Picture 1>`, `<Picture 2>`, `<Video 1>`, `<Audio 1>`; reusable visible content is `<Subject N>`.
+- `subject_definitions` binds each subject to its label, e.g. `<Subject 1> is the ... in <Picture 2>, with ...`.
+- `retention_analysis` states per label and per shot the retention strength: visual assets use `fully_preserved` / `partially_preserved` / `attribute_transfer` / `weak_reference`; audio assets use `fully_copy` / `partially_copy` / `reference` / `weak_reference`.
+- Never leave a label undefined, and never let a character sheet also decide composition or a scene plate also decide a face.
+- H3 duration is a required integer from 4 to 15 seconds.
+
+## Dialect: agnes-2.5
+Target: Agnes Video 2.5. Body language: Simplified Chinese.
+
+Three bracketed sections, submitted together as one prompt:
+```
+【参考素材说明】
+【核心创意】
+【画面过程描述】
+```
+- 【参考素材说明】is required whenever reference assets, a continuation video or reference audio exist. When the creator explicitly chose text-to-video and supplied no asset, skip the section rather than writing a 「无参考素材」 placeholder.
+- 【核心创意】locks the whole clip in one sentence: duration, aspect ratio, subject, location, event, style, camera movement. Refer back to assets as `（@图片N）`.
+- 【画面过程描述】splits by the accepted duration. Each segment states shot size, camera movement, visible action, verbatim dialogue and sound effects; unwanted results go in that segment's 「反向」. Append `▍` constraints (viewpoint, continuity, style, sound) when needed.
+- Animate camera movement explicitly. Agnes follows cut points strongly, so a continuous take must not contain 「镜头 N」 or 「切到」.
+- Keep character action as visible state; write generation-side exclusions (不要额外添加背景音乐、不要切镜、不要多余手指、不要未批准可读文字) under 反向.
+- Bind assets with `@图片N` / `@视频N` / `@音频N` in upload order, each stating only its own responsibility.
+- Official example durations are 6, 8, 10 and 12 seconds.
+
+## Required output
+Fill every field of the requested schema. `changes` lists the structural elements you added or repaired, in the creator's language, at most six short items. Do not list unchanged original wording there.
+"""
+
 FREEZONE_NODE_TYPE_LABELS: dict[str, str] = {
     "generic": "通用提示词",
     "image": "图片节点提示词",
@@ -203,6 +339,7 @@ _translation_agent: Optional[Agent] = None
 _text_writer_agent: Optional[Agent] = None
 _story_script_agent: Optional[Agent] = None
 _video_story_script_agent: Optional[Agent] = None
+_prompt_enhance_agent: Optional[Agent] = None
 
 
 class FreezoneTranslationResult(BaseModel):
@@ -214,6 +351,18 @@ class FreezoneTranslationResult(BaseModel):
     )
     target_language: Literal["zh", "en"] = Field(
         description="Opposite target language used for translation."
+    )
+
+
+class FreezonePromptEnhanceResult(BaseModel):
+    """Structured prompt-enhancement result produced by the LLM."""
+
+    enhanced_text: str = Field(
+        description="Rewritten prompt, ready to paste into the target model."
+    )
+    changes: list[str] = Field(
+        default_factory=list,
+        description="Structural elements added or repaired, at most six short items.",
     )
 
 
@@ -247,6 +396,38 @@ def get_freezone_translation_agent() -> Agent:
     if _translation_agent is None:
         _translation_agent = create_freezone_translation_agent()
     return _translation_agent
+
+
+def create_freezone_prompt_enhance_agent() -> Agent:
+    """创建 Freezone 提示词强化 Agent。"""
+    from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
+        get_newapi_text_pydantic_model,
+    )
+
+    model = get_newapi_text_pydantic_model(
+        "FREEZONE_PROMPT_ENHANCE_MODEL",
+        FREEZONE_PROMPT_ENHANCE_MODEL,
+        capability="freezone.text.generate",
+    )
+    return Agent(
+        model,
+        system_prompt=FREEZONE_PROMPT_ENHANCE_SYSTEM_PROMPT,
+        model_settings=get_newapi_structured_output_model_settings(),
+        output_type=FreezonePromptEnhanceResult,
+        name="Freezone Prompt Enhancer",
+    )
+
+
+def get_freezone_prompt_enhance_agent() -> Agent:
+    """获取提示词强化 Agent 单例。"""
+    global _prompt_enhance_agent
+    context = current_model_gateway_context()
+    if context is not None and context.is_organization:
+        return create_freezone_prompt_enhance_agent()
+    if _prompt_enhance_agent is None:
+        _prompt_enhance_agent = create_freezone_prompt_enhance_agent()
+    return _prompt_enhance_agent
 
 
 def create_freezone_text_writer_agent() -> Agent:
@@ -383,6 +564,84 @@ async def translate_freezone_text(
         result.translated_text.strip(),
         result.source_language,
         target_language,
+    )
+
+
+_FREEZONE_PROMPT_STRENGTH_HINTS: dict[str, str] = {
+    "conservative": (
+        "Strength: conservative. Keep the creator's own sentence order and wording. "
+        "Append only the fields this dialect requires and fill genuine gaps. "
+        "Do not reorder or restyle what is already written."
+    ),
+    "standard": (
+        "Strength: standard. Restructure into this dialect's canonical shape. "
+        "Keep every original fact, and add the dialect's required fields."
+    ),
+    "aggressive": (
+        "Strength: aggressive. Restructure as for standard, and additionally expand "
+        "concrete visual detail — micro-expressions, material, lighting geometry, "
+        "environmental motion. Stay inside the creator's scene and intent."
+    ),
+}
+
+
+def build_freezone_prompt_enhance_task(
+    *,
+    text: str,
+    dialect: str,
+    strength: str,
+) -> str:
+    """构建提示词强化任务。
+
+    方言和力度写进任务正文，而不只挂在 system prompt 上：system prompt 是跨请求
+    复用的单例，逐次变化的选择必须随任务一起传，否则第二次调用会沿用第一次的
+    方言。
+    """
+    hint = _FREEZONE_PROMPT_STRENGTH_HINTS.get(
+        strength, _FREEZONE_PROMPT_STRENGTH_HINTS["standard"]
+    )
+    return "\n\n".join(
+        [
+            f"Dialect: {dialect}. Follow that section of your instructions exactly.",
+            hint,
+            "Rewrite the following prompt for that target model.",
+            f"Source prompt:\n{text.strip()}",
+        ]
+    )
+
+
+async def enhance_freezone_prompt(
+    *,
+    text: str,
+    dialect: str = "image",
+    strength: str = "standard",
+    egress_context: TrustedEgressContext | None = None,
+) -> tuple[str, list[str]]:
+    """按目标模型方言强化提示词，返回重写正文与补全项摘要。**会出网**。
+
+    形参与 `model_gateway_request_scope` 都照 `translate_freezone_text` 写：
+    `runners/freezone.py:FREEZONE_LEAF_EGRESS` 判本函数为 NETWORK 的依据就是它。
+    """
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        raise ValueError("text is required")
+
+    task = build_freezone_prompt_enhance_task(
+        text=clean_text,
+        dialect=dialect,
+        strength=strength,
+    )
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    with model_gateway_request_scope(egress_context):
+        response = await get_freezone_prompt_enhance_agent().run(task)
+    result = response.output
+    enhanced_text = str(result.enhanced_text or "").strip()
+    if not enhanced_text:
+        raise ValueError("prompt enhancement returned empty output")
+    return (
+        enhanced_text,
+        [str(item).strip() for item in result.changes if str(item).strip()],
     )
 
 

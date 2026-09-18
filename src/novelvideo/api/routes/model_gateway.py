@@ -14,6 +14,7 @@ from novelvideo.model_gateway_settings import (
     MODE_CUSTOM,
     MODE_OFFICIAL,
     MODE_HYBRID,
+    build_elevenlabs_status,
     build_media_relay_status,
     build_model_gateway_status,
     get_effective_media_relay_config,
@@ -22,6 +23,7 @@ from novelvideo.model_gateway_settings import (
     normalize_api_key,
     parse_comfyui_channel_workflows,
     save_media_relay_config,
+    save_elevenlabs_config,
     save_official_media_catalog_auto_update,
     save_official_newapi_key,
     save_custom_newapi_gateway,
@@ -70,6 +72,7 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-value",
     "seedance-2.0-fast-value",
 }
+
 COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow"
 
 
@@ -174,6 +177,16 @@ class MediaRelayConfigBody(BaseModel):
     cloudinary_api_key: str | None = Field(default=None, alias="apiKey")
     cloudinary_api_secret: str | None = Field(default=None, alias="apiSecret")
     cloudinary_folder: str | None = Field(default=None, alias="apiFolder")
+
+
+class ElevenLabsConfigBody(BaseModel):
+    """ElevenLabs 兜底凭据。字段全为可选：``None`` 表示该项不动。
+
+    主入口是「渠道管理」里的 elevenlabs 渠道；这里写入的值只在渠道未配置时生效。
+    """
+
+    api_key: str | None = Field(default=None, alias="apiKey")
+    base_url: str | None = Field(default=None, alias="baseUrl")
 
 
 class NewApiDatabaseBody(BaseModel):
@@ -397,6 +410,8 @@ def _build_media_model_channel_specs(
                 },
             )
             validate_media_model_catalog_config(model_config, media_type)
+        # ElevenLabs 已从"虚拟 provider（只落映射）"改为真实网关渠道
+        # （ChannelTypeElevenLabs），因此与其它 provider 一样进入推送。
         grouped.setdefault(provider, {})[model] = upstream_model
         normalized[model] = {
             "provider": provider,
@@ -513,6 +528,7 @@ async def get_model_gateway_config() -> dict[str, Any]:
             ),
             "provisioner": _provisioner_status(),
             "mediaRelay": _media_relay_status(),
+            "elevenlabs": build_elevenlabs_status(),
         },
     }
 
@@ -739,6 +755,50 @@ async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any
     return {"ok": True, "data": _media_relay_status()}
 
 
+@router.post("/elevenlabs/config")
+async def save_elevenlabs_settings(body: ElevenLabsConfigBody) -> dict[str, Any]:
+    """保存 ElevenLabs 兜底凭据（主入口是渠道管理里的 elevenlabs 渠道）。
+
+    只在 CE 生效——EE 的密钥由控制面统一管，这条接口会明确拒绝而不是写进一个
+    没人读的本地库。
+    """
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    save_elevenlabs_config(
+        api_key=body.api_key,
+        base_url=body.base_url,
+    )
+    return {"ok": True, "data": build_elevenlabs_status()}
+
+
+@router.get("/elevenlabs/models")
+async def list_elevenlabs_models() -> dict[str, Any]:
+    """列出 ElevenLabs 账号可用模型（只读探测，不消耗额度）。
+
+    设置页拿它做「测试连接」：能列出来就说明渠道里那把 key 可用（认证与权限都
+    对），失败时把上游原话（如缺权限）原样回给界面。
+    """
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    from novelvideo.generators.elevenlabs_client import (
+        ElevenLabsClient,
+        ElevenLabsError,
+    )
+
+    client = ElevenLabsClient(purpose="models")
+    if not client.api_key:
+        raise HTTPException(status_code=400, detail="ELEVENLABS_API_KEY not set")
+    try:
+        models = await client.list_models()
+    except ElevenLabsError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "data": {"items": models}}
+
+
 @router.post("/custom/newapi/init")
 async def init_custom_newapi(body: NewApiInitBody = NewApiInitBody()) -> dict[str, Any]:
     try:
@@ -816,6 +876,12 @@ async def save_custom_newapi_provider_channels(
 ) -> dict[str, Any]:
     try:
         require_ce_gateway_management()
+        # 全量保存时未提及的 provider 会被移出本地设置；预先记录，供下方同步删除网关渠道。
+        providers_before: set[str] = (
+            set()
+            if body.preserve_unmentioned
+            else {c["provider"] for c in get_newapi_provider_channels()}
+        )
         saved = save_newapi_provider_channels(
             [
                 {
@@ -833,6 +899,14 @@ async def save_custom_newapi_provider_channels(
         requested_providers = {
             str(channel.provider or "").strip().lower() for channel in body.channels
         }
+        # 本地已移除的渠道，其 DC-<provider> 网关渠道必须一并删除：残留渠道会继续声明
+        # DC-* 别名并参与路由竞争，把任务转发到并不支持这些别名的上游。
+        removed_providers = providers_before - requested_providers
+        if removed_providers:
+            cfg = get_provisioner_config()
+            admin = ensure_admin_access_token(cfg)
+            for provider in sorted(removed_providers):
+                delete_channel_by_name(cfg, admin, name=f"DC-{provider}")
         comfyui_channels = [
             channel
             for channel in saved

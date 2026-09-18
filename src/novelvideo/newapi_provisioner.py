@@ -162,6 +162,17 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "base_url": "https://api.replicate.com",
     },
     "codex": {"label": "Codex", "type": 57, "base_url": "https://chatgpt.com"},
+    # 音频专属渠道：各自有网关侧适配器，不是 OpenAI 兼容协议。
+    "senseaudio": {
+        "label": "SenseAudio",
+        "type": 64,
+        "base_url": "https://api.senseaudio.cn",
+    },
+    "elevenlabs": {
+        "label": "ElevenLabs",
+        "type": 65,
+        "base_url": "https://api.elevenlabs.io",
+    },
 }
 
 

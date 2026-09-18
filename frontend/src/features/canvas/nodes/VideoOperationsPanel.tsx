@@ -23,6 +23,7 @@ import {
   Loader2,
   Music,
   Pause,
+  Sparkles,
   Volume2,
   VolumeX,
   X,
@@ -65,6 +66,14 @@ import {
   type PromptMentionEditorHandle,
 } from "@/features/canvas/nodes/PromptMentionEditor";
 import { NodeContextPromptPaletteButton } from "@/features/canvas/nodes/ContextPromptPaletteButton";
+import { PromptGalleryChip } from "@/features/canvas/ui/PromptGalleryChip";
+import { PromptGalleryModal } from "@/features/canvas/ui/PromptGalleryModal";
+import { EnhancePromptDialog } from "@/features/canvas/nodes/EnhancePromptDialog";
+import {
+  VIDEO_PROMPT_DIALECTS,
+  dialectForVideoModel,
+  usePromptEnhance,
+} from "@/features/canvas/nodes/usePromptEnhance";
 import {
   contextPromptPaletteInsertionText,
   type ContextPromptPaletteEntry,
@@ -307,6 +316,7 @@ export function VideoOperationsPanel({
     const [referencePanelWidth, setReferencePanelWidth] = useState<number | null>(null);
     const [isTranslatingPrompt, setIsTranslatingPrompt] = useState(false);
     const [isCharacterLibraryOpen, setIsCharacterLibraryOpen] = useState(false);
+    const [promptGalleryOpen, setPromptGalleryOpen] = useState(false);
     // Local draft + composition guard so IME (中文输入法) candidates stop being
     // wiped by the store-driven re-render. Same fix pattern as
     // `docs/changes/2026-05-12-image-gen-ime-fix.md`.
@@ -719,6 +729,13 @@ export function VideoOperationsPanel({
       }
     }, [id, isGenerating, isTranslatingPrompt, prompt, updateNodeData]);
 
+    const applyEnhancedPrompt = useCallback(
+      (text: string) => updateNodeData(id, { prompt: text }),
+      [id, updateNodeData],
+    );
+    const promptEnhance = usePromptEnhance(id, applyEnhancedPrompt);
+    const defaultPromptDialect = dialectForVideoModel(modelId);
+
     // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
     const panelHeight = OPERATIONS_PANEL_HEIGHT;
     const panelOverhang = OPERATIONS_PANEL_OVERHANG;
@@ -830,6 +847,7 @@ export function VideoOperationsPanel({
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
                   />
+                  <PromptGalleryChip onOpen={() => setPromptGalleryOpen(true)} />
                 </div>
                 {showReferenceDocumentControls && (
                   <div className="ml-3 flex shrink-0 items-center gap-1.5">
@@ -1095,6 +1113,30 @@ export function VideoOperationsPanel({
                       <Languages className="h-4 w-4" />
                     )}
                   </button>
+                  <button
+                    type="button"
+                    title={t("node.promptEnhance.button")}
+                    disabled={
+                      promptEnhance.busy ||
+                      isGenerating ||
+                      prompt.trim().length === 0
+                    }
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      promptEnhance.setOpen(true);
+                    }}
+                    className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
+                      promptEnhance.busy
+                        ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS
+                        : ""
+                    }`}
+                  >
+                    {promptEnhance.busy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                  </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <CreditCostPill
@@ -1144,6 +1186,27 @@ export function VideoOperationsPanel({
           onConfirm={(selections) =>
             spawnCharacterLibraryReferences(selections)
           }
+        />
+        {/* 提示词画廊：和图生节点同一个语义 —— insertTextAtCursor 插在光标处，
+            不覆盖用户已经写好的内容。 */}
+        {promptGalleryOpen && (
+          <PromptGalleryModal
+            onApply={(item) => {
+              promptEditorRef.current?.insertTextAtCursor(item.prompt);
+              setPromptGalleryOpen(false);
+            }}
+            onClose={() => setPromptGalleryOpen(false)}
+          />
+        )}
+        <EnhancePromptDialog
+          open={promptEnhance.open}
+          onOpenChange={promptEnhance.setOpen}
+          dialects={VIDEO_PROMPT_DIALECTS}
+          defaultDialect={defaultPromptDialect}
+          busy={promptEnhance.busy}
+          onConfirm={(dialect, strength) => {
+            void promptEnhance.run(prompt, dialect, strength);
+          }}
         />
       </>
     );

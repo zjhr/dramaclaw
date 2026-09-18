@@ -131,6 +131,15 @@ export const queryKeys = {
   styles: (p?: string) =>
     p ? (["styles", p] as const) : (["styles"] as const),
   style: (id: string) => ["styles", "detail", id] as const,
+  /**
+   * 提示词画廊。key 里带 sourceId 而不是整个源对象 —— 源清单是编译期常量，
+   * 变了要发版，不需要靠 key 的序列化去感知。fileUrl 是必须的：一个源可能挂着
+   * 多个上游文件（wuyoscar 按分类拆了 31 个），key 不带它就全撞在一起了。
+   */
+  promptGallerySource: (sourceId: string, fileUrl: string) =>
+    ["prompt-gallery", "source", sourceId, fileUrl] as const,
+  /** 远端风格包（VigoZhao cookbook）。单文件，不需要再分片。 */
+  cookbookStyles: () => ["style-cookbook", "styles"] as const,
   ttsVoices: (p: string) => ["projects", p, "tts", "voices"] as const,
   modelGateway: () => ["model-gateway", "config"] as const,
   releaseNotifications: (locale: string) => ["release-notifications", locale] as const,

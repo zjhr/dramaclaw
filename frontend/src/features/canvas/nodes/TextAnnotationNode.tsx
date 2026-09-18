@@ -14,6 +14,7 @@ import {
   Loader2,
   Music,
   Music2,
+  Volume2,
   PlaySquare,
   X,
 } from 'lucide-react';
@@ -114,6 +115,9 @@ function countBillableTextChars(text: string): number {
 // i18n-exempt-start
 const TEXT_TO_MUSIC_DEFAULT_CONTENT =
   '生成一首现代品牌电子音乐（约 110 BPM），干净有力的低频贝斯，清晰电子鼓点，整体风格高级、未来感强。开场节奏型贝斯与简洁合成器音色建立律动。主段加入稳定鼓点，节奏清晰，保持克制的张力。强化段加入更丰富的音层，合成器音色提升，律动增强但不过度拥挤。结尾鼓点减弱，仅保留低频与氛围音渐出，干净利落收尾。';
+// 音效描述同样预填一句可用的样例——空着会让用户以为这个模式没生效。
+const TEXT_TO_SOUND_EFFECT_DEFAULT_CONTENT =
+  '远处的雷声滚过山谷，雨点密集打在铁皮屋顶上，风声在窗缝里起伏。';
 // i18n-exempt-end
 
 const SPAWN_UPLOAD_WIDTH = 320;
@@ -142,6 +146,7 @@ const REAL_MODES = new Set<TextNodeMode>([
   'imageToPrompt',
   'textToMusic',
   'textToMusicGen',
+  'textToSoundEffect',
 ]);
 
 const MODES: ReadonlyArray<{
@@ -154,6 +159,7 @@ const MODES: ReadonlyArray<{
   { key: 'imageToPrompt', icon: ImageIcon, labelKey: 'node.textNode.modes.imageToPrompt' },
   { key: 'textToMusic', icon: Music, labelKey: 'node.textNode.modes.textToMusic' },
   { key: 'textToMusicGen', icon: Music2, labelKey: 'node.textNode.modes.textToMusicGen' },
+  { key: 'textToSoundEffect', icon: Volume2, labelKey: 'node.textNode.modes.textToSoundEffect' },
 ];
 
 const EDIT_VIEW_ZOOM = 1.4;
@@ -340,14 +346,16 @@ export const TextAnnotationNode = memo(({
   // 克隆音频 / 文字生成音乐：在文本节点下游派生一个音频节点并连边（文本 → 音频），
   // 与「文生视频」派生视频节点同构。音频节点默认尺寸 480×180。
   // audioKind 决定下游音频节点走语音克隆(speech) 还是文本生成音乐(music)。
-  const spawnAudioNode = useCallback((audioKind: 'speech' | 'music') => {
+  const spawnAudioNode = useCallback((audioKind: 'speech' | 'music' | 'sfx') => {
     const position = findNodePosition(id, 480, 180);
     const newNodeId = addNode(CANVAS_NODE_TYPES.audio, position, { audioKind });
     addEdge(id, newNodeId);
     const label =
       audioKind === 'music'
         ? t('node.textNode.group.textToMusic')
-        : t('node.textNode.group.cloneAudio');
+        : audioKind === 'sfx'
+          ? t('node.textNode.group.textToSoundEffect')
+          : t('node.textNode.group.cloneAudio');
     useCanvasStore.getState().autoGroupSpawn(id, [newNodeId], { label });
   }, [addEdge, addNode, findNodePosition, id, t]);
 
@@ -366,6 +374,18 @@ export const TextAnnotationNode = memo(({
         mode: 'writing',
         pickerDismissed: true,
         content: TEXT_TO_MUSIC_DEFAULT_CONTENT,
+      });
+      enterEditMode();
+      return;
+    }
+    // 文字生成音效：派生下游音效音频节点，本节点回到纯文本编辑态，
+    // 与「文字生成音乐」同一形态。
+    if (nextMode === 'textToSoundEffect') {
+      spawnAudioNode('sfx');
+      updateNodeData(id, {
+        mode: 'writing',
+        pickerDismissed: true,
+        content: TEXT_TO_SOUND_EFFECT_DEFAULT_CONTENT,
       });
       enterEditMode();
       return;

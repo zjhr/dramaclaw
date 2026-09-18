@@ -89,6 +89,31 @@ export default defineConfig(({ mode }) => {
           });
         },
       },
+      {
+        // Serve the vendored 3D director desk (frontend/public/director-desk)
+        // from `/director-desk/` in dev exactly like nginx does in production.
+        //
+        // Vite's public-dir middleware is constructed with `extensions: []`, so
+        // it deliberately does NOT resolve a directory request to that
+        // directory's index.html; `/director-desk/` then falls through to the
+        // SPA html fallback and the iframe loads the DramaClaw shell instead of
+        // the director desk — the canvas node would sit at "connecting" forever
+        // in dev while working fine in prod. The static middleware still serves
+        // every file under the subpath, so only this one directory URL needs
+        // rewriting.
+        name: "director-desk-dev-subpath-index",
+        apply: "serve",
+        configureServer(server) {
+          server.middlewares.use((req, _res, next) => {
+            const url = req.url ?? "";
+            const [pathname, query] = url.split("?");
+            if (pathname === "/director-desk/" || pathname === "/director-desk") {
+              req.url = `/director-desk/index.html${query ? `?${query}` : ""}`;
+            }
+            next();
+          });
+        },
+      },
     ],
     define: {
       __APP_VERSION__: JSON.stringify(APP_VERSION),
