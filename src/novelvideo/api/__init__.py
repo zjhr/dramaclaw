@@ -61,6 +61,7 @@ from novelvideo.api.routes import (  # noqa: E402
     release_notifications,
     scenes,
     scripts,
+    shot_recipes,
     styles,
     tasks,
 )
@@ -112,6 +113,7 @@ api_router.include_router(generation.router, tags=["generation"])
 api_router.include_router(tasks.router, tags=["tasks"])
 api_router.include_router(files.router, tags=["files"])
 api_router.include_router(styles.router, tags=["styles"])
+api_router.include_router(shot_recipes.router, tags=["shot-recipes"])
 api_router.include_router(pipeline.router, tags=["pipeline"])
 api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
