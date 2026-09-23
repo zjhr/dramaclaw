@@ -1,0 +1,187 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "ShotRecipe Production Pipeline"
+  slug: "shot-recipe-pipeline"
+  kind: specific
+  tranche: "Phase 1: 建立镜头配方和版本底座 (ShotRecipe 数据模型 + CharacterLookDecision + 父子版本关系 + 成本/模型快照). Phase 2+: 白模导出、续写、重拍、质量检查按阶段推进。"
+  status: active
+  oracle:
+    signal: "End-to-end demo walkthrough: user creates a shot recipe, binds character look decisions, exports whitebox, runs preflight, renders, reshoots a segment, and verifies all versions retain full lineage (parent_id, prompt_delta, model_snapshot, cost_ledger). Whitebox node has explicit source edge to final render. Quality report returns structured risks, not a single score."
+    cadence: "after each Worker package and at final audit"
+    final_proof: "e2e demo receipt (video + lineage trace) + quality report sample + source edge verification + state.yaml task receipts"
+  intake:
+    original_request: "帮我创建goalbuddy"
+    interpreted_outcome: "建立可迭代、可溯源的镜头生产配方系统，串起角色妆容表情、白模、续写、重拍和质量检查"
+    input_shape: specific
+    audience: "主人 / 开发团队"
+    authority: requested
+    proof_type: artifact
+    completion_proof: "从头到尾跑一次 e2e demo：创建镜头 → 选角色/场景/风格 → 调整妆容表情 → 设置节拍 → 导出白模 → 预检 → 生成正式视频 → 质量检查 → 续写/重拍 → 新版本保留完整溯源 → 原版本可恢复"
+    likely_misfire: "堆积很多独立功能但无法串起来；把模型不支持的能力伪装成已实现"
+    blind_spots_considered:
+      - "模型能力边界会降级，必须显示给用户"
+      - "不需要设计积分机制"
+      - "已有模块（Freezone、CharacterIdentity、Monoform、Director Desk）可以复用"
+    existing_plan_facts:
+      - "来自对微信文章《Seedance 2.5上线了》的分析"
+      - "P0 任务：ShotRecipe + CharacterLookDecision + Preflight"
+      - "P1 任务：连续性风险报告、音画事件检查、多版本实验组、预算上限"
+      - "P2 任务：参考视频复刻、自动风格提取、多语言口型、复杂物理交互"
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  exact_human_approval_can_terminal_wait: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  scout: unknown
+  worker: unknown
+  judge: unknown
+
+visual_board:
+  selected: local
+  local:
+    status: starting
+    url: null
+    command: "node <skill-path>/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/shot-recipe-pipeline"
+
+active_task: T001
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: active
+    reasoning_hint: default
+    objective: "映射 ShotRecipe 生产管线所需的数据模型、现有 Freezone/CharacterIdentity/Monoform/DirectorDesk APIs、任务系统、计费系统和验证命令。确定 ShotRecipe 与现有模块的集成点。"
+    inputs:
+      - "src/novelvideo/api/routes/freezone.py"
+      - "src/novelvideo/api/routes/scenes.py"
+      - "src/novelvideo/api/routes/styles.py"
+      - "src/novelvideo/models.py"
+      - "src/novelvideo/api/schemas.py"
+      - "src/novelvideo/freezone/jobs.py"
+      - "src/novelvideo/task_backend/runners/freezone.py"
+      - "frontend/src/features/canvas/nodes/DirectorDeskNode.tsx"
+      - "frontend/src/features/canvas/nodes/MonoformDeskNode.tsx"
+      - "frontend/src/api/ops.ts"
+    constraints:
+      - "Read-only."
+      - "Do not edit implementation files."
+      - "Prefer codebase-memory graph tools over grep."
+    expected_output:
+      - "ShotRecipe 数据模型字段清单"
+      - "CharacterLookDecision 需要新增的字段"
+      - "现有版本溯源机制 (parent_video_id 等)"
+      - "Freezone 生成/续写/重拍/合成路由和任务类型"
+      - "模型能力目录已有字段"
+      - "验证命令列表"
+      - "集成点映射"
+    receipt: null
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: default
+    objective: "审阅 Scout 结果，确认 Phase 1 任务边界、允许修改的文件范围、验证命令和停止条件。"
+    inputs:
+      - "T001 receipt"
+    constraints:
+      - "Do not implement."
+      - "确保第一块切片是最大安全可逆的垂直切片。"
+    expected_output:
+      - "Decision: Phase 1 切片定义"
+      - "Worker objective 准确描述"
+      - "allowed_files"
+      - "verify commands"
+      - "stop_if"
+    receipt: null
+
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: medium
+    objective: "待 Judge 确认"
+    allowed_files: []
+    verify: []
+    stop_if: []
+    receipt: null
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: medium
+    objective: "待 Judge 确认"
+    allowed_files: []
+    verify: []
+    stop_if: []
+    receipt: null
+
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: medium
+    objective: "待 Judge 确认"
+    allowed_files: []
+    verify: []
+    stop_if: []
+    receipt: null
+
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: medium
+    objective: "待 Judge 确认"
+    allowed_files: []
+    verify: []
+    stop_if: []
+    receipt: null
+
+  - id: T007
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: high
+    objective: "Phase 1 审计：验证 ShotRecipe + CharacterLookDecision + 版本关系是否落库并通过验证。"
+    inputs:
+      - "T003-T006 receipts"
+    expected_output:
+      - "Phase 1 审计结论"
+    receipt: null
+
+  - id: T008
+    type: judge
+    assignee: PM
+    status: queued
+    reasoning_hint: high
+    objective: "最终审计：跑 e2e demo，验证从镜头创建到续写/重拍的完整闭环，检查溯源完整性。"
+    inputs:
+      - "All task receipts"
+    expected_output:
+      - "full_outcome_complete: true/false"
+    receipt: null

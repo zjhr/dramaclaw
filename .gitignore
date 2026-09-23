@@ -48,6 +48,9 @@ scripts/incident_drills/.drill.local.env
 .obsidian/
 .serena
 .prototype-ui
+docs/
+!docs/goals/
+!docs/goals/**
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/
@@ -72,3 +75,9 @@ docs/superpowers/
 
 # 前端本地运行产物(frontend/state 含本地密钥环，不入库)
 /frontend/state/
+
+# Frontend vendor directory (local dependencies)
+/frontend/vendor/
+
+# Blender 参数化模板的生成物（跑 scripts/blender/build_template.py 生成）
+frontend/public/previs-models/
