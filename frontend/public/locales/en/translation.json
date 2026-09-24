@@ -5592,7 +5592,16 @@
       "reshootRangeInvalid": "The selected range is invalid",
       "reshootRangeUnknown": "Source duration is unavailable, so reshoot is disabled",
       "reshootSubmit": "Reshoot this segment",
-      "reshootUnderMinDuration": "Selected segment is shorter than the model minimum of {{limit}}s"
+      "reshootUnderMinDuration": "Selected segment is shorter than the model minimum of {{limit}}s",
+      "continue": "Continue",
+      "continueTitle": "Continuation clip",
+      "continueHint": "Keeps going from where the video ends",
+      "continueDurationLabel": "Duration",
+      "continueSeconds": "{{count}}s",
+      "continuePromptPlaceholder": "Describe what happens next",
+      "continueCancel": "Cancel",
+      "continueSubmit": "Generate",
+      "continuePollTimeout": "The task is still running — check the task center for the result"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",

@@ -158,6 +158,24 @@ export function videoReferenceConnectionRejection(
   if (!source || !target) return null;
   const targetNode = nodes.find((node) => node.id === target);
   if (!isVideoNode(targetNode)) return null;
+  // 深度视频节点（greybox）、重拍派生节点（reshoot）与续写片段（continuation）的入边
+  // 是**溯源边**——标示这个产物是从哪个源视频转/拼/续出来的，不是喂给模型的参考素材。
+  // 模型可能声明 referenceVideoMax=0（如 agnes 系不吃视频参考），照那张表算会把溯源边
+  // 静默拒掉，画布上看起来就是「节点生成了但没连线」。这类边不走素材上限。
+  const derivedFlags = targetNode.data as
+    | {
+        isGreyboxNode?: unknown;
+        isReshootNode?: unknown;
+        isContinuationNode?: unknown;
+      }
+    | undefined;
+  if (
+    derivedFlags?.isGreyboxNode ||
+    derivedFlags?.isReshootNode ||
+    derivedFlags?.isContinuationNode
+  ) {
+    return null;
+  }
   const envelope = resolveEnvelope(targetNode);
   const incoming = classifyVideoReferenceMedia(
     nodes.find((node) => node.id === source),

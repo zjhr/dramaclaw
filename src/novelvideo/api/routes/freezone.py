@@ -9391,6 +9391,9 @@ async def freezone_video_keyframes(
     )
     job_id = _new_job_id()
 
+    # 比例探测与 reshoot job 共用同一实现（导入复用，不改它）。
+    from novelvideo.freezone.jobs import _probe_aspect_ratio
+
     try:
         return await _start_or_enqueue_freezone_video_gen(
             ctx=ctx,
@@ -9401,8 +9404,12 @@ async def freezone_video_keyframes(
             job_id=job_id,
             prompt=final_prompt,
             reference_items=reference_items,
-            # 关键帧画幅跟随首帧；仅尾帧时跟随尾帧，不接受固定比例。
-            aspect_ratio="auto",
+            # 关键帧画幅跟随首帧；仅尾帧时跟随尾帧。但**不能直接传 auto**：
+            # agnes 系的网关适配器把 ratio=auto 译成 aspect_ratio=auto 后直接 400
+            # （`aspect_ratio 不能为 auto`），reshoot job 早已为此改成探真实比例
+            # （见 freezone/jobs.py 的 `_probe_aspect_ratio` 注释）。这里同一套做法 ——
+            # 语义仍是「跟随输入」，只是写成网关认的具体写法；探不到才退回 auto。
+            aspect_ratio=await _probe_aspect_ratio(Path(first_path or last_path)),
             resolution=normalize_video_resolution_for_backend(
                 backend,
                 body.resolution,

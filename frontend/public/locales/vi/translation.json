@@ -5496,7 +5496,16 @@
       "reshootRangeInvalid": "Khoảng đã chọn không hợp lệ",
       "reshootRangeUnknown": "Không đọc được thời lượng video nguồn nên không thể quay lại",
       "reshootSubmit": "Quay lại đoạn này",
-      "reshootUnderMinDuration": "Đoạn đã chọn ngắn hơn giới hạn tối thiểu {{limit}} giây của model"
+      "reshootUnderMinDuration": "Đoạn đã chọn ngắn hơn giới hạn tối thiểu {{limit}} giây của model",
+      "continue": "Tiếp tục",
+      "continueTitle": "Đoạn tiếp",
+      "continueHint": "Tiếp tục diễn từ cuối video",
+      "continueDurationLabel": "Thời lượng",
+      "continueSeconds": "{{count}} giây",
+      "continuePromptPlaceholder": "Mô tả điều gì xảy ra tiếp theo",
+      "continueCancel": "Huỷ",
+      "continueSubmit": "Tạo",
+      "continuePollTimeout": "Tác vụ vẫn đang chạy — xem kết quả ở trung tâm tác vụ"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",

@@ -5592,7 +5592,16 @@
       "reshootRangeInvalid": "所选区间无效",
       "reshootRangeUnknown": "读不到源视频时长，无法重拍",
       "reshootSubmit": "重拍这段",
-      "reshootUnderMinDuration": "所选片段短于该模型下限 {{limit}} 秒"
+      "reshootUnderMinDuration": "所选片段短于该模型下限 {{limit}} 秒",
+      "continue": "继续生成",
+      "continueTitle": "续写片段",
+      "continueHint": "从片尾接着往下演",
+      "continueDurationLabel": "生成时长",
+      "continueSeconds": "{{count}} 秒",
+      "continuePromptPlaceholder": "描述接下来要发生什么",
+      "continueCancel": "取消",
+      "continueSubmit": "生成",
+      "continuePollTimeout": "任务仍在后台执行，请到任务中心查看结果"
     },
     "audio": {
       "requiresAudio": "请先准备音频",
