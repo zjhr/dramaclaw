@@ -2589,7 +2589,8 @@
     "pause": "Tạm dừng",
     "retry": "Thử lại",
     "requestId": "Request ID",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "processing": "Đang xử lý…"
   },
   "ingest": {
     "title": "Nguồn truyện",
@@ -2823,6 +2824,21 @@
           "fix": "Nếu đây là văn xuôi tiểu thuyết, hãy đổi loại dự án sang Có lời dẫn. Nếu là kịch bản, hãy bổ sung các dòng đầu cảnh."
         }
       }
+    },
+    "sceneHeaders": {
+      "open": "Xem nội dung của {{chapter}}",
+      "scene": "Cảnh {{number}}",
+      "unknownLocation": "Chưa ghi địa điểm",
+      "characters": "Nhân vật",
+      "characterSeparator": ", ",
+      "empty": "Chương này chưa phân tích được cảnh nào",
+      "unparsedBody": "Phần nội dung chưa phân tích",
+      "missing": "Không nhận ra tiêu đề cảnh",
+      "missingFix": "Thêm tiêu đề cảnh ở đầu mỗi cảnh, ví dụ \"Cảnh 1 Quán cà phê Ngày NỘI\"",
+      "repairable": "Tiêu đề cảnh không đúng chuẩn",
+      "repairableFix": "Viết lại tiêu đề cảnh theo dạng \"cảnh địa điểm thời gian NỘI/NGOẠI\"",
+      "count": "{{count}} khối cảnh",
+      "rowCount": "{{count}} khối"
     }
   },
   "video": {
@@ -4261,7 +4277,14 @@
         "invalidBeats": "Các beat đã chọn không thuộc tập phim này",
         "noBeats": "Tập này chưa có beat nào"
       },
-      "paddingCount": "+{{count}} ô trống"
+      "paddingCount": "+{{count}} ô trống",
+      "partial": {
+        "continue": "Tiếp tục",
+        "summary": "Đã gửi {{ok}} / bị từ chối {{fail}}",
+        "reason": {
+          "unknown": "Một số tác vụ chưa được gửi"
+        }
+      }
     },
     "renderSettings": {
       "model": "Model render",
@@ -4708,7 +4731,9 @@
         "placeholder": "Nhập tên thư mục",
         "createHint": "Tạo xong là dùng ngay được để xếp và tải asset vào",
         "renameHint": "Tên mới hiện ra khắp thư viện asset"
-      }
+      },
+      "itemCount": "{{count}} mục",
+      "bulkSelected": "Đã chọn {{count}}"
     },
     "referencePick": {
       "kind": {
@@ -5455,7 +5480,23 @@
       "subtitleRemovalBox": "Xoá theo vùng chọn",
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
-      "requiresVideo": "Hãy tải video lên trước"
+      "requiresVideo": "Hãy tải video lên trước",
+      "greybox": "Video độ sâu",
+      "reshoot": "Quay lại",
+      "reshootHint": "Kéo hai đầu để chọn đoạn cần quay lại",
+      "reshootModelLabel": "Model",
+      "reshootModelUnsupported": "Model này không hỗ trợ khung đầu/cuối nên không thể quay lại",
+      "reshootOverMaxDuration": "Đoạn đã chọn vượt giới hạn {{limit}} giây của model",
+      "reshootPromptEnhance": "Tăng cường lời nhắc",
+      "reshootPromptEnhanceRunning": "Đang tăng cường…",
+      "reshootPromptPlaceholder": "Mô tả đoạn này cần đổi thành gì",
+      "reshootPromptRequired": "Vui lòng nhập lời nhắc trước",
+      "reshootPromptSuggest": "Gợi ý lời nhắc",
+      "reshootPromptSuggestRunning": "Đang gợi ý…",
+      "reshootRangeInvalid": "Khoảng đã chọn không hợp lệ",
+      "reshootRangeUnknown": "Không đọc được thời lượng video nguồn nên không thể quay lại",
+      "reshootSubmit": "Quay lại đoạn này",
+      "reshootUnderMinDuration": "Đoạn đã chọn ngắn hơn giới hạn tối thiểu {{limit}} giây của model"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
@@ -6592,7 +6633,7 @@
     },
     "directorDesk": {
       "open": "Mở",
-      "emptyHint": "Dàn dựng cảnh trong 3D rồi gửi ảnh chụp về canvas",
+      "emptyHint": "Dàn nhân vật và camera trong 3D, ảnh chụp có thể gửi về canvas",
       "previewAlt": "Ảnh xem trước bàn đạo diễn",
       "dialogTitle": "Bàn đạo diễn 3D",
       "dialogDescription": "Dàn dựng cảnh, bố trí máy quay và gửi ảnh chụp về canvas",
@@ -6630,8 +6671,164 @@
       "exportUnavailable": "Bản MONOFORM này chưa hỗ trợ xuất: chưa triển khai export.video",
       "exportUnavailableHint": "Bàn mô hình trắng chỉ tải MP4 trong trình duyệt của nó; host không nhận được tệp. Muốn biến nó thành node video trên canvas kèm cạnh nguồn, MONOFORM phải khai báo export.video trong capabilities.actions.",
       "whiteboxExportVideo": "Xuất video mô hình trắng",
-      "whiteboxOpen": "Mở bàn mô hình trắng"
-    }
+      "whiteboxOpen": "Mở bàn mô hình trắng",
+      "assistant": "Trợ lý AI",
+      "assistantTitle": "Trợ lý bàn đạo diễn",
+      "assistantScopeHint": "Chỉ áp dụng cho node này",
+      "assistantPlaceholder": "Mô tả khung hình bạn muốn: camera, vị trí, bố cục",
+      "assistantEmpty": "Tôi sẽ dàn nhân vật và camera lên bàn đạo diễn — bạn chỉ cần mô tả.",
+      "assistantWaiting": "Đang tạo — thường mất một hai phút…",
+      "assistantSyncing": "Đang kết nối trợ lý bàn đạo diễn và đồng bộ hội thoại này",
+      "assistantSend": "Gửi",
+      "assistantStop": "Dừng",
+      "assistantScrollToBottom": "Về cuối",
+      "assistantResize": "Điều chỉnh độ rộng bảng hội thoại",
+      "assistantGenerate": "Tạo nền",
+      "assistantGenerateQueued": "Đã gửi yêu cầu tạo nền",
+      "assistantGenerateQueuedChat": "Đã gửi yêu cầu tạo nền: {{description}}",
+      "assistantGenerateFailed": "Tạo nền thất bại: {{message}}",
+      "assistantSceneApplied": "Đã áp dụng bối cảnh vào bàn",
+      "assistantSceneAppliedAt": "Đã áp dụng bối cảnh · {{time}}",
+      "assistantSceneFailed": "Áp dụng bối cảnh thất bại: {{message}}",
+      "assistantSceneUnavailable": "Bàn đạo diễn chưa sẵn sàng nên chưa thể áp dụng bối cảnh",
+      "assistantSceneUnparsed": "Phân tích khối bối cảnh thất bại — chưa áp dụng gì",
+      "assistantBackgroundName": "Nền AI",
+      "assistantBackgroundGenerating": "Đang tạo nền AI",
+      "assistantBackgroundApplied": "Đã cập nhật nền AI · {{time}}",
+      "proposalApply": "Áp dụng",
+      "proposalApplied": "Đã áp dụng",
+      "card": {
+        "title": "Thẻ phân cảnh",
+        "applied": "Đã áp dụng",
+        "pending": "Chờ áp dụng",
+        "apply": "Áp dụng",
+        "reapply": "Áp dụng lại",
+        "undo": "Hoàn tác",
+        "copy": "Sao chép JSON",
+        "copied": "Đã sao chép",
+        "camera": "Camera",
+        "cameraLine": "{{move}} · {{duration}} giây",
+        "cameraLinePlain": "{{move}}",
+        "characters": "Nhân vật",
+        "objects": "Đạo cụ",
+        "beats": "Nhịp",
+        "beatWalk": "Di chuyển",
+        "beatAction": "Hành động",
+        "beatCamera": "Chuyển động camera",
+        "autoApply": "Tự động áp dụng",
+        "autoApplyOff": "Không tự động áp dụng",
+        "autoApplyTitle": "Bật: trợ lý áp dụng ngay; Tắt: chỉ tạo thẻ để bạn tự áp dụng",
+        "reset": "Xoá",
+        "resetConfirm": "Xác nhận xoá?",
+        "resetTitle": "Xoá bối cảnh bàn đạo diễn và làm lại (có lưu bản hoàn tác trước)",
+        "undoApplied": "Đã hoàn tác lần áp dụng bối cảnh gần nhất",
+        "undoUnavailable": "Không có thay đổi bối cảnh nào để hoàn tác"
+      },
+      "skills": {
+        "menuTitle": "Kỹ năng chuyên môn",
+        "pickLabel": "Chọn kỹ năng chuyên môn (tuỳ chọn)",
+        "groupOperate": "Thao tác bàn đạo diễn",
+        "groupAdvise": "Tư vấn",
+        "none": {
+          "name": "Tổng quát",
+          "desc": "Chỉ dùng lớp cơ bản, không thêm kỹ năng chuyên môn"
+        },
+        "operator": {
+          "name": "Chuyên gia thao tác bàn đạo diễn",
+          "desc": "Nhân vật nền: biết bàn đạo diễn làm được và không làm được gì"
+        },
+        "muse": {
+          "name": "Ý tưởng phân cảnh",
+          "desc": "Đưa 3-4 phương án khác nhau khi yêu cầu còn chung chung"
+        },
+        "camera": {
+          "name": "Camera điện ảnh",
+          "desc": "Chuyển mô tả thành chuyển động camera chuyên nghiệp"
+        },
+        "blocking": {
+          "name": "Điều phối vị trí nhân vật",
+          "desc": "Sắp xếp vị trí và lộ trình di chuyển của nhân vật"
+        },
+        "composition": {
+          "name": "Bố cục và ngôn ngữ khuôn hình",
+          "desc": "Điều chỉnh cỡ cảnh, các lớp và trọng tâm thị giác"
+        },
+        "lighting": {
+          "name": "Ánh sáng và không khí",
+          "desc": "Tạo không khí bằng ánh sáng và màu sắc"
+        },
+        "style": {
+          "name": "Phong cách mỹ thuật",
+          "desc": "Giữ tông thị giác nhất quán cho phim"
+        },
+        "cinematicAction": {
+          "name": "Camera điện ảnh và dàn dựng hành động",
+          "desc": "Thiết kế khung hình cho đánh nhau, rượt đuổi và các đoạn hành động"
+        },
+      "modelMaker": {
+        "name": "Tạo mô hình cho bàn đạo diễn",
+        "desc": "Dựng mô hình từ các khối tham số"
+      },
+      "staging": {
+        "name": "Bối cảnh và đạo cụ",
+        "desc": "Sắp đặt bối cảnh, đạo cụ và quan hệ không gian"
+      },
+      "method": {
+        "name": "Phương pháp đạo diễn",
+        "desc": "Chỉ giải thích, không thay đổi bối cảnh"
+      },
+      "script": {
+        "name": "Chia kịch bản thành bảng phân cảnh",
+        "desc": "Chỉ ra danh sách, không thay đổi bối cảnh"
+      },
+      "review": {
+        "name": "Góp ý duyệt phim",
+        "desc": "Chỉ góp ý, không thay đổi bối cảnh"
+      }
+      },
+      "move": {
+        "orbitLeft": "Xoay sang trái",
+        "orbitRight": "Xoay sang phải",
+        "dollyIn": "Đẩy vào",
+        "dollyOut": "Kéo ra",
+        "panLeft": "Lia trái",
+        "panRight": "Lia phải",
+        "static": "Cố định",
+        "craneUp": "Cần cẩu nâng lên",
+        "craneDown": "Cần cẩu hạ xuống",
+        "railLeft": "Trượt ngang sang trái",
+        "railRight": "Trượt ngang sang phải",
+        "handheld": "Cầm tay",
+        "zoomIn": "Thu phóng vào",
+        "zoomOut": "Thu phóng ra",
+        "pov": "Góc nhìn chủ quan",
+        "overShoulder": "Qua vai"
+      },
+      "prop": {
+        "box": "Khối lập phương",
+        "sphere": "Khối cầu",
+        "cylinder": "Khối trụ",
+        "plane": "Mặt phẳng",
+        "arch": "Cổng vòm",
+        "stairs": "Cầu thang",
+        "door": "Cửa",
+        "window": "Cửa sổ",
+        "table": "Bàn",
+        "chair": "Ghế",
+        "sofa": "Ghế sofa",
+        "roof": "Mái nhà",
+        "tree": "Cây",
+        "vehicle": "Xe",
+        "depthMesh": "Địa hình độ sâu",
+        "model": "Mô hình ngoài"
+      },
+    "example1": "Đẩy camera từ từ về phía nhân vật chính",
+    "example2": "Hai người đứng đối diện nói chuyện",
+    "example3": "Thêm một cái bàn và cho nhân vật ngồi phía sau"
+    },
+    "reshoot": { "clipTitle": "Đoạn quay lại",  "fullTitle": "Quay lại toàn bộ video",  "generating": "Đang quay lại…",  "noResult": "Tác vụ quay lại không trả về kết quả",  "suggestDetached": "Node không còn trên canvas, kết quả gợi ý đã bị bỏ",  "suggestEmpty": "Dịch vụ gợi ý không trả về lời nhắc" },
+    "videoGreybox": { "nodeTitle": "Video độ sâu",  "generating": "Đang tạo video độ sâu…",  "noResult": "Tác vụ video độ sâu không trả về kết quả" },
+    "reshootTimeline": { "unknownDuration": "Không đọc được thời lượng video nguồn",  "startFrame": "Khung bắt đầu",  "endFrame": "Khung kết thúc",  "startHandle": "Tay nắm thời điểm bắt đầu",  "endHandle": "Tay nắm thời điểm kết thúc",  "startLabel": "{{value}}s",  "endLabel": "{{value}}s",  "spanLabel": "Vùng chọn {{value}}s" }
   },
   "viewer": {
     "imageAlt": "Ảnh",

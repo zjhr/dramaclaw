@@ -2685,7 +2685,8 @@
     "pause": "Pause",
     "retry": "Retry",
     "requestId": "Request ID",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "processing": "Processing…"
   },
   "ingest": {
     "title": "Story Source",
@@ -2919,6 +2920,21 @@
           "fix": "If this is novel prose, switch the project type to Narrated. If it is a script, add the scene headings."
         }
       }
+    },
+    "sceneHeaders": {
+      "open": "View the script of {{chapter}}",
+      "scene": "Scene {{number}}",
+      "unknownLocation": "Location not specified",
+      "characters": "Characters",
+      "characterSeparator": ", ",
+      "empty": "No scenes parsed from this chapter yet",
+      "unparsedBody": "Unparsed script body",
+      "missing": "No scene headers detected",
+      "missingFix": "Add a scene header at the start of every scene, e.g. \"Scene 1 Cafe Day INT\"",
+      "repairable": "Scene headers are non-standard",
+      "repairableFix": "Rewrite scene headers as \"scene location time INT/EXT\"",
+      "count": "{{count}} scene blocks",
+      "rowCount": "{{count}} blocks"
     }
   },
   "video": {
@@ -4357,7 +4373,14 @@
         "invalidBeats": "Selected beats are not in this episode",
         "noBeats": "This episode has no beats yet"
       },
-      "paddingCount": "+{{count}} empty"
+      "paddingCount": "+{{count}} empty",
+      "partial": {
+        "continue": "Continue",
+        "summary": "{{ok}} dispatched / {{fail}} rejected",
+        "reason": {
+          "unknown": "Some tasks were not dispatched"
+        }
+      }
     },
     "renderSettings": {
       "model": "Render model",
@@ -4804,7 +4827,9 @@
         "placeholder": "Enter a folder name",
         "createHint": "Ready to use for filing and uploading assets as soon as it exists",
         "renameHint": "The new name shows up across the asset library"
-      }
+      },
+      "itemCount": "{{count}} items",
+      "bulkSelected": "{{count}} selected"
     },
     "referencePick": {
       "kind": {
@@ -5551,7 +5576,23 @@
       "subtitleRemovalBox": "Box-select erase",
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
-      "requiresVideo": "Upload a video first"
+      "requiresVideo": "Upload a video first",
+      "greybox": "Depth video",
+      "reshoot": "Reshoot",
+      "reshootHint": "Drag the handles to pick the segment to reshoot",
+      "reshootModelLabel": "Model",
+      "reshootModelUnsupported": "This model doesn't support first/last frame, so reshoot is unavailable",
+      "reshootOverMaxDuration": "Selected segment exceeds the model limit of {{limit}}s",
+      "reshootPromptEnhance": "Enhance prompt",
+      "reshootPromptEnhanceRunning": "Enhancing…",
+      "reshootPromptPlaceholder": "Describe what this segment should become",
+      "reshootPromptRequired": "Enter a prompt first",
+      "reshootPromptSuggest": "Suggest prompt",
+      "reshootPromptSuggestRunning": "Suggesting…",
+      "reshootRangeInvalid": "The selected range is invalid",
+      "reshootRangeUnknown": "Source duration is unavailable, so reshoot is disabled",
+      "reshootSubmit": "Reshoot this segment",
+      "reshootUnderMinDuration": "Selected segment is shorter than the model minimum of {{limit}}s"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",
@@ -6688,7 +6729,7 @@
     },
     "directorDesk": {
       "open": "Open",
-      "emptyHint": "Stage the shot in 3D, then send captures back to the canvas",
+      "emptyHint": "Block out characters and cameras in 3D; captures can be sent back to the canvas",
       "previewAlt": "Director desk preview",
       "dialogTitle": "3D Director Desk",
       "dialogDescription": "Stage the shot, set up cameras and send captures back to the canvas",
@@ -6726,8 +6767,164 @@
       "exportUnavailable": "Whitebox export is not available here: this MONOFORM bundle does not implement export.video yet",
       "exportUnavailableHint": "The whitebox desk can only download an MP4 in its own browser. To turn it into a canvas video node with a source edge, the MONOFORM bundle must declare export.video in capabilities.actions.",
       "whiteboxExportVideo": "Export whitebox video",
-      "whiteboxOpen": "Open whitebox desk"
-    }
+      "whiteboxOpen": "Open whitebox desk",
+      "assistant": "AI assistant",
+      "assistantTitle": "Desk assistant",
+      "assistantScopeHint": "Scoped to this node",
+      "assistantPlaceholder": "Describe the shot you want: camera, blocking, framing",
+      "assistantEmpty": "I will block characters and cameras on the desk — just describe the shot.",
+      "assistantWaiting": "Generating — usually takes a minute or two…",
+      "assistantSyncing": "Connecting to the desk assistant and syncing this conversation",
+      "assistantSend": "Send",
+      "assistantStop": "Stop",
+      "assistantScrollToBottom": "Back to bottom",
+      "assistantResize": "Resize the chat panel",
+      "assistantGenerate": "Generate background",
+      "assistantGenerateQueued": "Background generation queued",
+      "assistantGenerateQueuedChat": "Background generation queued: {{description}}",
+      "assistantGenerateFailed": "Background generation failed: {{message}}",
+      "assistantSceneApplied": "Scene applied to the desk",
+      "assistantSceneAppliedAt": "Scene applied · {{time}}",
+      "assistantSceneFailed": "Failed to apply the scene: {{message}}",
+      "assistantSceneUnavailable": "The desk is not ready yet, so the scene cannot be applied",
+      "assistantSceneUnparsed": "Failed to parse the scene block — nothing was applied",
+      "assistantBackgroundName": "AI background",
+      "assistantBackgroundGenerating": "Generating AI background",
+      "assistantBackgroundApplied": "AI background updated · {{time}}",
+      "proposalApply": "Apply",
+      "proposalApplied": "Applied",
+      "card": {
+        "title": "Scene card",
+        "applied": "Applied",
+        "pending": "Pending",
+        "apply": "Apply",
+        "reapply": "Apply again",
+        "undo": "Undo",
+        "copy": "Copy JSON",
+        "copied": "Copied",
+        "camera": "Camera",
+        "cameraLine": "{{move}} · {{duration}}s",
+        "cameraLinePlain": "{{move}}",
+        "characters": "Characters",
+        "objects": "Props",
+        "beats": "Beats",
+        "beatWalk": "Walk",
+        "beatAction": "Action",
+        "beatCamera": "Camera move",
+        "autoApply": "Auto-apply",
+        "autoApplyOff": "Do not auto-apply",
+        "autoApplyTitle": "On: the assistant applies directly; Off: it only produces a card for you to apply",
+        "reset": "Clear",
+        "resetConfirm": "Confirm clear?",
+        "resetTitle": "Clear the desk scene and start over (an undo snapshot is saved first)",
+        "undoApplied": "Reverted the last scene injection",
+        "undoUnavailable": "No scene change to undo"
+      },
+      "skills": {
+        "menuTitle": "Specialist skills",
+        "pickLabel": "Pick a specialist skill (optional)",
+        "groupOperate": "Operate the desk",
+        "groupAdvise": "Advisory",
+        "none": {
+          "name": "General",
+          "desc": "Base layer only, no specialist skill"
+        },
+        "operator": {
+          "name": "Desk operator",
+          "desc": "Always-on persona: knows what this desk can and cannot do"
+        },
+        "muse": {
+          "name": "Shot ideas",
+          "desc": "Offers 3-4 different options when the request is vague"
+        },
+        "camera": {
+          "name": "Cinematic camera",
+          "desc": "Turns plain descriptions into professional camera moves"
+        },
+        "blocking": {
+          "name": "Character blocking",
+          "desc": "Arranges character positions and movement paths"
+        },
+        "composition": {
+          "name": "Composition & shot language",
+          "desc": "Shapes shot size, layers and visual weight"
+        },
+        "lighting": {
+          "name": "Light and mood",
+          "desc": "Builds mood with light and colour"
+        },
+        "style": {
+          "name": "Art style",
+          "desc": "Keeps the film visual tone consistent"
+        },
+        "cinematicAction": {
+          "name": "Cinematic camera & action staging",
+          "desc": "Designs shots for fights, chases and other action beats"
+        },
+      "modelMaker": {
+        "name": "Create desk models",
+        "desc": "Builds models from parametric primitives"
+      },
+      "staging": {
+        "name": "Scenes and props",
+        "desc": "Places scenes and props, arranges spatial relations"
+      },
+      "method": {
+        "name": "Directing method",
+        "desc": "Explains only — never changes the scene"
+      },
+      "script": {
+        "name": "Script to shot list",
+        "desc": "Produces a list only — never changes the scene"
+      },
+      "review": {
+        "name": "Review notes",
+        "desc": "Gives notes only — never changes the scene"
+      }
+      },
+      "move": {
+        "orbitLeft": "Orbit left",
+        "orbitRight": "Orbit right",
+        "dollyIn": "Dolly in",
+        "dollyOut": "Dolly out",
+        "panLeft": "Pan left",
+        "panRight": "Pan right",
+        "static": "Static",
+        "craneUp": "Crane up",
+        "craneDown": "Crane down",
+        "railLeft": "Rail left",
+        "railRight": "Rail right",
+        "handheld": "Handheld",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out",
+        "pov": "POV",
+        "overShoulder": "Over the shoulder"
+      },
+      "prop": {
+        "box": "Box",
+        "sphere": "Sphere",
+        "cylinder": "Cylinder",
+        "plane": "Plane",
+        "arch": "Arch",
+        "stairs": "Stairs",
+        "door": "Door",
+        "window": "Window",
+        "table": "Table",
+        "chair": "Chair",
+        "sofa": "Sofa",
+        "roof": "Roof",
+        "tree": "Tree",
+        "vehicle": "Vehicle",
+        "depthMesh": "Depth mesh",
+        "model": "External model"
+      },
+    "example1": "Slowly push the camera toward the lead",
+    "example2": "Two people standing face to face, talking",
+    "example3": "Add a table and seat a character behind it"
+    },
+    "reshoot": { "clipTitle": "Reshoot clip",  "fullTitle": "Reshoot whole video",  "generating": "Reshooting…",  "noResult": "The reshoot task returned no result",  "suggestDetached": "The node is no longer on the canvas; the suggestion was discarded",  "suggestEmpty": "The suggestion service returned no prompt" },
+    "videoGreybox": { "nodeTitle": "Depth video",  "generating": "Generating depth video…",  "noResult": "The depth video task returned no result" },
+    "reshootTimeline": { "unknownDuration": "Source duration is unavailable",  "startFrame": "Start frame",  "endFrame": "End frame",  "startHandle": "Start time handle",  "endHandle": "End time handle",  "startLabel": "{{value}}s",  "endLabel": "{{value}}s",  "spanLabel": "Selection {{value}}s" }
   },
   "viewer": {
     "imageAlt": "Image",

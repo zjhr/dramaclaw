@@ -2685,7 +2685,8 @@
     "pause": "暂停",
     "retry": "重试",
     "requestId": "请求ID",
-    "listSeparator": "、"
+    "listSeparator": "、",
+    "processing": "处理中…"
   },
   "ingest": {
     "title": "虾料",
@@ -2919,6 +2920,21 @@
           "fix": "如果这是小说原文，请把项目类型切换为“旁白解说”；如果是剧本，请补齐分场头。"
         }
       }
+    },
+    "sceneHeaders": {
+      "open": "查看 {{chapter}} 的正文",
+      "scene": "第 {{number}} 场",
+      "unknownLocation": "地点未标注",
+      "characters": "角色",
+      "characterSeparator": "、",
+      "empty": "这一章还没有解析出场景",
+      "unparsedBody": "未解析的正文",
+      "missing": "没有识别到场景头",
+      "missingFix": "在每个场景开头补上场景头，如「第1场 咖啡厅 日 内」",
+      "repairable": "场景头格式不规范",
+      "repairableFix": "把场景头改成「场次 地点 时间 内/外」的标准写法",
+      "count": "{{count}} 个场景块",
+      "rowCount": "{{count}} 块"
     }
   },
   "video": {
@@ -4357,7 +4373,14 @@
         "invalidBeats": "选中的 beats 不在当前集范围内",
         "noBeats": "当前集暂无 beats"
       },
-      "paddingCount": "+{{count}}空"
+      "paddingCount": "+{{count}}空",
+      "partial": {
+        "continue": "继续",
+        "summary": "已投 {{ok}} / 被拒 {{fail}}",
+        "reason": {
+          "unknown": "部分任务暂未投递"
+        }
+      }
     },
     "renderSettings": {
       "model": "渲染模型",
@@ -4804,7 +4827,9 @@
         "placeholder": "请输入文件夹名称",
         "createHint": "创建后可立即用于归档和上传资产",
         "renameHint": "修改后会同步更新资产库中的显示名称"
-      }
+      },
+      "itemCount": "{{count}} 个素材",
+      "bulkSelected": "已选 {{count}} 个"
     },
     "referencePick": {
       "kind": {
@@ -5551,7 +5576,23 @@
       "subtitleRemovalBox": "框选擦除",
       "fullscreen": "全屏播放",
       "notImplementedYet": "该功能暂未上线",
-      "requiresVideo": "请先上传视频"
+      "requiresVideo": "请先上传视频",
+      "greybox": "深度视频",
+      "reshoot": "重拍",
+      "reshootHint": "拖动首尾手柄选择要重拍的片段",
+      "reshootModelLabel": "模型",
+      "reshootModelUnsupported": "该模型不支持首尾帧，无法重拍",
+      "reshootOverMaxDuration": "所选片段超过该模型上限 {{limit}} 秒",
+      "reshootPromptEnhance": "强化提示词",
+      "reshootPromptEnhanceRunning": "强化中…",
+      "reshootPromptPlaceholder": "描述这段要改成什么",
+      "reshootPromptRequired": "请先填写提示词",
+      "reshootPromptSuggest": "推荐提示词",
+      "reshootPromptSuggestRunning": "推荐中…",
+      "reshootRangeInvalid": "所选区间无效",
+      "reshootRangeUnknown": "读不到源视频时长，无法重拍",
+      "reshootSubmit": "重拍这段",
+      "reshootUnderMinDuration": "所选片段短于该模型下限 {{limit}} 秒"
     },
     "audio": {
       "requiresAudio": "请先准备音频",
@@ -6688,7 +6729,7 @@
     },
     "directorDesk": {
       "open": "打开",
-      "emptyHint": "在 3D 里摆位预演，截图可回传到画布",
+      "emptyHint": "在 3D 里摆角色和机位，截图可回传到画布",
       "previewAlt": "导演台预览",
       "dialogTitle": "3D 导演台",
       "dialogDescription": "摆位预演、布置机位，并把截图回传到画布",
@@ -6726,8 +6767,164 @@
       "exportUnavailable": "当前白模包不支持导出：MONOFORM 尚未实现 export.video",
       "exportUnavailableHint": "白模台的「导出 MP4」只是在它自己的浏览器里下载，宿主拿不到产物。要把它变成画布上的视频节点与来源边，需要 MONOFORM 在 capabilities.actions 里补上 export.video。",
       "whiteboxExportVideo": "导出白模视频",
-      "whiteboxOpen": "打开白模台"
-    }
+      "whiteboxOpen": "打开白模台",
+      "assistant": "AI 助手",
+      "assistantTitle": "导演台助手",
+      "assistantScopeHint": "只作用于当前节点",
+      "assistantPlaceholder": "描述你想摆的画面：运镜、走位、构图都可以",
+      "assistantEmpty": "我会把角色和机位摆到导演台里，你说一句就行。",
+      "assistantWaiting": "正在生成，通常要一两分钟…",
+      "assistantSyncing": "正在连接导演台助手并同步这段对话",
+      "assistantSend": "发送",
+      "assistantStop": "停止",
+      "assistantScrollToBottom": "回到底部",
+      "assistantResize": "调整对话面板宽度",
+      "assistantGenerate": "生成背景",
+      "assistantGenerateQueued": "已提交背景生成",
+      "assistantGenerateQueuedChat": "已提交背景生成：{{description}}",
+      "assistantGenerateFailed": "背景生成失败：{{message}}",
+      "assistantSceneApplied": "已按这个场景摆好画面",
+      "assistantSceneAppliedAt": "场景已应用 · {{time}}",
+      "assistantSceneFailed": "场景应用失败：{{message}}",
+      "assistantSceneUnavailable": "导演台还没加载好，暂时无法应用场景",
+      "assistantSceneUnparsed": "场景块解析失败，场景没有应用",
+      "assistantBackgroundName": "AI 背景",
+      "assistantBackgroundGenerating": "AI 背景生成中",
+      "assistantBackgroundApplied": "AI 背景已更新 · {{time}}",
+      "proposalApply": "应用",
+      "proposalApplied": "已应用",
+      "card": {
+        "title": "分镜",
+        "applied": "已应用",
+        "pending": "待应用",
+        "apply": "应用",
+        "reapply": "重新应用",
+        "undo": "撤销",
+        "copy": "复制 JSON",
+        "copied": "已复制",
+        "camera": "相机",
+        "cameraLine": "{{move}} · {{duration}} 秒",
+        "cameraLinePlain": "{{move}}",
+        "characters": "角色",
+        "objects": "道具",
+        "beats": "节拍",
+        "beatWalk": "走位",
+        "beatAction": "动作",
+        "beatCamera": "运镜",
+        "autoApply": "自动改动",
+        "autoApplyOff": "不自动改动",
+        "autoApplyTitle": "开：助手说完直接摆好；关：只出卡片，你自己点应用",
+        "reset": "清空",
+        "resetConfirm": "确认清空？",
+        "resetTitle": "把导演台场景清空重来（会先存一次撤销快照）",
+        "undoApplied": "已撤销上一次场景注入",
+        "undoUnavailable": "没有可撤销的场景改动"
+      },
+      "skills": {
+        "menuTitle": "专业技能",
+        "pickLabel": "选择专业技能（可选）",
+        "groupOperate": "操作导演台",
+        "groupAdvise": "顾问建议",
+        "none": {
+          "name": "通用",
+          "desc": "只留常驻基础层，不叠加专业技能"
+        },
+        "operator": {
+          "name": "导演台操作专家",
+          "desc": "基础人设：懂这台导演台能做什么、不能做什么"
+        },
+        "muse": {
+          "name": "分镜灵感",
+          "desc": "需求笼统时给 3~4 个不同方案供点选"
+        },
+        "camera": {
+          "name": "电影级运镜",
+          "desc": "把描述翻译成专业运镜与节奏"
+        },
+        "blocking": {
+          "name": "角色调度走位",
+          "desc": "安排角色站位与移动路线"
+        },
+        "composition": {
+          "name": "构图与镜头语言",
+          "desc": "调度景别、前中后景与视觉重心"
+        },
+        "lighting": {
+          "name": "光影氛围",
+          "desc": "用光影与色调营造气氛"
+        },
+        "style": {
+          "name": "美术风格",
+          "desc": "统一影片的视觉调性"
+        },
+        "cinematicAction": {
+          "name": "电影级运镜与动作编排",
+          "desc": "设计打斗、追逐等动作段落的镜头"
+        },
+      "modelMaker": {
+        "name": "导演台模型创建",
+        "desc": "用参数化几何在导演台里搭出模型"
+      },
+      "staging": {
+        "name": "场景与道具",
+        "desc": "布置场景与道具，安排空间关系"
+      },
+      "method": {
+        "name": "导演方法论",
+        "desc": "只讲解，不改画面"
+      },
+      "script": {
+        "name": "剧本拆解成分镜表",
+        "desc": "只出清单，不改画面"
+      },
+      "review": {
+        "name": "审片建议",
+        "desc": "只给意见，不改画面"
+      }
+      },
+      "move": {
+        "orbitLeft": "向左环绕",
+        "orbitRight": "向右环绕",
+        "dollyIn": "推近",
+        "dollyOut": "拉远",
+        "panLeft": "左摇",
+        "panRight": "右摇",
+        "static": "静止",
+        "craneUp": "摇臂上升",
+        "craneDown": "摇臂下降",
+        "railLeft": "左横移",
+        "railRight": "右横移",
+        "handheld": "手持",
+        "zoomIn": "变焦推近",
+        "zoomOut": "变焦拉远",
+        "pov": "主观镜头",
+        "overShoulder": "越肩"
+      },
+      "prop": {
+        "box": "立方体",
+        "sphere": "球体",
+        "cylinder": "圆柱",
+        "plane": "平面",
+        "arch": "拱门",
+        "stairs": "楼梯",
+        "door": "门",
+        "window": "窗",
+        "table": "桌子",
+        "chair": "椅子",
+        "sofa": "沙发",
+        "roof": "屋顶",
+        "tree": "树",
+        "vehicle": "载具",
+        "depthMesh": "高度地形",
+        "model": "外部模型"
+      },
+    "example1": "把镜头缓缓推近主角",
+    "example2": "两个人面对面站着说话",
+    "example3": "加一张桌子，让角色坐在后面"
+    },
+    "reshoot": { "clipTitle": "重拍片段",  "fullTitle": "重拍整条视频",  "generating": "重拍中…",  "noResult": "重拍任务没有返回结果",  "suggestDetached": "节点已不在画布上，推荐结果已丢弃",  "suggestEmpty": "推荐服务没有返回提示词" },
+    "videoGreybox": { "nodeTitle": "深度视频",  "generating": "生成深度视频中…",  "noResult": "深度视频任务没有返回结果" },
+    "reshootTimeline": { "unknownDuration": "读不到源视频时长",  "startFrame": "起始帧",  "endFrame": "结束帧",  "startHandle": "起始时间手柄",  "endHandle": "结束时间手柄",  "startLabel": "{{value}}s",  "endLabel": "{{value}}s",  "spanLabel": "选区 {{value}}s" }
   },
   "viewer": {
     "imageAlt": "图片",
