@@ -1618,3 +1618,49 @@ tasks:
       - "oracle 九款逐条 DONE / PARTIAL / MISSING"
       - "full_outcome_complete: true/false"
       - "三类残留（已达成 / 可自做 / owner 级 blocker）"
+  - id: T023
+    type: worker
+    assignee: Worker
+    status: done
+    receipt:
+      result: done
+      harness: claude-code
+      verification_by: "Worker 自证 + PM 独立复核（含 PM 亲自复现反证）"
+      changed_files:
+        - tests/test_api_shot_recipes.py
+      summary: "补一条守卫测试：源成片 artifact_url 能解析成项目内路径但盘上无文件时 reshoot 必须 404、一行不写、零入队。文件从 58 passed 变 59 passed，既有断言零改动，未碰任何 src/ 生产代码。"
+      commands:
+        - cmd: "./.venv/bin/python -m pytest tests/test_api_shot_recipes.py -q"
+          status: pass
+          detail: "59 passed, 9 warnings in 8.17s（基线 58 → 59，无 failed）"
+        - cmd: "./.venv/bin/python -m ruff check src/novelvideo/api/routes/shot_recipes.py src/novelvideo/freezone/shot_recipe_store.py tests/test_api_shot_recipes.py"
+          status: pass
+          detail: "All checks passed!"
+        - cmd: "git diff --numstat -- tests/test_api_shot_recipes.py"
+          status: pass
+          detail: "23 insertions(+), 0 deletions(-)：纯新增，58 条既有断言逐字节未动"
+        - cmd: "git status --porcelain -- src/"
+          status: pass
+          detail: "shot_recipes.py 未出现在改动列表 → 反证实验的临时改动已完整还原"
+      evidence:
+        - "守卫精确文案与行号：shot_recipes.py:1994-1998 —— 前三行是注释（说明与 freezone.py 同口径：路径解析出来了但文件不在，是 404，放它进队只会让任务跑到 runner 里 FileNotFoundError），第 1997-1998 行 `if not source_path.exists(): raise HTTPException(404, f\"video source not found: {source_path}\")`"
+        - "如何构造「解析成功但文件不存在」：_completed_version 默认 source_refs 的 artifact_url=SOURCE_URL（/static/projects/proj_demo/freezone/_uploads/source.mp4），paths.py:63 的 _STATIC_RE 剥掉 user/project 段后 rel=freezone/_uploads/source.mp4；resolve_static_url_to_path（paths.py:67-110）只做同源校验 + resolve() + relative_to 越界校验，不做存在性检查 → 解析必然成功；测试刻意不 _write_asset，于是 exists() 为 False，精确命中该分支。未改 _completed_version 签名，未新增 helper。"
+        - "断言 1（404）：status == 404；断言 2（文案）：'video source not found' in detail，并额外断言 detail 里带的是守卫解析出的项目内绝对路径（非原始 url）；断言 3（逐字节不变）：before=_lines(state_dir) 在请求前抓取，请求后 assert _lines(state_dir) == before；断言 4（零入队）：assert backend.calls == []"
+      falsification:
+        - "Worker 执行过一次并还原；PM 随后亲自独立复现（用守卫原文精确替换 raise → pass）：报 `E assert 200 == 404`（200 说明请求被静默放行、任务真的入队了），单测红、其余 58 条不受影响；恢复后 diff 与破坏前逐字节一致、shot_recipes.py 从 git status 消失、全量复绿 59 passed。"
+        - "该反证同时证明：守卫被改成静默继续时，T021 的单条 e2e（test_e2e_demo_full_pipeline_render_sync_reshoot_lineage）**未必会红** —— 正是本切片存在的理由。若想彻底闭环，可考虑让 e2e 也走一次缺素材路径（本切片未做，避免范围外扩）。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+    reasoning_hint: medium
+    objective: "补一条重拍源素材缺失的守卫测试（当前唯一能自己补的 oracle 相关行为缺口）：reshoot 在 artifact_url 解析出的项目内路径不存在时必须 404 且一行不写、零入队。理由是 T021 的 e2e 缝正是靠这个分支成立（shot_recipes.py:1997-1998），但 58 条里没有任何一条覆盖它（现只覆盖 not-completed 409、无 artifact_url 409、外链 400）。实现：复用既有 helper（_completed_version 传 source_refs.artifact_url 指向项目内不存在的 rel，或 _write_asset 后删除），断言 status==404、detail 含 'video source not found'、_lines(state_dir) 逐字节不变、backend.calls == []。不改任何 src/ 生产代码。"
+    allowed_files:
+      - "tests/test_api_shot_recipes.py"
+    verify:
+      - "./.venv/bin/python -m pytest tests/test_api_shot_recipes.py -q"
+      - "./.venv/bin/python -m ruff check src/novelvideo/api/routes/shot_recipes.py src/novelvideo/freezone/shot_recipe_store.py tests/test_api_shot_recipes.py"
+    stop_if:
+      - "需要改 src/novelvideo/** 才能让这条守卫成立（那说明端点真有缝，如实报告而不是放宽断言）。"
+      - "打算改动 m06 的 2 条既有失败、freezone_video_route_modes/image_backend 的 7 条既有失败或 5 个 director-* 既有失败前端文件。"
+      - "验证命令两次失败。"

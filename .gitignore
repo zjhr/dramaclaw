@@ -58,6 +58,18 @@ docs/*
 # 写在 negation 之前等于没写。
 docs/goals/**/.goalbuddy-board/
 docs/goals/**/.DS_Store
+# goals 下的样本媒体不入库：体积大（单个可达数 MB）、且都是可重跑再生的证据产物。
+# 同样必须写在上面两条 negation 之后。
+docs/goals/**/*.mp4
+docs/goals/**/*.mov
+docs/goals/**/*.webm
+docs/goals/**/*.png
+docs/goals/**/*.jpg
+docs/goals/**/*.jpeg
+docs/goals/**/*.webp
+docs/goals/**/*.gif
+docs/goals/**/*.wav
+docs/goals/**/*.mp3
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/

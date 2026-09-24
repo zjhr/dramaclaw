@@ -2297,6 +2297,29 @@ def test_reshoot_guards_write_nothing_on_every_failure_path(
     assert _lines(state_dir) == before
 
 
+def test_reshoot_404s_when_source_asset_is_absent_on_disk(client, monkeypatch) -> None:
+    """(a)(c) artifact_url 能解析成项目内路径、但盘上没这个文件 → 404，一行不写、零入队。
+
+    T021 的 e2e 缝（render→sync→reshoot）正是靠这条守卫成立：这里若被改成静默
+    继续，任务会一路跑到 runner 里 FileNotFoundError，而 e2e 照样绿。
+    """
+    _use_reshoot_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, state_dir = client
+    # 刻意不调 _write_asset：SOURCE_URL 是项目内静态地址、解析必定成功，但文件不在。
+    source = _completed_version(test_client)
+    before = _lines(state_dir)
+
+    status, body = _reshoot(test_client, source["version_id"])
+    assert status == 404
+    assert "video source not found" in body["detail"]
+    # detail 里带的是守卫解析出来的项目内绝对路径，不是原始 url，方便排查。
+    assert str((state_dir / SOURCE_ASSET_REL).resolve()) in body["detail"]
+    assert backend.calls == []
+    assert _lines(state_dir) == before
+
+
 def test_reshoot_refuses_models_without_first_last_frame_mode(
     client, monkeypatch
 ) -> None:
