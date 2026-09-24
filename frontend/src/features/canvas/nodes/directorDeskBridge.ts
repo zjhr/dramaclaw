@@ -76,6 +76,9 @@ export const DIRECTOR_DESK_ACTIONS = [
   'export.video',
   'plugin.result.submit',
   'plugin.results.list',
+  // MONOFORM 白模台用：宿主把 agent 翻译好的工程推回去（走 applyProjectSnapshot 热更新）。
+  // director-desk 不声明它，只有 MONOFORM 在 capabilities.actions 里报，所以只对它生效。
+  'scene.apply',
 ] as const;
 
 export type DirectorDeskAction = (typeof DIRECTOR_DESK_ACTIONS)[number];

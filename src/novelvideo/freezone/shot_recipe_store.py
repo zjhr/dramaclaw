@@ -326,6 +326,344 @@ def new_shot_job_id() -> str:
     return f"job_{uuid.uuid4().hex[:12]}"
 
 
+# --------------------------------------------------------------------------
+# Reshoot segment — 一次片段重拍的唯一描述符 owner
+# --------------------------------------------------------------------------
+
+# prompt_delta.changes 里的键名：重拍描述符只在这一个键下出现（形状由本模块持有，
+# 路由不再自己拼一个）。
+RESHOOT_SEGMENT_KEY = "reshoot_segment"
+
+
+def build_reshoot_segment(
+    *,
+    source_version_id: str,
+    start_seconds: float,
+    end_seconds: float,
+    source_url: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Canonical reshoot descriptor — the single owner of its shape.
+
+    A reshoot is a *segment* replacement on an existing artifact: which version it
+    came from, which second range, which source url, and the job that runs it.
+    ``duration_seconds`` is derived (``end - start``) and never passed in, so the
+    recorded length cannot disagree with the recorded range.
+
+    Invalid input raises instead of writing a descriptor that misdescribes the
+    segment (same discipline as ``build_preflight_check`` / ``build_quality_risk``).
+    """
+    clean_source = str(source_version_id or "").strip()
+    if not clean_source:
+        raise ValueError("source_version_id is required")
+    clean_job = str(job_id or "").strip()
+    if not clean_job:
+        raise ValueError("job_id is required")
+    clean_url = str(source_url or "").strip()
+    if not clean_url:
+        raise ValueError("source_url is required")
+    try:
+        start = float(start_seconds)
+        end = float(end_seconds)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("start_seconds and end_seconds must be numbers") from exc
+    if end <= start:
+        raise ValueError("end_seconds must be greater than start_seconds")
+    return {
+        "kind": RESHOOT_SEGMENT_KEY,
+        "source_version_id": clean_source,
+        "start_seconds": start,
+        "end_seconds": end,
+        "duration_seconds": end - start,
+        "source_url": clean_url,
+        "job_id": clean_job,
+    }
+
+
+# --------------------------------------------------------------------------
+# Render outcome — task_state words → version_status words
+# --------------------------------------------------------------------------
+
+# Freezone video generation reports ``output_url`` in its task result — the same
+# key the node-side generation history reads.  These are the only result keys a
+# version will ever take an artifact url from.
+ARTIFACT_URL_KEYS = ("output_url", "artifact_url")
+
+# One render version reaches at most one of these, and the later one wins on
+# repeated syncs.  ``cancelled`` is terminal too — a cancellation after the
+# artifact landed keeps ``completed``, otherwise the version is ``failed``.
+TERMINAL_VERSION_RANK = {"failed": 0, "cancelled": 1, "completed": 2}
+
+RENDER_FAILURE_REASON = "render task did not complete"
+
+
+def version_status_for_task(task_status: str) -> str | None:
+    """Version status an in-flight/terminal task status maps onto.
+
+    ``None`` means "nothing to write": the task is still ``submitting`` /
+    ``queued`` / ``running``, so the version line stays exactly as it was.  An
+    unrecognised status is not terminal either, but it cannot be reported as a
+    plain in-flight one — it advances the version to ``failed`` (with
+    :data:`RENDER_FAILURE_REASON`) rather than letting the row silently render
+    forever.
+    """
+    status = str(task_status or "").strip().lower()
+    if status in {"submitting", "queued", "running"}:
+        return None
+    if status in {"completed", "failed", "cancelled"}:
+        return status
+    return "failed"
+
+
+def artifact_url_from_result(result: Any) -> str:
+    """First non-empty artifact url in a task result, or ``""``.
+
+    Shape is taken from the runner, not guessed: ``freezone_video_gen``'s leaf
+    returns ``{job_id, output_path, output_url, …}`` (runners/video.py:930-937).
+    """
+    if not isinstance(result, dict):
+        return ""
+    for key in ARTIFACT_URL_KEYS:
+        value = str(result.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def render_outcome_for(*, task_status: str, result: Any, error: str = "") -> dict[str, Any]:
+    """The task's terminal outcome as version-line fields.
+
+    ``status`` is one of the terminal :data:`VERSION_STATUSES`, except for an
+    in-flight task status (``submitting`` / ``queued`` / ``running``), which has
+    no terminal outcome yet and is reported as ``rendering`` — a legal,
+    **non-terminal** version status, so the caller's terminal guard refuses to
+    write a line. (Coercing in-flight to ``failed`` here would fabricate a
+    terminal row for a task that is still running.)
+
+    ``artifact_url`` is empty rather than fabricated when the task failed or the
+    result carries no url — an unreadable result is not a successful render.
+    """
+    status = version_status_for_task(task_status)
+    if status is None:
+        # 中间态：还没有终态可言。
+        return {"status": "rendering", "artifact_url": "", "error": ""}
+    url = artifact_url_from_result(result)
+    detail = str(error or "").strip()
+    if status == "completed" and not url:
+        # 任务自称完成却没有产物：不算成功，如实写失败并留下原因。
+        status = "failed"
+        detail = detail or "render task completed without an artifact url"
+    if status == "completed":
+        return {"status": "completed", "artifact_url": url, "error": ""}
+    if status == "cancelled":
+        return {
+            "status": "cancelled",
+            "artifact_url": url,
+            "error": detail or "render task cancelled",
+        }
+    return {
+        "status": "failed",
+        "artifact_url": url,
+        "error": detail or RENDER_FAILURE_REASON,
+    }
+
+
+# --------------------------------------------------------------------------
+# Preflight — "can this version render at all?" as structured evidence
+# --------------------------------------------------------------------------
+
+# A verdict is a *list of checks*, never a single score or a single boolean:
+# "support confirmed" and "could not be read" have to stay distinguishable
+# downstream, and one bad fact must not hide the others.
+PREFLIGHT_CHECK_STATUSES = frozenset({"pass", "warn", "block"})
+
+# Check ids are a contract: the frontend renders one row per id and the render
+# endpoint's 409 names the blocking ones.
+PREFLIGHT_CHECK_MODEL_CAPABILITIES = "model_capabilities"
+PREFLIGHT_CHECK_LOOK_DECISIONS = "look_decisions"
+PREFLIGHT_CHECK_SOURCE_REFS = "source_refs"
+PREFLIGHT_CHECK_BILLING = "billing"
+PREFLIGHT_CHECK_IDS = (
+    PREFLIGHT_CHECK_MODEL_CAPABILITIES,
+    PREFLIGHT_CHECK_LOOK_DECISIONS,
+    PREFLIGHT_CHECK_SOURCE_REFS,
+    PREFLIGHT_CHECK_BILLING,
+)
+
+
+def build_preflight_check(
+    *, check_id: str, status: str, detail: str = ""
+) -> dict[str, Any]:
+    """One preflight check row: ``pass`` / ``warn`` / ``block`` plus why.
+
+    ``warn`` is the honest answer for a fact that could not be read (catalog
+    miss, unknown identity, unreadable asset, no quote). An unreadable fact is
+    never ``pass``, and it is not ``block`` either — refusing to render is a
+    separate decision the caller makes.
+    """
+    clean_id = str(check_id or "").strip()
+    if not clean_id:
+        raise ValueError("preflight check id is required")
+    clean_status = str(status or "").strip()
+    if clean_status not in PREFLIGHT_CHECK_STATUSES:
+        raise ValueError(f"invalid preflight check status: {status!r}")
+    return {"id": clean_id, "status": clean_status, "detail": str(detail or "")}
+
+
+def build_preflight_report(
+    *, recipe_id: str, version_id: str, checks: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Canonical preflight report — the single owner of the report schema.
+
+    ``ok`` is derived, never passed in: it is false exactly when some check is
+    ``block``. The report is evidence, not a gate — nothing here writes a line.
+    """
+    rows: list[dict[str, Any]] = []
+    for row in checks or []:
+        if not isinstance(row, dict):
+            raise ValueError("preflight check must be an object")
+        rows.append(
+            build_preflight_check(
+                check_id=str(row.get("id") or ""),
+                status=str(row.get("status") or ""),
+                detail=str(row.get("detail") or ""),
+            )
+        )
+    blocking = [row["id"] for row in rows if row["status"] == "block"]
+    return {
+        "recipe_id": str(recipe_id),
+        "version_id": str(version_id),
+        "ok": not blocking,
+        "checks": rows,
+        "blocking": blocking,
+        "warnings": [row["id"] for row in rows if row["status"] == "warn"],
+        "checked_at": _now(),
+    }
+
+
+def preflight_block_reason(report: dict[str, Any]) -> str:
+    """Blocking checks as one ``id: detail`` string, for the render 409."""
+    return "; ".join(
+        f"{row.get('id')}: {row.get('detail')}"
+        for row in (report.get("checks") or [])
+        if isinstance(row, dict) and row.get("status") == "block"
+    )
+
+
+# --------------------------------------------------------------------------
+# Quality report — 一条版本的风险清单（结构化 risks，不是单一分数）
+# --------------------------------------------------------------------------
+
+# 严重度沿用本仓既有词汇（agents/episode_reviewer.py:55、utils/screenplay_quality.py:75
+# 的 critical/warning/info），不新造词。
+QUALITY_RISK_SEVERITIES = frozenset({"critical", "warning", "info"})
+# 展示顺序（由重到轻）：frozenset 只回答「合法取值」，顺序是另一件事。
+QUALITY_RISK_SEVERITY_ORDER = ("critical", "warning", "info")
+
+# Risk ids are a contract: the frontend renders one row per id.
+QUALITY_RISK_LOOK_IDENTITY_DRIFT = "look_identity_drift"
+QUALITY_RISK_LOOK_DECISION_MISSING = "look_decision_missing"
+QUALITY_RISK_LOOK_IDENTITY_UNKNOWN = "look_identity_unknown"
+QUALITY_RISK_NO_LOOK_DECISIONS = "no_look_decisions"
+QUALITY_RISK_LINEAGE_GAP = "lineage_gap"
+QUALITY_RISK_PROMPT_DELTA_MISSING = "prompt_delta_missing"
+QUALITY_RISK_PARENT_NOT_COMPLETED = "parent_not_completed"
+QUALITY_RISK_MODEL_CHANGED = "model_changed"
+QUALITY_RISK_DURATION_DRIFT = "duration_drift"
+QUALITY_RISK_RESOLUTION_DRIFT = "resolution_drift"
+QUALITY_RISK_RENDER_FAILED = "render_failed"
+QUALITY_RISK_ARTIFACT_MISSING = "artifact_missing"
+QUALITY_RISK_COST_UNKNOWN = "cost_unknown"
+
+QUALITY_RISK_IDS = (
+    QUALITY_RISK_LOOK_IDENTITY_DRIFT,
+    QUALITY_RISK_LOOK_DECISION_MISSING,
+    QUALITY_RISK_LOOK_IDENTITY_UNKNOWN,
+    QUALITY_RISK_NO_LOOK_DECISIONS,
+    QUALITY_RISK_LINEAGE_GAP,
+    QUALITY_RISK_PROMPT_DELTA_MISSING,
+    QUALITY_RISK_PARENT_NOT_COMPLETED,
+    QUALITY_RISK_MODEL_CHANGED,
+    QUALITY_RISK_DURATION_DRIFT,
+    QUALITY_RISK_RESOLUTION_DRIFT,
+    QUALITY_RISK_RENDER_FAILED,
+    QUALITY_RISK_ARTIFACT_MISSING,
+    QUALITY_RISK_COST_UNKNOWN,
+)
+
+
+def build_quality_risk(
+    *,
+    risk_id: str,
+    severity: str,
+    detail: str,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One quality risk row: a contract id, a severity, why, and where it came from.
+
+    ``evidence`` must be able to point back at the concrete record the risk was
+    read from (``version_id`` / ``decision_id`` / the two sides of a drift) — the
+    report has to be auditable, so prose alone is not accepted and an empty
+    evidence dict is rejected. Unknown risk ids and severities are rejected too:
+    the id list is the contract the frontend renders against.
+    """
+    clean_id = str(risk_id or "").strip()
+    if clean_id not in QUALITY_RISK_IDS:
+        raise ValueError(f"invalid quality risk id: {risk_id!r}")
+    clean_severity = str(severity or "").strip()
+    if clean_severity not in QUALITY_RISK_SEVERITIES:
+        raise ValueError(f"invalid quality risk severity: {severity!r}")
+    clean_evidence = dict(evidence or {})
+    if not clean_evidence:
+        raise ValueError("quality risk evidence is required")
+    return {
+        "id": clean_id,
+        "severity": clean_severity,
+        "detail": str(detail or ""),
+        "evidence": clean_evidence,
+    }
+
+
+def build_quality_report(
+    *,
+    recipe_id: str,
+    version_id: str,
+    risks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Canonical quality report — the single owner of the report schema.
+
+    The report is a *list of risks*, never a single score: a total would hide
+    which facts were bad, and "could not be read" has to stay distinguishable
+    from "clean". ``counts`` is derived from ``risks``, never passed in, and the
+    schema deliberately carries **no** score / rating / total field.
+
+    The report is evidence, not a gate — nothing here writes a line.
+    """
+    rows: list[dict[str, Any]] = []
+    for row in risks or []:
+        if not isinstance(row, dict):
+            raise ValueError("quality risk must be an object")
+        rows.append(
+            build_quality_risk(
+                risk_id=str(row.get("id") or ""),
+                severity=str(row.get("severity") or ""),
+                detail=str(row.get("detail") or ""),
+                evidence=row.get("evidence"),
+            )
+        )
+    counts = {severity: 0 for severity in QUALITY_RISK_SEVERITY_ORDER}
+    for row in rows:
+        counts[row["severity"]] += 1
+    return {
+        "recipe_id": str(recipe_id),
+        "version_id": str(version_id),
+        "risks": rows,
+        "counts": counts,
+        "risk_ids": [row["id"] for row in rows],
+        "checked_at": _now(),
+    }
+
+
 def build_version_record(
     *,
     version_id: str,

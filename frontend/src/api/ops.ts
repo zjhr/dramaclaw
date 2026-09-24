@@ -3088,6 +3088,130 @@ export interface BindCharacterLookDecisionInput {
   sourceRefs?: Record<string, unknown>;
 }
 
+export interface RenderShotRecipeVersionInput {
+  /** 必填：后端按它现查模型目录，取不到就 409 拒绝（capabilities_known=false）。 */
+  modelId: string;
+  videoBackend?: string;
+  prompt?: string;
+  aspectRatio?: string;
+  durationSeconds?: number | null;
+  resolution?: string | null;
+  generateAudio?: boolean;
+  humanReview?: boolean;
+  sceneOptimize?: string;
+}
+
+/** `POST .../versions/{id}/render` 的回执：只证明「已入队」，不代表已出片。 */
+export interface ShotRecipeRenderReceipt {
+  recipe_id: string;
+  version_id: string;
+  job_id: string;
+  task_id?: string;
+  task_type?: string;
+  backend?: string;
+  queue?: string;
+  status?: string;
+  parent_version_id?: string | null;
+  cost_ledger?: ShotRecipeCostLedger;
+  source_refs?: Record<string, unknown>;
+}
+
+/**
+ * `POST .../versions/{id}/sync` 的回执：把渲染任务推进到终态。
+ *
+ * `changed: false` 表示**一行都没写**——任务仍在跑、查不到、或该版本已是终态。
+ * `task_status` 是任务中心的原词（submitting/queued/running/completed/failed/
+ * cancelled），`status` 是本版本行推进后的版本状态（中间态时仍是 rendering）。
+ */
+export interface ShotRecipeSyncReceipt {
+  recipe_id: string;
+  version_id: string;
+  job_id?: string;
+  task_id?: string;
+  task_status?: string;
+  task_found?: boolean;
+  changed: boolean;
+  status?: string;
+  parent_version_id?: string | null;
+  artifact_url?: string | null;
+  error?: string | null;
+  source_refs?: Record<string, unknown>;
+  cost_ledger?: ShotRecipeCostLedger;
+}
+
+export interface ReshootShotRecipeVersionInput {
+  /** 必填：后端按它现查模型目录，未声明 firstLastFrame 或目录取不到都会拒绝。 */
+  modelId: string;
+  videoBackend?: string;
+  startSeconds: number;
+  endSeconds: number;
+  /** 缺省用源版本 source_refs.artifact_url（重拍对象就是那条版本自己的成片）。 */
+  sourceUrl?: string;
+  prompt?: string;
+  resolution?: string;
+  generateAudio?: boolean;
+  cameraTemplateId?: string;
+}
+
+/**
+ * `POST .../versions/{id}/reshoot` 的回执：**一条新的子版本**已入队。
+ *
+ * 与 render 的回执不同，`version_id` 是新子版本的 id，`source_version_id` 才是被
+ * 重拍的那条；源版本行逐字节不变（后端 append-only）。只证明「已入队」，不代表
+ * 已出片——产物要靠 sync 推进终态。
+ */
+export interface ShotRecipeReshootReceipt {
+  recipe_id: string;
+  version_id: string;
+  source_version_id: string;
+  job_id: string;
+  task_id?: string;
+  task_type?: string;
+  backend?: string;
+  queue?: string;
+  status?: string;
+  parent_version_id?: string | null;
+  start_seconds?: number;
+  end_seconds?: number;
+  duration_seconds?: number | null;
+  cost_ledger?: ShotRecipeCostLedger;
+  source_refs?: Record<string, unknown>;
+}
+
+/**
+ * `POST .../versions/{id}/preflight` 的回执：入队**之前**的结构化预检结论。
+ *
+ * `ok=false` 表示存在 block 项（`blocking` 列出其 id）；**是否阻止渲染由调用方决定**，
+ * 预检端点自己绝不 409。`warn` 是「这个事实没读到」（目录查不到、身份读不到、素材
+ * 解析不到、报价拿不到），消费面必须显式展示，不得渲染成通过。
+ */
+export interface ShotRecipePreflightCheck {
+  id: string;
+  status: "pass" | "warn" | "block";
+  detail?: string;
+}
+
+export interface ShotRecipePreflightReport {
+  recipe_id: string;
+  version_id: string;
+  ok: boolean;
+  checks: ShotRecipePreflightCheck[];
+  /** 处于 block 的 check id。 */
+  blocking: string[];
+  /** 处于 warn 的 check id。 */
+  warnings: string[];
+  checked_at?: string;
+}
+
+export interface PreflightShotRecipeVersionInput {
+  /** 不传则后端回退到版本上冻结的 model_id（那一路会得到 capabilities_known=false 的 warn）。 */
+  modelId?: string;
+  videoBackend?: string;
+  aspectRatio?: string;
+  durationSeconds?: number | null;
+  resolution?: string | null;
+}
+
 export async function listShotRecipes(project: string): Promise<ShotRecipeHeader[]> {
   const payload = await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/shot-recipes`,
@@ -3159,8 +3283,157 @@ export async function bindCharacterLookDecision(
   );
 }
 
-// /freezone/init ---------------------------------------------------------- //
+/**
+ * 把 `ready` 版本接到真实视频生成。后端只**构造 payload 并入队**：canvas/node 取自
+ * 版本自己的 source_refs，计费沿用既有链路。版本已带 job_id 或不是 ready 都会 409，
+ * 目录取不到 modelId 也会 409（capabilities_known=false，不按「已支持」放行）。
+ */
+export async function renderShotRecipeVersion(
+  project: string,
+  recipeId: string,
+  versionId: string,
+  input: RenderShotRecipeVersionInput,
+): Promise<ShotRecipeRenderReceipt> {
+  const json: Record<string, unknown> = { model_id: input.modelId };
+  if (input.videoBackend) json.video_backend = input.videoBackend;
+  if (input.prompt) json.prompt = input.prompt;
+  if (input.aspectRatio) json.aspect_ratio = input.aspectRatio;
+  if (typeof input.durationSeconds === "number") {
+    json.duration_seconds = input.durationSeconds;
+  }
+  if (input.resolution) json.resolution = input.resolution;
+  if (input.generateAudio) json.generate_audio = true;
+  if (input.humanReview) json.human_review = true;
+  if (input.sceneOptimize) json.scene_optimize = input.sceneOptimize;
+  return await apiCall<ShotRecipeRenderReceipt>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/render`,
+    { method: "POST", json },
+  );
+}
 
+/**
+ * 对账一次渲染任务，把它推进到终态。
+ *
+ * 幂等：`changed: false` 时一行都没写（任务仍在跑 / 查不到 / 已是终态）。任务查不到
+ * 时后端保留 `rendering` 并回报 `task_found: false`，**不会**伪装成已渲染。
+ */
+export async function syncShotRecipeVersion(
+  project: string,
+  recipeId: string,
+  versionId: string,
+): Promise<ShotRecipeSyncReceipt> {
+  return await apiCall<ShotRecipeSyncReceipt>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/sync`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * 重拍一条已完成版本里的一段：产出**一条新的子版本**（父指针指向源版本）。
+ *
+ * 源版本必须是 completed 且有产物（`sourceUrl` 或它的 `source_refs.artifact_url`），
+ * 区间必须 `end > start` 且落在模型的 min/maxDuration 内——越界是 400 而不是静默
+ * 截断。同一源版本重拍过再点会 409（幂等）。调用方拿到回执后应继续 sync 到终态。
+ */
+export async function reshootShotRecipeVersion(
+  project: string,
+  recipeId: string,
+  versionId: string,
+  input: ReshootShotRecipeVersionInput,
+): Promise<ShotRecipeReshootReceipt> {
+  const json: Record<string, unknown> = {
+    model_id: input.modelId,
+    start_seconds: input.startSeconds,
+    end_seconds: input.endSeconds,
+  };
+  if (input.videoBackend) json.video_backend = input.videoBackend;
+  if (input.sourceUrl) json.source_url = input.sourceUrl;
+  if (input.prompt) json.prompt = input.prompt;
+  if (input.resolution) json.resolution = input.resolution;
+  if (input.generateAudio) json.generate_audio = true;
+  if (input.cameraTemplateId) json.camera_template_id = input.cameraTemplateId;
+  return await apiCall<ShotRecipeReshootReceipt>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/reshoot`,
+    { method: "POST", json },
+  );
+}
+
+/**
+ * 渲染预检：只读，不写版本行、不入队、不扣费。
+ *
+ * 返回结构化 check 列表，而不是单一分数——`warn`（读不到）与 `pass`（确认支持）
+ * 必须能分辨。block 项存在时 `ok=false`，但**是否继续渲染由调用方决定**：本端点
+ * 自己不会 409（render 端点才会）。
+ */
+export async function preflightShotRecipeVersion(
+  project: string,
+  recipeId: string,
+  versionId: string,
+  input: PreflightShotRecipeVersionInput = {},
+): Promise<ShotRecipePreflightReport> {
+  const json: Record<string, unknown> = {};
+  if (input.modelId) json.model_id = input.modelId;
+  if (input.videoBackend) json.video_backend = input.videoBackend;
+  if (input.aspectRatio) json.aspect_ratio = input.aspectRatio;
+  if (typeof input.durationSeconds === "number") {
+    json.duration_seconds = input.durationSeconds;
+  }
+  if (input.resolution) json.resolution = input.resolution;
+  return await apiCall<ShotRecipePreflightReport>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/preflight`,
+    { method: "POST", json },
+  );
+}
+
+/** 风险严重度：沿用后端既有词汇（critical/warning/info），不是新造的分档。 */
+export type ShotRecipeRiskSeverity = "critical" | "warning" | "info";
+
+/**
+ * `GET .../versions/{id}/quality` 报告里的一条风险。
+ *
+ * `evidence` 必须能指回具体记录（version_id / decision_id / 漂移两侧的数值）——
+ * 报告要可审计，散文不算。`detail` 是给人看的那句话（渲染失败时是后端原话）。
+ */
+export interface ShotRecipeQualityRisk {
+  id: string;
+  severity: ShotRecipeRiskSeverity;
+  detail?: string;
+  evidence?: Record<string, unknown>;
+}
+
+/**
+ * 版本质量报告：**结构化风险列表**，不是评分。
+ *
+ * `counts` 由 `risks` 派生；报告 schema 里没有、也不该有总分/评分/评级字段——
+ * 单一分数会把「哪条事实坏了」和「读不到」一起糊掉。空列表 = 逐条读过且没发现风险。
+ */
+export interface ShotRecipeQualityReport {
+  recipe_id: string;
+  version_id: string;
+  risks: ShotRecipeQualityRisk[];
+  counts: Record<ShotRecipeRiskSeverity, number>;
+  /** risks 里出现的 id，顺序即展示顺序（由重到轻）。 */
+  risk_ids: string[];
+  checked_at?: string;
+}
+
+/**
+ * 版本质量报告：只读，不写版本行、不入队、不扣费、不落盘。
+ *
+ * 返回**结构化 risks 列表**（每条带 severity / detail / evidence），而不是单一分数。
+ * 读不到的事实会如实降级成 warning/info，绝不会被省略成「干净」。
+ */
+export async function qualityShotRecipeVersion(
+  project: string,
+  recipeId: string,
+  versionId: string,
+): Promise<ShotRecipeQualityReport> {
+  return await apiCall<ShotRecipeQualityReport>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/quality`,
+  );
+}
+
+// /freezone/init ---------------------------------------------------------- //
 export async function initFreezone(project: string): Promise<{ freezone_dir: string }> {
   return await apiCall<{ freezone_dir: string }>(
     `projects/${encodeURIComponent(project)}/freezone/init`,

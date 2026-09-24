@@ -48,9 +48,16 @@ scripts/incident_drills/.drill.local.env
 .obsidian/
 .serena
 .prototype-ui
-docs/
+# 用 `docs/*` 而非 `docs/`：`docs/` 会把 docs 目录本身排除，git 就不再往里看，
+# 下面两条 `!docs/goals/...` 放行规则永远匹配不到（GoalBuddy 看板与 notes 会静默消失）。
+docs/*
 !docs/goals/
 !docs/goals/**
+# 放行 goals 看板后跟着进来的本地运行时噪音。注意必须写在上面那两条 negation **之后**：
+# `!docs/goals/**` 会把树下一切都重新放行，包括第 4 行本来挡住的 .DS_Store —— git 后匹配者胜，
+# 写在 negation 之前等于没写。
+docs/goals/**/.goalbuddy-board/
+docs/goals/**/.DS_Store
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/
@@ -69,6 +76,9 @@ docs/superpowers/
 # 风格图墙的图片改由 OSS 提供(后端配 STYLE_GALLERY_ASSET_BASE),不再随仓库
 # 发布。scripts/build_style_gallery.py 仍会把产物写到这里，属本地中间物。
 /frontend/public/style-gallery/
+
+# OpenZhenZhen 图像提示词画廊的本地生成物，不入库。
+/frontend/public/prompt-gallery/
 
 # 本地一键启动脚本(start.sh)的运行产物
 /.local-logs/
