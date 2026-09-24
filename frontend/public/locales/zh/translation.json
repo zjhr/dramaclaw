@@ -5762,6 +5762,33 @@
     "noModelsAvailable": "管理员尚未配置任何图片模型"
   },
   "node": {
+    "shotRecipe": {
+      "title": "镜头配方",
+      "toggle": "镜头配方",
+      "loading": "加载中…",
+      "empty": "该项目还没有镜头配方",
+      "noVersions": "还没有版本",
+      "failed": "加载失败：{{detail}}",
+      "versionChain": "版本链",
+      "parent": "来自 {{value}}",
+      "root": "根版本",
+      "parentMissing": "（父版本不在链上）",
+      "tip": "最新",
+      "statusUnknown": "未知",
+      "promptDeltaMode": "{{mode}}",
+      "costTotal": "{{value}} {{unit}}",
+      "costUnavailable": "报价不可用：{{reason}}",
+      "costUnknown": "无报价记录",
+      "costUnknownReason": "未记录原因",
+      "capabilitiesUnknown": "{{model}} 的能力未知——未确认支持",
+      "capabilitiesEmpty": "已记录能力，未列出限制",
+      "referenceImageMax": "参考图 ≤{{value}}",
+      "capabilitiesUnknownNoModel": "能力未知——未指定模型，未确认支持",
+      "lookDecisions": "角色造型决策",
+      "identityKnown": "身份 {{value}}",
+      "identityUnknown": "角色库不可用——基线为空",
+      "boundVersion": "绑定到 {{value}}"
+    },
     "menu": {
       "uploadImage": "上传资源",
       "image": "图片",
@@ -6669,7 +6696,11 @@
       "projectSaveTimeout": "工程存档超时，导演台自身的本地存档仍然可用",
       "projectSaveFailed": "工程存档失败：{{message}}",
       "snapshotTooLarge": "工程过大，已跳过存档",
-      "snapshotUnavailable": "工程快照不可用，已回落到导演台的本地存档"
+      "snapshotUnavailable": "工程快照不可用，已回落到导演台的本地存档",
+      "exportUnavailable": "当前白模包不支持导出：MONOFORM 尚未实现 export.video",
+      "exportUnavailableHint": "白模台的「导出 MP4」只是在它自己的浏览器里下载，宿主拿不到产物。要把它变成画布上的视频节点与来源边，需要 MONOFORM 在 capabilities.actions 里补上 export.video。",
+      "whiteboxExportVideo": "导出白模视频",
+      "whiteboxOpen": "打开白模台"
     }
   },
   "viewer": {

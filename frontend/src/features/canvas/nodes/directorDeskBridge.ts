@@ -23,12 +23,49 @@
  *    第几个」对应「收回来第几个」，只能按 requestId 查 pending 表；表项在
  *    resolve/reject/超时/销毁四条路径上都要删掉并清掉定时器，否则泄漏。
  * 3. **按 capabilities 决定能力**：`actions` 数组由导演台自己声明，宿主不假设。
+ * 4. **版本窗口而不是版本相等**：回包的 `protocolVersion` 落在支持窗口内即可
+ *    （见 `DIRECTOR_DESK_SUPPORTED_PROTOCOL_VERSIONS`），不做 `!==` 硬比 ——
+ *    同一座桥既接 3D 导演台（v1）也接 MONOFORM 白模台（v2）。
  *
  * 这个模块刻意不依赖 React 与网络 I/O：它只处理消息与 promise 表，因此可以被
  * 单元测试用真实 `MessageEvent` 直接驱动（见 __tests__/features/canvas/director-desk-bridge.test.ts）。
  */
 
+/** 宿主支持的**最低**协议版本（兼容窗口的下界）；宿主自己发消息时不带版本号。 */
 export const DIRECTOR_DESK_PROTOCOL_VERSION = 1;
+
+/**
+ * 宿主支持的协议版本集合 —— 兼容策略是「不低过 v1」，而不是只认某一个数字。
+ *
+ * 用集合而不是把常量提到 2：同一个桥同时服务 3D 导演台（仍回 v1）与 MONOFORM
+ * 白模台（T010 起回 v2），`!==` 硬比等于每升一次版本就单方面断开一个已发布的
+ * 子应用 —— 真实症状不是报错而是沉默：每条回包都被守卫丢掉，`capabilities.get`
+ * 一路等到超时，界面只显示「连不上」。
+ *
+ * `MIN`/`MAX` 只是这个集合的边界值（供展示与文档用），判断永远走集合。
+ */
+export const DIRECTOR_DESK_MIN_PROTOCOL_VERSION = 1;
+export const DIRECTOR_DESK_MAX_PROTOCOL_VERSION = 2;
+
+export const DIRECTOR_DESK_SUPPORTED_PROTOCOL_VERSIONS: readonly number[] =
+  Array.from(
+    { length: DIRECTOR_DESK_MAX_PROTOCOL_VERSION - DIRECTOR_DESK_MIN_PROTOCOL_VERSION + 1 },
+    (_unused, index) => DIRECTOR_DESK_MIN_PROTOCOL_VERSION + index,
+  );
+
+/**
+ * 回包版本号是否在兼容窗口内。**只接受整数**：`1.5` 这种带小数的版本没法安全
+ * 配对（旧字段可能已经变了语义），宁可丢弃走超时也不要按低版本误读。
+ *
+ * 高版本按兼容处理（向前兼容的加法式演进：多出来的 action 本就要按
+ * `capabilities.actions` 逐条判断）；低版本与非法值一律拒绝 —— 窗口下界是
+ * 有意守住的，早期版本的回包形状与现在不同。
+ */
+export function isDirectorDeskProtocolVersionSupported(value: unknown): boolean {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && (DIRECTOR_DESK_SUPPORTED_PROTOCOL_VERSIONS as readonly number[]).includes(value);
+}
 
 /** 协议 v1 的受控接口。来自 embed-contract.md 的 `actions` 取值域。 */
 export const DIRECTOR_DESK_ACTIONS = [
@@ -118,7 +155,7 @@ export function isDirectorDeskResponsePayload(
   value: unknown,
 ): value is DirectorDeskResponsePayload {
   if (!isRecord(value)) return false;
-  if (value.protocolVersion !== DIRECTOR_DESK_PROTOCOL_VERSION) return false;
+  if (!isDirectorDeskProtocolVersionSupported(value.protocolVersion)) return false;
   if (typeof value.requestId !== 'string' || value.requestId.length === 0) return false;
   if (typeof value.action !== 'string') return false;
   if (typeof value.ok !== 'boolean') return false;
@@ -149,7 +186,7 @@ export function normalizeDirectorDeskCaptures(value: unknown): DirectorDeskCaptu
 
 export function isDirectorDeskCapabilities(value: unknown): value is DirectorDeskCapabilities {
   if (!isRecord(value)) return false;
-  if (value.protocolVersion !== DIRECTOR_DESK_PROTOCOL_VERSION) return false;
+  if (!isDirectorDeskProtocolVersionSupported(value.protocolVersion)) return false;
   return Array.isArray(value.actions) && value.actions.every((item) => typeof item === 'string');
 }
 

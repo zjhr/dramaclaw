@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from novelvideo.api.deps import ProjectResolution
 from novelvideo.api.routes import shot_recipes as shot_recipes_route
 from novelvideo.freezone import shot_recipe_store as store
+from novelvideo.freezone.video_node import resolve_freezone_video_backend
 
 RECIPE = "recipe_demo01"
 
@@ -568,3 +569,343 @@ def test_recipe_id_cannot_escape_the_state_dir(client) -> None:
     test_client, _state_dir = client
     response = test_client.get("/api/v1/projects/proj_demo/shot-recipes/..%2f..%2fetc")
     assert response.status_code in {400, 404}
+
+
+# --------------------------------------------------------------------------
+# T009：rendering slice —— ready 版本接真实 freezone 视频生成
+# --------------------------------------------------------------------------
+
+VIDEO_MODEL = "video_x"
+# 渲染切片把 model_id 当不透明标签，真实后端仍由既有解析器决定：这里用一个
+# 既有可用后端，避免测试把「哪些模型存在」钉死成契约。
+RENDER_BACKEND = resolve_freezone_video_backend(None)
+CATALOG_ENTRY = {
+    "catalogId": "video_x",
+    "id": "video_x",
+    "apiModel": "video_x",
+    "minDuration": 2,
+    "maxDuration": 12,
+    "referenceImageMax": 4,
+    "supportedModes": ["text_to_video"],
+    "resolutionOptions": ["720p", "1080p"],
+}
+
+
+def _use_video_catalog(monkeypatch, entry=CATALOG_ENTRY) -> None:
+    from novelvideo.api.routes import freezone
+
+    async def fake_catalog(media_type, *, requester_user_id):
+        del media_type, requester_user_id
+        return [entry]
+
+    monkeypatch.setattr(freezone, "_scoped_media_model_catalog", fake_catalog)
+
+
+class _FakeTaskBackend:
+    """Stand-in for get_task_backend(): records the call, never generates anything."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def enqueue_project_task(
+        self,
+        ctx,
+        *,
+        task_type: str,
+        product_surface: str,
+        queue_kind: str = "default",
+        episode: int = 0,
+        beat_num: int | None = None,
+        scope: str | None = None,
+        payload: dict | None = None,
+    ):
+        from novelvideo.ports.tasks import QueuedTask
+
+        self.calls.append(
+            {
+                "task_type": task_type,
+                "product_surface": product_surface,
+                "queue_kind": queue_kind,
+                "episode": episode,
+                "beat_num": beat_num,
+                "scope": scope,
+                "payload": dict(payload or {}),
+                "project_id": getattr(ctx, "project_id", ""),
+            }
+        )
+        return QueuedTask(
+            task_state=SimpleNamespace(task_id=f"task-{len(self.calls)}"),
+            backend="fake",
+        )
+
+
+def _use_fake_task_backend(monkeypatch) -> _FakeTaskBackend:
+    import novelvideo.ports as ports
+
+    backend = _FakeTaskBackend()
+    monkeypatch.setattr(ports, "get_task_backend", lambda: backend)
+    return backend
+
+
+def _ready_version(
+    test_client: TestClient, *, source_refs: dict | None = None, **body
+) -> dict:
+    """Create a recipe + one ready version bound to a known model."""
+    _create(test_client)
+    status, payload = _append_version(
+        test_client,
+        prompt="皇帝登基，俯拍",
+        status="ready",
+        model_id=VIDEO_MODEL,
+        resolution="1080p",
+        source_refs=source_refs if source_refs is not None else {},
+        **body,
+    )
+    assert status == 200, payload
+    return payload["data"]
+
+
+def _render(test_client: TestClient, version_id: str, **body) -> tuple[int, dict]:
+    response = test_client.post(
+        f"/api/v1/projects/proj_demo/shot-recipes/{RECIPE}"
+        f"/versions/{version_id}/render",
+        json={"model_id": VIDEO_MODEL, "video_backend": RENDER_BACKEND, **body},
+    )
+    return response.status_code, response.json()
+
+
+def _lines(state_dir) -> list[str]:
+    return _recipe_file(state_dir).read_text(encoding="utf-8").splitlines()
+
+
+def test_render_submits_task_and_appends_version_with_real_cost_ledger(
+    client, monkeypatch
+) -> None:
+    """(e) 成功渲染：payload 带 recipe_id/version_id，版本行 append 真实 cost_ledger。"""
+    _use_video_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch, total_cost=73)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, state_dir = client
+    ready = _ready_version(
+        test_client, source_refs={"canvas_id": "canvas_a", "node_id": "node_1"}
+    )
+    before = _lines(state_dir)
+
+    status, body = _render(
+        test_client, ready["version_id"], duration_seconds=6, resolution="1080p"
+    )
+    assert status == 200, body
+    data = body["data"]
+    assert data["recipe_id"] == RECIPE
+    assert data["version_id"] == ready["version_id"]
+    assert data["job_id"] and data["job_id"].startswith("job_")
+    assert data["task_id"] == "task-1"
+    assert data["status"] == "rendering"
+    assert data["cost_ledger"]["quoted"] is True
+    assert data["cost_ledger"]["total_cost"] == 73
+    assert data["cost_ledger"]["source"] == "generation_credit_quote"
+
+    # 任务层的形状：freezone_video_gen / freezone / video / episode 0
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["task_type"] == "freezone_video_gen"
+    assert call["product_surface"] == "freezone"
+    assert call["queue_kind"] == "video"
+    assert call["episode"] == 0
+    assert call["scope"] == data["job_id"]
+    payload = call["payload"]
+    assert payload["recipe_id"] == RECIPE
+    assert payload["version_id"] == ready["version_id"]
+    assert payload["job_id"] == data["job_id"]
+    # canvas/node 只来自 source_refs，没有画布 node data 参与
+    assert payload["canvas_id"] == "canvas_a"
+    assert payload["node_id"] == "node_1"
+    assert payload["source_refs"] == {"canvas_id": "canvas_a", "node_id": "node_1"}
+    assert payload["billing"]["feature_key"] == "freezone.video_generate"
+
+    # 版本行写回走 append：ready 那一行逐字节未变，只多一行 rendering
+    after = _lines(state_dir)
+    assert len(after) == len(before) + 1
+    assert all(line in after for line in before)
+    rendering = [line for line in after if '"status":"rendering"' in line]
+    assert len(rendering) == 1
+    record = json.loads(rendering[0])
+    assert record["version_id"] == ready["version_id"]
+    assert record["prompt_delta"]["mode"] == "delta"
+    assert record["model_snapshot"]["capabilities_known"] is True
+    assert record["model_snapshot"]["maxDuration"] == 12
+    assert record["cost_ledger"]["total_cost"] == 73
+    assert record["source_refs"]["job_id"] == data["job_id"]
+
+    # 读回的是「每版最新一行」：ready 行还在文件里（上面已断言逐字节未变），
+    # 但当前状态是 rendering，且带上了 job_id —— 版本号不因状态变化而新开
+    stored = _get(test_client)["versions"]
+    assert [item["version_id"] for item in stored] == ["v1"]
+    assert stored[0]["status"] == "rendering"
+    assert stored[0]["parent_version_id"] == "v1"
+    assert stored[0]["lineage"] == ["v1"]
+    assert stored[0]["source_refs"]["job_id"] == data["job_id"]
+
+
+def test_render_requires_ready_status_and_does_not_touch_any_line(
+    client, monkeypatch
+) -> None:
+    """(a) 非 ready → 409，且任何行都未被改动。"""
+    _use_video_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, state_dir = client
+    _create(test_client)
+    _status, draft = _append_version(
+        test_client, prompt="草稿", status="draft", model_id=VIDEO_MODEL
+    )
+    before = _lines(state_dir)
+
+    status, body = _render(test_client, draft["data"]["version_id"])
+    assert status == 409
+    assert "not ready to render" in body["detail"]
+    assert "draft" in body["detail"]
+    assert backend.calls == []
+    assert _lines(state_dir) == before
+
+
+def test_render_refuses_when_capabilities_cannot_be_resolved(
+    client, monkeypatch
+) -> None:
+    """(b) 目录取不到 → capabilities_known=false 显式拒绝，不按已支持继续。"""
+    from novelvideo.api.routes import freezone
+
+    async def no_catalog(media_type, *, requester_user_id):
+        del media_type, requester_user_id
+        return None
+
+    monkeypatch.setattr(freezone, "_scoped_media_model_catalog", no_catalog)
+    _fake_quote_port(monkeypatch)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, state_dir = client
+    # 版本可以照旧追加（那时降级成 capabilities_known=false），但渲染必须拒绝
+    _create(test_client)
+    _status, version = _append_version(
+        test_client, prompt="模型不可见", status="ready", model_id="ghost-model"
+    )
+    assert version["data"]["model_snapshot"]["capabilities_known"] is False
+    before = _lines(state_dir)
+
+    status, body = _render(
+        test_client, version["data"]["version_id"], model_id="ghost-model"
+    )
+    assert status == 409
+    assert "capabilities_known=false" in body["detail"]
+    assert backend.calls == []
+    assert _lines(state_dir) == before
+
+
+def test_render_rejects_out_of_range_duration_with_boundary(
+    client, monkeypatch
+) -> None:
+    """(c) duration 越界 → 400 并给出边界值。"""
+    _use_video_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, state_dir = client
+    ready = _ready_version(test_client)
+    before = _lines(state_dir)
+
+    status, body = _render(test_client, ready["version_id"], duration_seconds=99)
+    assert status == 400
+    assert "99 > 12" in body["detail"]
+
+    status, body = _render(test_client, ready["version_id"], duration_seconds=1)
+    assert status == 400
+    assert "1 < 2" in body["detail"]
+
+    status, body = _render(
+        test_client, ready["version_id"], duration_seconds=6, resolution="4320p"
+    )
+    assert status == 400
+    assert "4320p" in body["detail"]
+    assert "720p, 1080p" in body["detail"]
+
+    assert backend.calls == []
+    assert _lines(state_dir) == before
+
+
+def test_render_is_idempotent_per_version_and_reports_existing_job(
+    client, monkeypatch
+) -> None:
+    """(d) 已有 source_refs.job_id → 409 并附既有 job_id，不重复入队。"""
+    _use_video_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, state_dir = client
+    ready = _ready_version(
+        test_client, source_refs={"canvas_id": "canvas_a", "job_id": "job_existing"}
+    )
+    before = _lines(state_dir)
+
+    status, body = _render(test_client, ready["version_id"])
+    assert status == 409
+    assert "job_existing" in body["detail"]
+    assert backend.calls == []
+    assert _lines(state_dir) == before
+
+    # 渲染成功后，同一个版本再次渲染同样 409，并带上这次真正入队的 job_id。
+    # 注意这只承诺「版本级一次性提交」：任务层 reserve_task_for_project 的去重
+    # 只在 submitting/queued/running 生效，任务跑完之后同一 job_id 的 scope 仍可
+    # 再次入队，所以这里不宣称永久幂等。
+    _status, other = _append_version(
+        test_client, prompt="第二版", status="ready", model_id=VIDEO_MODEL
+    )
+    assert _status == 200, other
+    status, body = _render(test_client, other["data"]["version_id"])
+    assert status == 200, body
+    first_job_id = body["data"]["job_id"]
+    assert len(backend.calls) == 1
+
+    status, body = _render(test_client, other["data"]["version_id"])
+    assert status == 409
+    assert first_job_id in body["detail"]
+    assert len(backend.calls) == 1
+
+
+def test_render_404s_for_unknown_recipe_and_version(client, monkeypatch) -> None:
+    _use_video_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch)
+    backend = _use_fake_task_backend(monkeypatch)
+    test_client, _state_dir = client
+    _create(test_client)
+
+    response = test_client.post(
+        "/api/v1/projects/proj_demo/shot-recipes/recipe_missing/versions/v1/render",
+        json={"model_id": VIDEO_MODEL, "video_backend": RENDER_BACKEND},
+    )
+    assert response.status_code == 404
+
+    status, body = _render(test_client, "v99")
+    assert status == 404
+    assert "version not found" in body["detail"]
+    assert backend.calls == []
+
+
+def test_render_propagates_task_backend_errors_as_503(
+    client, monkeypatch
+) -> None:
+    """后端启动失败 → 503，且不留下任何渲染行。"""
+    _use_video_catalog(monkeypatch)
+    _fake_quote_port(monkeypatch)
+
+    class ExplodingBackend(_FakeTaskBackend):
+        async def enqueue_project_task(self, *args, **kwargs):
+            raise RuntimeError("task backend down")
+
+    import novelvideo.ports as ports
+
+    monkeypatch.setattr(ports, "get_task_backend", lambda: ExplodingBackend())
+    test_client, state_dir = client
+    ready = _ready_version(test_client)
+    before = _lines(state_dir)
+
+    status, body = _render(test_client, ready["version_id"])
+    assert status == 503
+    assert "task backend down" in body["detail"]
+    assert _lines(state_dir) == before

@@ -5762,6 +5762,33 @@
     "noModelsAvailable": "No image model has been configured by the administrator"
   },
   "node": {
+    "shotRecipe": {
+      "title": "Shot Recipe",
+      "toggle": "Shot recipe",
+      "loading": "Loading…",
+      "empty": "No shot recipe recorded for this project",
+      "noVersions": "No versions yet",
+      "failed": "Load failed: {{detail}}",
+      "versionChain": "Version chain",
+      "parent": "from {{value}}",
+      "root": "root version",
+      "parentMissing": "(parent not in chain)",
+      "tip": "latest",
+      "statusUnknown": "unknown",
+      "promptDeltaMode": "{{mode}}",
+      "costTotal": "{{value}} {{unit}}",
+      "costUnavailable": "Quote unavailable: {{reason}}",
+      "costUnknown": "No quote recorded",
+      "costUnknownReason": "reason not recorded",
+      "capabilitiesUnknown": "Capabilities unknown for {{model}} — not confirmed supported",
+      "capabilitiesEmpty": "Capabilities recorded, no limits listed",
+      "referenceImageMax": "ref img ≤{{value}}",
+      "capabilitiesUnknownNoModel": "Capabilities unknown — model unset, not confirmed supported",
+      "lookDecisions": "Character look decisions",
+      "identityKnown": "Identity {{value}}",
+      "identityUnknown": "Character library unavailable — baseline empty",
+      "boundVersion": "bound to {{value}}"
+    },
     "menu": {
       "uploadImage": "Upload Resource",
       "image": "Image",
@@ -6669,7 +6696,11 @@
       "projectSaveTimeout": "Archiving timed out — the director desk keeps its own local copy",
       "projectSaveFailed": "Could not archive the project: {{message}}",
       "snapshotTooLarge": "Project is too large to archive",
-      "snapshotUnavailable": "Project snapshot unavailable — using the director desk's local copy"
+      "snapshotUnavailable": "Project snapshot unavailable — using the director desk's local copy",
+      "exportUnavailable": "Whitebox export is not available here: this MONOFORM bundle does not implement export.video yet",
+      "exportUnavailableHint": "The whitebox desk can only download an MP4 in its own browser. To turn it into a canvas video node with a source edge, the MONOFORM bundle must declare export.video in capabilities.actions.",
+      "whiteboxExportVideo": "Export whitebox video",
+      "whiteboxOpen": "Open whitebox desk"
     }
   },
   "viewer": {

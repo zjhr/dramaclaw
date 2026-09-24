@@ -2946,6 +2946,219 @@ export async function deleteFreezoneVideoCharacterLibraryItem(
   );
 }
 
+// /shot-recipes ----------------------------------------------------------- //
+
+/**
+ * Shot recipe 版本溯源的展示契约。
+ *
+ * 字段形状对齐后端 `novelvideo/api/routes/shot_recipes.py`。这里刻意**不做**运行时
+ * 强制校验：源数据是 append-only JSONL，历史行可能比前端契约老，缺字段是正常状态，
+ * 不是错误——所以全部标可选，由消费面按「缺失即未知」处理。
+ */
+export interface ShotRecipeVersionModelSnapshot {
+  model_id?: string;
+  catalog_id?: string | null;
+  /** false = 目录读不到（不是「模型不支持」）。消费面必须显式降级，禁止当成已支持。 */
+  capabilities_known?: boolean;
+  frozen_at?: string;
+  minDuration?: number | null;
+  maxDuration?: number | null;
+  referenceImageMax?: number | null;
+  referenceVideoMax?: number | null;
+  referenceAudioMax?: number | null;
+  referenceFileMax?: number | null;
+  referenceLinkMax?: number | null;
+  supportedModes?: string[];
+  resolutionOptions?: string[];
+}
+
+/**
+ * 版本创建时**记录**的计费报价（复用既有 generation_credit_quote，不是新账本）。
+ *
+ * `quoted=false` 表示这条版本没有拿到报价，`reason` 说明原因——消费面必须展示
+ * 「报价不可用」，绝不能把缺失的 total_cost 渲染成 0 或任何价格。
+ */
+export interface ShotRecipeCostLedger {
+  source?: string;
+  quoted?: boolean;
+  reason?: string;
+  pricing_kind?: string;
+  pricing_model?: string;
+  pricing_params?: Record<string, unknown>;
+  quantity?: number;
+  total_cost?: number;
+  display?: string;
+  unit?: string;
+  unit_cost?: number;
+  recorded_at?: string;
+}
+
+export interface ShotRecipePromptDelta {
+  /** "full" = 首版存全量；"delta" = 相对父版本的差异。 */
+  mode?: string;
+  prompt?: string;
+  changes?: Record<string, unknown>;
+}
+
+export interface ShotRecipeVersion {
+  version_id: string;
+  /** null = 首版（无父版本）。 */
+  parent_version_id?: string | null;
+  prompt_delta?: ShotRecipePromptDelta;
+  model_snapshot?: ShotRecipeVersionModelSnapshot;
+  cost_ledger?: ShotRecipeCostLedger;
+  status?: string;
+  source_refs?: Record<string, unknown>;
+  look_decision_ids?: string[];
+  duration_seconds?: number | null;
+  resolution?: string | null;
+  model_id?: string | null;
+  recorded_at?: string;
+  /** 仅 GET 详情返回：root → … → 本版本的 id 链。 */
+  lineage?: string[];
+}
+
+export interface ShotRecipeIdentitySnapshot {
+  identity_id?: string;
+  /** false = 角色库读取不可用，基线为空——不是「角色不存在」。 */
+  identity_known?: boolean;
+  reason?: string;
+  known_at?: string;
+  face_prompt?: string | null;
+  appearance_details?: string | null;
+  costume_image?: string | null;
+  reference_images?: string[] | null;
+  voice?: string | null;
+}
+
+export interface ShotRecipeLookDecision {
+  decision_id: string;
+  identity_id?: string;
+  character_name?: string;
+  version_id?: string | null;
+  identity_known?: boolean;
+  identity_snapshot?: ShotRecipeIdentitySnapshot;
+  overrides?: Record<string, unknown>;
+  look_diff?: {
+    identity_locked?: Record<string, ShotRecipeLookDiffEntry>;
+    shot_variable?: Record<string, ShotRecipeLookDiffEntry>;
+  };
+  source_refs?: Record<string, unknown>;
+  recorded_at?: string;
+}
+
+export interface ShotRecipeLookDiffEntry {
+  base?: unknown;
+  override?: unknown;
+  changed?: boolean;
+}
+
+export interface ShotRecipeHeader {
+  recipe_id: string;
+  title?: string;
+  canvas_id?: string | null;
+  node_id?: string | null;
+  recorded_at?: string;
+}
+
+export interface ShotRecipe {
+  recipe: ShotRecipeHeader;
+  look_decisions: ShotRecipeLookDecision[];
+  versions: ShotRecipeVersion[];
+}
+
+export interface AppendShotRecipeVersionInput {
+  parentVersionId?: string | null;
+  prompt?: string;
+  changes?: Record<string, unknown>;
+  status?: string;
+  modelId?: string;
+  videoBackend?: string;
+  durationSeconds?: number | null;
+  resolution?: string | null;
+  lookDecisionIds?: string[];
+  sourceRefs?: Record<string, unknown>;
+}
+
+export interface BindCharacterLookDecisionInput {
+  identityId: string;
+  characterName?: string;
+  versionId?: string | null;
+  overrides?: Record<string, unknown>;
+  sourceRefs?: Record<string, unknown>;
+}
+
+export async function listShotRecipes(project: string): Promise<ShotRecipeHeader[]> {
+  const payload = await apiCall<unknown>(
+    `projects/${encodeURIComponent(project)}/shot-recipes`,
+  );
+  if (!Array.isArray(payload)) return [];
+  return payload.filter(
+    (item): item is ShotRecipeHeader =>
+      Boolean(item) &&
+      typeof item === "object" &&
+      typeof (item as { recipe_id?: unknown }).recipe_id === "string",
+  );
+}
+
+export async function getShotRecipe(
+  project: string,
+  recipeId: string,
+): Promise<ShotRecipe> {
+  return await apiCall<ShotRecipe>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}`,
+  );
+}
+
+/**
+ * 追加一个版本。后端是 append-only：即使本次以 `failed` 结束，父版本行也不会被
+ * 重写，所以这里失败重试永远安全——失败只会留下一条新的溯源行。
+ */
+export async function appendShotRecipeVersion(
+  project: string,
+  recipeId: string,
+  input: AppendShotRecipeVersionInput,
+): Promise<ShotRecipeVersion> {
+  const json: Record<string, unknown> = {
+    prompt: input.prompt ?? "",
+  };
+  if (input.parentVersionId) json.parent_version_id = input.parentVersionId;
+  if (input.changes) json.changes = input.changes;
+  if (input.status) json.status = input.status;
+  if (input.modelId) json.model_id = input.modelId;
+  if (input.videoBackend) json.video_backend = input.videoBackend;
+  if (typeof input.durationSeconds === "number") {
+    json.duration_seconds = input.durationSeconds;
+  }
+  if (input.resolution) json.resolution = input.resolution;
+  if (input.lookDecisionIds) json.look_decision_ids = input.lookDecisionIds;
+  if (input.sourceRefs) json.source_refs = input.sourceRefs;
+  return await apiCall<ShotRecipeVersion>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions`,
+    { method: "POST", json },
+  );
+}
+
+/**
+ * 绑定镜头级角色造型决策。`identityId` 必须是真实角色库里的身份：后端解析不到会
+ * 返回 404 并抛 ApiError，不会静默接受任意字符串。
+ */
+export async function bindCharacterLookDecision(
+  project: string,
+  recipeId: string,
+  input: BindCharacterLookDecisionInput,
+): Promise<ShotRecipeLookDecision> {
+  const json: Record<string, unknown> = { identity_id: input.identityId };
+  if (input.characterName) json.character_name = input.characterName;
+  if (input.versionId) json.version_id = input.versionId;
+  if (input.overrides) json.overrides = input.overrides;
+  if (input.sourceRefs) json.source_refs = input.sourceRefs;
+  return await apiCall<ShotRecipeLookDecision>(
+    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/look-decisions`,
+    { method: "POST", json },
+  );
+}
+
 // /freezone/init ---------------------------------------------------------- //
 
 export async function initFreezone(project: string): Promise<{ freezone_dir: string }> {

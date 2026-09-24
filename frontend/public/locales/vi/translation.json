@@ -5433,6 +5433,12 @@
       "frameProjection5sEarlier": "Dựng lại khung -5s",
       "frameProjection5sEarlierPrompt": "Reconstruct the state 5 seconds before this frame: infer the initiating actions, expressions, spatial relationships, and camera position, while keeping character design and visual style consistent.",
       "confirmBar": {
+        "modelLabel": "Model",
+        "sizeLabel": "Kích thước",
+        "qualityLabel": "Chất lượng",
+        "aspectLabel": "Tỉ lệ khung",
+        "aspectFollowSource": "Theo nguồn",
+        "aspectNote": "Tỉ lệ khung của mẫu lưới do chính mẫu quy định (theo nguồn, hoặc giá trị cố định như 3:2 cho ba hướng) và không đổi được.",
         "close": "Đóng",
         "submit": "Tạo",
         "cost": "Chi phí tính toán"
@@ -5660,6 +5666,33 @@
     "noModelsAvailable": "Quản trị viên chưa cấu hình model tạo ảnh nào"
   },
   "node": {
+    "shotRecipe": {
+      "title": "Công thức cảnh quay",
+      "toggle": "Công thức cảnh quay",
+      "loading": "Đang tải…",
+      "empty": "Dự án này chưa có công thức cảnh quay",
+      "noVersions": "Chưa có phiên bản nào",
+      "failed": "Tải thất bại: {{detail}}",
+      "versionChain": "Chuỗi phiên bản",
+      "parent": "từ {{value}}",
+      "root": "phiên bản gốc",
+      "parentMissing": "(không có phiên bản cha trong chuỗi)",
+      "tip": "mới nhất",
+      "statusUnknown": "không rõ",
+      "promptDeltaMode": "{{mode}}",
+      "costTotal": "{{value}} {{unit}}",
+      "costUnavailable": "Không có báo giá: {{reason}}",
+      "costUnknown": "Chưa ghi báo giá",
+      "costUnknownReason": "chưa ghi lý do",
+      "capabilitiesUnknown": "Chưa rõ năng lực của {{model}} — chưa xác nhận hỗ trợ",
+      "capabilitiesEmpty": "Đã ghi năng lực, không có giới hạn nào",
+      "referenceImageMax": "ảnh tham chiếu ≤{{value}}",
+      "capabilitiesUnknownNoModel": "Chưa rõ năng lực — chưa đặt model, chưa xác nhận hỗ trợ",
+      "lookDecisions": "Quyết định tạo hình nhân vật",
+      "identityKnown": "Danh tính {{value}}",
+      "identityUnknown": "Thư viện nhân vật không khả dụng — baseline trống",
+      "boundVersion": "gắn với {{value}}"
+    },
     "menu": {
       "uploadImage": "Tải tài nguyên lên",
       "image": "Ảnh",
@@ -6567,7 +6600,11 @@
       "projectSaveTimeout": "Lưu trữ quá thời gian — bàn đạo diễn vẫn giữ bản lưu cục bộ",
       "projectSaveFailed": "Không lưu trữ được dự án: {{message}}",
       "snapshotTooLarge": "Dự án quá lớn để lưu trữ",
-      "snapshotUnavailable": "Không có bản chụp dự án — dùng bản lưu cục bộ của bàn đạo diễn"
+      "snapshotUnavailable": "Không có bản chụp dự án — dùng bản lưu cục bộ của bàn đạo diễn",
+      "exportUnavailable": "Bản MONOFORM này chưa hỗ trợ xuất: chưa triển khai export.video",
+      "exportUnavailableHint": "Bàn mô hình trắng chỉ tải MP4 trong trình duyệt của nó; host không nhận được tệp. Muốn biến nó thành node video trên canvas kèm cạnh nguồn, MONOFORM phải khai báo export.video trong capabilities.actions.",
+      "whiteboxExportVideo": "Xuất video mô hình trắng",
+      "whiteboxOpen": "Mở bàn mô hình trắng"
     }
   },
   "viewer": {
@@ -7130,6 +7167,14 @@
         }
       },
       "featureModels": {
+        "customChannelSection": "Kênh tuỳ chỉnh",
+        "customChannelNamePlaceholder": "Tên kênh (chữ thường / chữ số / gạch nối)",
+        "customChannelAdd": "Thêm kênh tuỳ chỉnh",
+        "customChannelTypeLabel": "Tương thích OpenAI",
+        "customChannelExists": "Tên kênh \"{{provider}}\" đã tồn tại.",
+        "customChannelInvalid": "Tên kênh chỉ hỗ trợ chữ thường, chữ số, gạch nối hoặc gạch dưới, bắt đầu bằng chữ hoặc số.",
+        "fetchModels": "Lấy danh sách model",
+        "fetchModelsEmpty": "Nhà cung cấp không trả về model nào. Kiểm tra key của kênh và base URL.",
         "title": "Ánh xạ model theo nghiệp vụ",
         "description": "Gán model từ nhà cung cấp cho các tính năng hiểu văn bản, tạo nội dung và hiểu hình ảnh. Tính năng chưa gán sẽ dùng mặc định của backend.",
         "channelsTitle": "Kênh nhà cung cấp",
@@ -7276,6 +7321,10 @@
         "invalidBatchSize": "Hãy nhập kích thước lô embedding hợp lệ."
       },
       "mediaModels": {
+        "usageImage": "Model ảnh xuất hiện ở: bộ chọn model trong node tạo / chỉnh sửa ảnh trên canvas, và ở phần chọn model cho các tính năng ảnh như ảnh tham chiếu đạo cụ.",
+        "usageVideo": "Model video xuất hiện ở: bộ chọn model trong node tạo video trên canvas, và ở phần chọn model cho tạo video theo nhịp trong sản xuất tập phim.",
+        "usageAudio": "Model âm thanh dùng cho việc chọn model ở các tính năng tạo âm thanh.",
+        "usageNote": "Model mặc định cho phác thảo tập phim / ảnh tham chiếu bối cảnh (LingShan-G2 / LingShan-NB-2) do biến môi trường phía backend đặt, không đặt ở đây; chúng cũng xuất hiện trong bộ chọn model trên canvas.",
         "title": "Model tạo ảnh / video / âm thanh",
         "description": "Danh sách model lấy từ cấu hình cục bộ tuỳ chỉnh hiện tại. Hãy thêm model ảnh hoặc video và cấu hình các năng lực hiển thị trong XiaHua.",
         "addModel": "Thêm model",

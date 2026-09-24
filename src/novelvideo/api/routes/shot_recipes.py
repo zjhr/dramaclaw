@@ -1,12 +1,15 @@
-"""镜头配方（ShotRecipe）端点 — Phase 1 后端切片。
+"""镜头配方（ShotRecipe）端点 — Phase 1 后端切片 + 渲染切片。
 
 一条配方 = 一份 append-only JSONL（见 ``novelvideo.freezone.shot_recipe_store``）：
 建配方 → 绑定镜头级角色造型决策（只引用 CharacterIdentity）→ 追加版本
 （parent_version_id / prompt_delta / model_snapshot / cost_ledger）→ 读回完整溯源。
 
+渲染切片把 ``ready`` 版本接到真实 freezone 视频生成：canvas/node 只取自版本的
+``source_refs``，任务固定 ``freezone_video_gen`` / ``freezone`` / ``video`` / episode 0，
+版本行由 store 的既有 append 路径写回（父行逐字节不变）。
+
 计费只**记录**既有链路的结果（``get_credit_quote()`` + model_credits 的
-freezone 视频计费参数），不新增积分 / 扣费 / 余额 / 账本机制；本切片也不提交
-任何生成任务。
+freezone 视频计费参数），不新增积分 / 扣费 / 余额 / 账本机制。
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ router = APIRouter()
 
 PRODUCT_SURFACE = "freezone"
 VIDEO_FEATURE_KEY = "freezone.video_generate"
+RENDER_TASK_TYPE = "freezone_video_gen"
+RENDER_QUEUE_KIND = "video"
 
 
 class ShotRecipeCreateRequest(BaseModel):
@@ -56,6 +61,20 @@ class ShotRecipeVersionRequest(BaseModel):
     resolution: str | None = Field(default=None, max_length=64)
     look_decision_ids: list[str] = Field(default_factory=list)
     source_refs: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShotRecipeRenderRequest(BaseModel):
+    """One render attempt. Only the prompt-side knobs; canvas/node come from source_refs."""
+
+    model_id: str = Field(..., min_length=1, max_length=256)
+    video_backend: str = Field(default="", max_length=256)
+    prompt: str = Field(default="")
+    aspect_ratio: str = Field(default="16:9", max_length=32)
+    duration_seconds: float | None = None
+    resolution: str | None = Field(default=None, max_length=64)
+    generate_audio: bool = False
+    human_review: bool = False
+    scene_optimize: str = Field(default="", max_length=64)
 
 
 def _state_dir(resolved: ProjectResolution) -> Path:
@@ -139,9 +158,9 @@ async def _cost_ledger(
 ) -> dict[str, Any]:
     """Quote one video generation through the existing billing path.
 
-    The quote is recorded, never charged — this slice submits no task. When the
-    quote is unavailable the ledger says ``quoted=false`` rather than showing a
-    fabricated cost.
+    The quote is recorded, never charged: real charging stays with the task
+    backend. When the quote is unavailable the ledger says ``quoted=false``
+    rather than showing a fabricated cost.
     """
     from novelvideo.api.routes.model_credits import freezone_video_generate_task_billing
     from novelvideo.freezone.video_node import resolve_freezone_video_backend
@@ -193,6 +212,67 @@ async def _cost_ledger(
         pricing_params=pricing_params,
         quantity=quantity,
     )
+
+
+def _render_version(recipe: dict[str, Any], version_id: str) -> dict[str, Any] | None:
+    clean = str(version_id or "").strip()
+    return next(
+        (
+            version
+            for version in recipe["versions"]
+            if str(version.get("version_id") or "") == clean
+        ),
+        None,
+    )
+
+
+def _validate_render_knobs(
+    capabilities: dict[str, Any],
+    body: ShotRecipeRenderRequest,
+    *,
+    default_duration: float | None = None,
+) -> int:
+    """Guard duration/resolution against the catalog entry resolved for the render.
+
+    This endpoint submits a real generation task, unlike the version-append
+    endpoint — so an out-of-range value is a 400 that names the boundary, never a
+    silent clamp. The bounds come from the entry resolved for ``body.model_id``
+    (the version's frozen snapshot is provenance, not the live capability).
+    """
+    min_duration = capabilities.get("minDuration")
+    max_duration = capabilities.get("maxDuration")
+    options = [str(item) for item in (capabilities.get("resolutionOptions") or [])]
+    requested_resolution = str(body.resolution or "").strip()
+
+    if body.duration_seconds is None:
+        # 没给时长就沿用版本上冻结的时长（追加版本时写入的），没有才退回 5s
+        requested = default_duration if default_duration is not None else 5
+    else:
+        requested = body.duration_seconds
+    try:
+        raw_duration = float(requested)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "duration_seconds must be a number") from exc
+    if raw_duration <= 0:
+        raise HTTPException(400, "duration_seconds must be > 0")
+    duration = max(int(raw_duration), 1)
+    if type(min_duration) is int and duration < min_duration:
+        raise HTTPException(
+            400, f"duration_seconds below minimum: {duration} < {min_duration}"
+        )
+    if type(max_duration) is int and duration > max_duration:
+        raise HTTPException(
+            400, f"duration_seconds above maximum: {duration} > {max_duration}"
+        )
+    if requested_resolution and options and requested_resolution.lower() not in [
+        item.lower() for item in options
+    ]:
+        raise HTTPException(
+            400,
+            "resolution not supported: "
+            f"{requested_resolution} (allowed: {', '.join(options)})",
+        )
+    return duration
 
 
 @router.get("/projects/{project}/shot-recipes")
@@ -378,3 +458,195 @@ async def delete_shot_recipe_version(
     if not deleted:
         raise HTTPException(404, f"version not found: {version_id}")
     return {"ok": True, "data": {"version_id": version_id, "deleted": True}}
+
+
+@router.post("/projects/{project}/shot-recipes/{recipe_id}/versions/{version_id}/render")
+async def render_shot_recipe_version(
+    project: str,
+    recipe_id: str,
+    version_id: str,
+    body: ShotRecipeRenderRequest,
+    user: dict = Depends(get_api_user),
+):
+    """把 ``ready`` 版本接到真实 freezone 视频生成。
+
+    本端点只**构造 payload** 并调用既有任务后端：canvas/node 一律取自版本自己的
+    ``source_refs``（不读画布 node data），版本行与配方头仍由 store 单一 schema owner
+    构造。计费沿用既有 ``freezone_video_generate_task_billing`` + ``get_credit_quote()``
+    ——只是记录，不新增任何积分/扣费机制。
+
+    幂等口径：版本已带 ``source_refs.job_id`` 即 409（附既有 job_id）。任务层
+    ``reserve_task_for_project`` 的去重只在 submitting/queued/running 生效，任务终态后
+    同 job_id 仍可再入队——所以这里只承诺「版本级一次性提交」，不宣称永久幂等。
+    """
+    resolved = await resolve_project_scope(project, user, required_role="editor")
+    project_dir = _state_dir(resolved)
+    try:
+        recipe = store.read_recipe(project_dir, recipe_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if recipe is None:
+        raise HTTPException(404, f"shot recipe not found: {recipe_id}")
+    version = _render_version(recipe, version_id)
+    if version is None:
+        raise HTTPException(404, f"version not found: {version_id}")
+    # 幂等检查先于 ready 检查：渲染过的版本状态已是 rendering，若先报「不是 ready」
+    # 就把既有 job_id 这条信息盖掉了。两者都是 409，失败路径不动任何一行。
+    existing_job_id = str((version.get("source_refs") or {}).get("job_id") or "")
+    if existing_job_id:
+        raise HTTPException(
+            409,
+            f"version {version_id} already has a render job: {existing_job_id}",
+        )
+    if str(version.get("status") or "") != "ready":
+        raise HTTPException(
+            409,
+            f"version {version_id} is not ready to render: "
+            f"status={version.get('status')!r}",
+        )
+
+    requester_user_id = str(resolved.ctx.requester_user_id or "")
+    # 能力必须按 body.model_id 现查目录：取不到就显式拒绝，不按「已支持」放行。
+    capabilities = await _resolve_capabilities(
+        body.model_id, requester_user_id=requester_user_id
+    )
+    if capabilities is None:
+        raise HTTPException(
+            409,
+            "capabilities_known=false: media model catalog has no entry for "
+            f"model_id={body.model_id!r}, refusing to render",
+        )
+    duration_seconds = _validate_render_knobs(
+        capabilities, body, default_duration=version.get("duration_seconds")
+    )
+
+    from novelvideo.freezone.video_node import (
+        resolve_freezone_video_backend,
+        normalize_video_aspect_ratio,
+        normalize_video_resolution_for_backend,
+    )
+
+    backend = str(body.video_backend or "").strip()
+    if not backend:
+        try:
+            backend = resolve_freezone_video_backend(body.model_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    source_refs = dict(version.get("source_refs") or {})
+    canvas_id = str(source_refs.get("canvas_id") or "")
+    node_id = str(source_refs.get("node_id") or "")
+    prompt = str(body.prompt or "").strip() or str(
+        (version.get("prompt_delta") or {}).get("prompt") or ""
+    )
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+    resolution = normalize_video_resolution_for_backend(
+        backend,
+        body.resolution or version.get("resolution") or None,
+        capabilities.get("resolutionOptions") or None,
+    )
+
+    from novelvideo.api.routes.model_credits import freezone_video_generate_task_billing
+
+    billing = freezone_video_generate_task_billing(
+        {
+            "video_backend": backend,
+            "resolution": resolution,
+            "pricing_quantity": duration_seconds,
+            "operation": "textToVideo",
+            "generate_audio": bool(body.generate_audio),
+            "video_input_present": False,
+            "input_video_duration_seconds": 0.0,
+            "catalog_id": str(capabilities.get("catalogId") or ""),
+        }
+    )
+    # 报价沿用既有 get_credit_quote()（经 _cost_ledger）：报价不可用时只记
+    # quoted=false + reason，不伪造成本、不预扣。真正的扣费仍由任务后端负责。
+    cost_ledger = await _cost_ledger(
+        model_id=body.model_id,
+        video_backend=backend,
+        duration_seconds=duration_seconds,
+        requester_user_id=requester_user_id,
+    )
+
+    # 函数内导入（与 _cost_ledger 同一写法）：调用时才在 novelvideo.ports 上取属性，
+    # 测试因此能把假后端塞进来（tests/test_api_shot_recipes.py::_use_fake_task_backend）。
+    from novelvideo.ports import get_task_backend
+
+    job_id = store.new_shot_job_id()
+    payload = {
+        "job_id": job_id,
+        "recipe_id": recipe_id,
+        "version_id": version_id,
+        "canvas_id": canvas_id,
+        "node_id": node_id,
+        "model_id": body.model_id,
+        "catalog_id": str(capabilities.get("catalogId") or ""),
+        "gen_mode": "text_to_video",
+        "requested_gen_mode": "text_to_video",
+        "prompt": prompt,
+        "reference_items": [],
+        "aspect_ratio": normalize_video_aspect_ratio(body.aspect_ratio),
+        "resolution": resolution,
+        "duration_seconds": duration_seconds,
+        "generate_audio": bool(body.generate_audio),
+        "human_review": bool(body.human_review),
+        "scene_optimize": body.scene_optimize,
+        "backend": backend,
+        "source_refs": source_refs,
+        "billing": billing,
+    }
+    try:
+        queued = await get_task_backend().enqueue_project_task(
+            resolved.ctx,
+            product_surface=PRODUCT_SURFACE,
+            task_type=RENDER_TASK_TYPE,
+            queue_kind=RENDER_QUEUE_KIND,
+            episode=0,
+            scope=job_id,
+            payload=payload,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(503, f"failed to start render task: {exc}") from exc
+
+    record = store.build_version_record(
+        version_id=version_id,
+        parent_version_id=version.get("parent_version_id") or version_id,
+        prompt_delta=store.build_prompt_delta(
+            prompt=prompt,
+            changes={"render": {"job_id": job_id, "status": "rendering"}},
+            has_parent=True,
+        ),
+        model_snapshot=store.build_model_snapshot(
+            model_id=body.model_id,
+            catalog_id=str(capabilities.get("catalogId") or "") or None,
+            capabilities=capabilities,
+        ),
+        cost_ledger=cost_ledger,
+        status="rendering",
+        source_refs={**source_refs, "job_id": job_id},
+        look_decision_ids=version.get("look_decision_ids") or [],
+        duration_seconds=duration_seconds,
+        resolution=resolution,
+        model_id=body.model_id,
+    )
+    store.append_version_record(
+        project_dir=project_dir, recipe_id=recipe_id, record=record
+    )
+    return {
+        "ok": True,
+        "data": {
+            "recipe_id": recipe_id,
+            "version_id": version_id,
+            "job_id": job_id,
+            "task_id": queued.task_state.task_id,
+            "task_type": RENDER_TASK_TYPE,
+            "backend": queued.backend,
+            "queue": queued.queue,
+            "status": record["status"],
+            "parent_version_id": record["parent_version_id"],
+            "cost_ledger": record["cost_ledger"],
+            "source_refs": record["source_refs"],
+        },
+    }

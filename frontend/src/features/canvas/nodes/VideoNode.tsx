@@ -30,6 +30,7 @@ import {
   ChevronDown,
   Download,
   Film,
+  GitBranch,
   Images,
   Layers,
   Loader2,
@@ -212,6 +213,7 @@ import { readUrl } from "@/lib/url-params";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
+import { ShotRecipePanel } from "@/features/canvas/ui/ShotRecipePanel";
 
 type VideoNodeProps = NodeProps & {
   id: string;
@@ -631,6 +633,10 @@ export const VideoNode = memo(
     const [isCapturingFrame, setIsCapturingFrame] = useState(false);
     const [isComposingClip, setIsComposingClip] = useState(false);
     const [clipError, setClipError] = useState<string | null>(null);
+
+    // 镜头配方溯源面板：与生成历史一样只在节点选中时挂载，没选中就不发请求。
+    const [showShotRecipePanel, setShowShotRecipePanel] = useState(false);
+    const recipeProjectId = useMemo(() => readUrl().project ?? "", []);
 
     // 每节点生成历史：仅在节点被选中时拉取，避免画布上每个视频节点都各发一次
     // 请求。生成完成后调用 refreshHistory 把新记录拉进来。
@@ -3450,6 +3456,38 @@ export const VideoNode = memo(
             onExpandedChange={setPanelExpanded}
             onSubmit={handleSubmit}
           />
+        )}
+
+        {showVideoOpsPanel && recipeProjectId && (
+          <div
+            className="nodrag absolute z-[320]"
+            style={{
+              // 生成历史占的是「操作面板 + 间隔」那一行，配方面板挂在它上面一行：
+              // 展开配方时历史条仍然看得见（两者互不遮挡）。
+              bottom: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
+              left: -panelOverhang,
+              right: -panelOverhang,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {showShotRecipePanel ? (
+              <ShotRecipePanel
+                project={recipeProjectId}
+                nodeId={id}
+                onClose={() => setShowShotRecipePanel(false)}
+              />
+            ) : (
+              <button
+                type="button"
+                className={`${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] text-white/60 hover:text-white/85`}
+                onClick={() => setShowShotRecipePanel(true)}
+                data-testid="video-node-shot-recipe-toggle"
+              >
+                <GitBranch className="h-3.5 w-3.5" />
+                {t("node.shotRecipe.toggle")}
+              </button>
+            )}
+          </div>
         )}
 
         {selected &&

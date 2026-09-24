@@ -321,6 +321,11 @@ def build_cost_ledger(
     }
 
 
+def new_shot_job_id() -> str:
+    """One render job — same freezone-shaped id as every other video job."""
+    return f"job_{uuid.uuid4().hex[:12]}"
+
+
 def build_version_record(
     *,
     version_id: str,
@@ -391,15 +396,15 @@ def append_version_record(
 def next_version_id(*, project_dir: Path, recipe_id: str) -> str:
     """Sequential per-recipe version id (v1, v2, ...).
 
+    Counts *distinct* version ids, not raw lines: one version can legitimately be
+    appended more than once (``ready`` → ``rendering``), and a state change must
+    not burn a version number.
+
     ponytail: derived from the file length, so two concurrent appends to the
     same recipe can collide.  Single-writer per recipe is the current ceiling;
     switch to uuid ids if concurrent writers ever appear.
     """
-    versions = [
-        record
-        for record in _read_lines(shot_recipe_path(project_dir, recipe_id))
-        if record.get("record_type") == "version"
-    ]
+    versions = _current_versions(_read_lines(shot_recipe_path(project_dir, recipe_id)))
     return f"v{len(versions) + 1}"
 
 
@@ -467,6 +472,20 @@ def _read_lines(path: Path) -> list[dict[str, Any]]:
     return kept
 
 
+def _current_versions(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Latest line per version_id, in first-seen order.
+
+    A version id can appear on more than one line (``ready`` → ``rendering``),
+    and the file is append-only, so the last line wins.
+    """
+    latest: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("record_type") != "version":
+            continue
+        latest[str(record.get("version_id") or "")] = record
+    return list(latest.values())
+
+
 def read_recipe(project_dir: Path, recipe_id: str) -> dict[str, Any] | None:
     """Read a recipe with its look decisions and versions, or None if absent."""
     records = _read_lines(shot_recipe_path(project_dir, recipe_id))
@@ -480,9 +499,7 @@ def read_recipe(project_dir: Path, recipe_id: str) -> dict[str, Any] | None:
         "look_decisions": [
             record for record in records if record.get("record_type") == "look_decision"
         ],
-        "versions": [
-            record for record in records if record.get("record_type") == "version"
-        ],
+        "versions": _current_versions(records),
     }
 
 
