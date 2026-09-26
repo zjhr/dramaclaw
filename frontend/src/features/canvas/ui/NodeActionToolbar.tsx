@@ -30,6 +30,8 @@ import {
   Globe2,
   Grid2x2,
   Grid3x3,
+  Forward,
+  GitBranch,
   ImageUpscale,
   LayoutDashboard,
   LayoutGrid,
@@ -109,21 +111,46 @@ import type { ToolIconKey } from "@/features/canvas/tools";
 import { UiChipButton, UiPanel } from "@/components/ui";
 import { ZoomScaledToolbar } from "@/features/canvas/ui/ZoomScaledToolbar";
 import { copyImageSourceToClipboard } from "@/commands/image";
-import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
+import { resolveImageDisplayUrl, snapToAllowedAspectRatio } from "@/features/canvas/application/imageData";
+import { FALLBACK_VIDEO_ASPECT_OPTIONS } from "@/features/canvas/domain/mediaModelOptions";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneAudioSeparateResult,
+  fetchFreezoneJobResult,
+  fetchFreezoneVideoReshootSuggestPromptResult,
+  submitFreezoneVideoReshootSuggestPrompt,
   submitFreezoneAnalyzeVideoStory,
   submitFreezoneAudioSeparate,
+  submitFreezoneVideoGreybox,
+  submitFreezoneVideoCompose,
+  submitFreezoneVideoKeyframes,
+
+  submitFreezoneVideoReshoot,
   uploadFreezoneImage,
 } from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
+import { captureVideoFrameBlob } from "@/features/canvas/application/videoFrameCapture";
 import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
 import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
+import {
+  ProviderModelPicker,
+  type ModelOption,
+} from "@/features/canvas/ui/ProviderModelPicker";
+import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { readUrl } from "@/lib/url-params";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
+import {
+  useVideoDurationSeconds,
+  VideoReshootTimeline,
+} from "@/features/canvas/ui/VideoReshootTimeline";
+import { EnhancePromptDialog } from "@/features/canvas/nodes/EnhancePromptDialog";
+import {
+  dialectForVideoModel,
+  usePromptEnhance,
+  VIDEO_PROMPT_DIALECTS,
+} from "@/features/canvas/nodes/usePromptEnhance";
 import { buildGenerationErrorReport } from "@/features/canvas/application/generationErrorReport";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -138,6 +165,19 @@ import type {
   GridActionKey,
   GridActionRequest,
 } from "./GridActionConfirmOverlay";
+
+/**
+ * 深度视频（内部代号 greybox）画布预设。参数与后端
+ * `run_freezone_video_greybox` 默认值/调参台预设保持一致：
+ * 留空的字段走后端默认（fps=8 / fov=60 / ambient=0.15 / base_grey=0.9 /
+ * gamma=2.2 / smooth=1 / fill=0.45）。默认值依据见 greybox_render.py docstring。
+ */
+/**
+ * 「转深度视频」的默认参数。2026-09-21 主人拍板：画布不做多预设，
+ * 点一下就出效果——用纯深度灰度（近白远灰、无光照无描边）。
+ * 其余可调参数走调参台（http://localhost:8790/）试好后回填这里。
+ */
+const DEPTH_VIDEO_PARAMS = { shade: "depth" } as const;
 
 interface NodeActionToolbarProps {
   node: CanvasNode;
@@ -159,11 +199,69 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
 };
 
 const TOOLBAR_BUTTON_RADIUS_CLASS = "rounded-[12px]";
+/**
+ * 「继续生成」提交用的画幅比。
+ *
+ * 不能把节点上的 `aspectRatio` 原样传：它常常是 `"auto"`（跟随输入画面），而上游
+ * 明确拒绝 `aspect_ratio=auto`（实测 400 `aspect_ratio 不能为 auto`）。这里按
+ * VideoNode 提交时的同一套口径，从**视频的真实像素尺寸**吸附到一个具体比例，兜底 16:9。
+ */
+function continueAspectRatio(data: {
+  aspectRatio?: unknown;
+  widthPx?: unknown;
+  heightPx?: unknown;
+}): string {
+  const raw = typeof data.aspectRatio === "string" ? data.aspectRatio.trim() : "";
+  const widthPx = typeof data.widthPx === "number" ? data.widthPx : 0;
+  const heightPx = typeof data.heightPx === "number" ? data.heightPx : 0;
+  const candidate =
+    raw && raw !== "auto"
+      ? raw
+      : widthPx > 0 && heightPx > 0
+        ? `${widthPx}:${heightPx}`
+        : "";
+  return snapToAllowedAspectRatio(
+    candidate,
+    FALLBACK_VIDEO_ASPECT_OPTIONS.filter((ratio) => ratio !== "auto"),
+    "16:9",
+  );
+}
+
+/** 延长段开头丢掉的秒数。首帧就是原片锚点，留着会在接缝停住。 */
+const EXTEND_JOIN_SKIP_SECONDS = 0.1;
+
+function probeVideoDuration(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    const timer = window.setTimeout(() => {
+      video.src = "";
+      reject(new Error("duration timeout"));
+    }, 15000);
+    video.onloadedmetadata = () => {
+      window.clearTimeout(timer);
+      const duration = video.duration;
+      video.src = "";
+      if (!Number.isFinite(duration) || duration <= 0) {
+        reject(new Error("invalid duration"));
+        return;
+      }
+      resolve(duration);
+    };
+    video.onerror = () => {
+      window.clearTimeout(timer);
+      video.src = "";
+      reject(new Error("duration probe failed"));
+    };
+    video.src = url;
+  });
+}
+
 // 扁平菜单项：去掉独立边框与胶囊背景，融入工具栏整条；仅靠 hover 高亮区分。
 const TOOLBAR_NEUTRAL_BUTTON_CLASS =
   "!border-transparent !bg-transparent text-text-dark hover:!bg-[rgba(255,255,255,0.075)] focus:!border-transparent focus:!bg-transparent focus:!shadow-none focus-visible:!outline-none focus-visible:!ring-0 data-[state=open]:!border-transparent data-[state=open]:!shadow-none";
 const TOOLBAR_TEXT_BUTTON_CLASS =
-  `h-9 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-sm ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
+  `h-9 shrink-0 whitespace-nowrap ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-sm ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
 const TOOLBAR_MENU_CONTENT_CLASS =
   "z-[120] border-white/10 bg-[#242426]/50 text-text-dark shadow-none backdrop-blur-3xl";
 const TOOLBAR_MENU_ITEM_CLASS =
@@ -553,6 +651,359 @@ export const NodeActionToolbar = memo(
       return null;
     }, [node.data]);
     const [openingWorkbench, setOpeningWorkbench] = useState(false);
+    // 片段重拍的 UI 态（展开/选区/提示词）只能放在组件层：下面 video 工具栏
+    // 分支是个 IIFE 而不是组件，hook 写在里面会违反调用顺序。
+    // 这三项都是纯交互态，不落 node.data——避免把临时选择写进节点 schema。
+    const reshootVideoUrl =
+      isVideoNode(node) && typeof node.data.videoUrl === "string"
+        ? node.data.videoUrl
+        : null;
+    // 提交态落 node.data（见 handleVideoReshoot 的 finally），这里只是读。
+    const isReshooting = Boolean(node.data.isReshooting);
+    const isVideoSelection = isVideoNode(node);
+    // 模型目录（module-level store，已预取）：重拍要用它的 maxDuration 提前拦区间。
+    const reshootModels = useFreezoneVideoModels(
+      isVideoSelection ? readUrl().project : null,
+    );
+    const [showReshootTimeline, setShowReshootTimeline] = useState(false);
+    const [reshootRange, setReshootRange] = useState({ start: 0, end: 0 });
+    const [reshootPrompt, setReshootPrompt] = useState("");
+    const [isSuggestingPrompt, setIsSuggestingPrompt] = useState(false);
+    const applyReshootEnhancedPrompt = useCallback((text: string) => {
+      setReshootPrompt(text);
+    }, []);
+    const reshootPromptEnhance = usePromptEnhance(
+      node.id,
+      applyReshootEnhancedPrompt,
+    );
+    const reshootDurationSeconds = useVideoDurationSeconds(
+      reshootVideoUrl,
+      typeof node.data.durationMs === "number" ? node.data.durationMs : null,
+    );
+    const openReshootTimeline = useCallback(() => {
+      setShowReshootTimeline(true);
+      // 首次展开把选区铺满整条源视频；之后保留用户上次的选择。
+      setReshootRange((prev) =>
+        prev.end > prev.start
+          ? prev
+          : { start: 0, end: reshootDurationSeconds ?? 0 },
+      );
+    }, [reshootDurationSeconds]);
+    // 「向后延长」：从片尾接着往下演，节点上放的是原片接到延长段之后的整段成片。
+    // 交互上只要两件事——选生成多久、写一句要演什么。
+    const [showContinuePanel, setShowContinuePanel] = useState(false);
+    const [continueDurationSeconds, setContinueDurationSeconds] = useState(5);
+    const [continuePrompt, setContinuePrompt] = useState("");
+    const [isContinuing, setIsContinuing] = useState(false);
+
+    /**
+     * 「继续生成」的锚点区间：片尾往里收 0.1 秒的一小段。
+     *
+     * 必须**收在片内**：把 end 取成正好等于片长时，`ffmpeg -ss <片长>` 一帧都解不出来，
+     * 抽帧器会以「没产出文件」失败（stderr 还是空的，极难定位 —— 实测就是这么挂的）。
+     * 前端算出的 durationMs 与容器里的真实时长也会差零点几秒，往里收一点两头都躲开。
+     *
+     * 抽帧与推荐共用这一份，免得两个 handler 各写一套参数后悄悄漂移。
+     */
+    const continueAnchor = useMemo(() => {
+      if (reshootDurationSeconds === null) return null;
+      const margin = 0.1;
+      const end = Math.max(margin, reshootDurationSeconds - margin);
+      const start = Math.max(0, end - 0.2);
+      return end > start ? { start, end } : null;
+    }, [reshootDurationSeconds]);
+
+    // 自动写提示词：面板一打开就跑一次「推荐」，把框填好。用户看到的是「已经
+    // 写好的下一步」，而不是一个空框——空框等于把「该演什么」这个问题又丢回给
+    // 用户。接的还是重拍那条推荐链路（视觉模型看锚点两帧 + 时长后写一句）。
+    const [isSuggestingContinuePrompt, setIsSuggestingContinuePrompt] =
+      useState(false);
+
+    const handleSuggestContinuePrompt = useCallback(async () => {
+      if (!isVideoNode(node)) return;
+      const videoUrl = reshootVideoUrl;
+      const projectId = readUrl().project;
+      if (
+        !videoUrl ||
+        !projectId ||
+        continueAnchor === null ||
+        isSuggestingContinuePrompt
+      ) {
+        return;
+      }
+      const { start, end } = continueAnchor;
+      setIsSuggestingContinuePrompt(true);
+      try {
+        const ref = await submitFreezoneVideoReshootSuggestPrompt(projectId, {
+          sourceUrl: videoUrl,
+          startSeconds: start,
+          endSeconds: end,
+          canvasId: readUrl().canvas ?? undefined,
+          nodeId: node.id,
+        });
+        await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
+        const { prompt } = await fetchFreezoneVideoReshootSuggestPromptResult(
+          projectId,
+          ref.job_id,
+        );
+        const trimmed = (prompt ?? "").trim();
+        if (!trimmed) throw new Error(t("node.reshoot.suggestEmpty"));
+        setContinuePrompt(trimmed);
+      } catch (error) {
+        if (isTaskPollTimeoutError(error)) {
+          toast.error(t("node.reshoot.suggestDetached"));
+        } else {
+          toast.error(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        setIsSuggestingContinuePrompt(false);
+      }
+    }, [
+      awaitTaskCompletion,
+      continueAnchor,
+      isSuggestingContinuePrompt,
+      node,
+      reshootVideoUrl,
+      t,
+    ]);
+
+    const handleVideoContinue = useCallback(async () => {
+      if (!isVideoNode(node)) return;
+      const videoUrl = reshootVideoUrl;
+      if (!videoUrl || continueAnchor === null || isContinuing) return;
+      if (continuePrompt.trim().length === 0) return;
+      const projectId = readUrl().project;
+      if (!projectId) {
+        console.error("[video-continue] no project in URL");
+        return;
+      }
+      const previewImageUrl =
+        typeof node.data.previewImageUrl === "string"
+          ? node.data.previewImageUrl
+          : null;
+      const aspectRatio = continueAspectRatio(node.data);
+      const continuationNodeId = addNode(
+        CANVAS_NODE_TYPES.video,
+        findNodePosition(node.id, 580, 380),
+        {
+          displayName: t("nodeToolbar.video.continueTitle"),
+          videoUrl: null,
+          previewImageUrl,
+          aspectRatio,
+          // 与重拍/greybox 同：产物由工具栏直接提交，抑制底部生成面板。
+          referenceOnly: true,
+          // 溯源标志：让「源视频 → 续写片段」这条入边按溯源边处理，不被素材上限拒掉
+          // （agnes 系 referenceVideoMax=0，照那张表算这条边会被静默丢弃）。
+          isContinuationNode: true,
+          isGenerating: true,
+        } as unknown as Parameters<typeof addNode>[2],
+      );
+      // 显式来源边：续写片段是从这条视频续出来的，画布上要看得出来。
+      addEdge(node.id, continuationNodeId);
+      setSelectedNode(continuationNodeId);
+      setShowContinuePanel(false);
+      setIsContinuing(true);
+      try {
+        // 抽尾帧。**不**走重拍那条链路：重拍是首尾帧锚定（把区间两端都钉死），
+        // 拿它来续写只会得到「从几秒前那张图演到尾帧」的补段，不是往下续。
+        // 续写要的是「从这一帧出发、结尾自由」= 首帧模式，所以这里自己抽帧、
+        // 把尾帧当图片参考交给既有 omni-gen 生成。
+        const frameBlob = await captureVideoFrameBlob(
+          resolveImageDisplayUrl(videoUrl),
+          continueAnchor.end,
+        );
+        const stamp = Date.now();
+        const uploaded = await uploadFreezoneImage(
+          projectId,
+          new File([frameBlob], `continue-${stamp}.png`, { type: "image/png" }),
+          `continue-${stamp}.png`,
+        );
+        const ref = await submitFreezoneVideoKeyframes(projectId, {
+          prompt: continuePrompt.trim(),
+          // 只钉首帧：首尾帧端点允许「只提供首帧」，那边就是自由结尾 —— 正是续写。
+          firstFrameUrl: uploaded.url,
+          aspectRatio,
+          resolution:
+            typeof node.data.resolution === "string" && node.data.resolution
+              ? node.data.resolution
+              : "720p",
+          durationSeconds: continueDurationSeconds,
+          genMode: "firstFrame",
+          model: typeof node.data.model === "string" ? node.data.model : undefined,
+          canvasId: readUrl().canvas ?? undefined,
+          nodeId: continuationNodeId,
+        });
+        const completed = await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
+        const result = (completed.result ?? {}) as Record<string, unknown>;
+        const outputUrl =
+          (typeof result.output_url === "string" && result.output_url) ||
+          (typeof result.outputUrl === "string" && result.outputUrl) ||
+          (typeof result.video_url === "string" && result.video_url) ||
+          (typeof result.videoUrl === "string" && result.videoUrl) ||
+          null;
+        if (!outputUrl) throw new Error(t("node.reshoot.noResult"));
+        // 延长段的第 0 秒就是锚点那一帧。原片收到锚点为止，延长段从 0.1 秒
+        // 再接上，接缝处不会把同一帧停住。片太短时不裁，避免把新演的内容剪没。
+        const extensionDuration = await probeVideoDuration(
+          resolveImageDisplayUrl(outputUrl),
+        ).catch(() => continueDurationSeconds);
+        const joinSkip =
+          extensionDuration > EXTEND_JOIN_SKIP_SECONDS + 0.25
+            ? EXTEND_JOIN_SKIP_SECONDS
+            : 0;
+        const extensionEnd = extensionDuration;
+        if (extensionEnd - joinSkip <= 0.05) {
+          throw new Error(t("node.reshoot.noResult"));
+        }
+        const sourceEnd = continueAnchor.end;
+        const composed = await submitFreezoneVideoCompose(projectId, {
+          title: t("nodeToolbar.video.continueTitle"),
+          canvasId: readUrl().canvas ?? undefined,
+          preserveSourceSize: true,
+          keepOriginalAudio: true,
+          tracks: [
+            {
+              trackId: "video",
+              kind: "video",
+              items: [
+                {
+                  itemId: "source",
+                  sourceUrl: videoUrl,
+                  timelineStart: 0,
+                  sourceStart: 0,
+                  sourceEnd,
+                },
+                {
+                  itemId: "extension",
+                  sourceUrl: outputUrl,
+                  timelineStart: sourceEnd,
+                  sourceStart: joinSkip,
+                  sourceEnd: extensionEnd,
+                },
+              ],
+            },
+          ],
+        });
+        await awaitTaskCompletion(composed.task_key, projectId, {
+          taskType: composed.task_type,
+        });
+        const composedResult = await fetchFreezoneJobResult(
+          projectId,
+          "freezone_video_compose",
+          composed.job_id,
+        );
+        if (!composedResult.url) throw new Error(t("node.reshoot.noResult"));
+        updateNodeData(continuationNodeId, {
+          videoUrl: composedResult.url,
+          isGenerating: false,
+          generationError: null,
+        });
+      } catch (error) {
+        if (isTaskPollTimeoutError(error)) {
+          console.warn("[video-continue] detached from a still-running job", {
+            taskKey: error.taskKey,
+            idleMs: error.idleMs,
+          });
+          updateNodeData(continuationNodeId, {
+            isGenerating: false,
+            generationError: t("nodeToolbar.video.continuePollTimeout"),
+          });
+        } else {
+          console.error("[video-continue] failed", error);
+          updateNodeData(continuationNodeId, {
+            isGenerating: false,
+            generationError:
+              error instanceof Error ? error.message : String(error),
+          });
+        }
+      } finally {
+        setIsContinuing(false);
+      }
+    }, [
+      addEdge,
+      addNode,
+      awaitTaskCompletion,
+      continueAnchor,
+      continueDurationSeconds,
+      continuePrompt,
+      findNodePosition,
+      isContinuing,
+      node,
+      reshootVideoUrl,
+      setSelectedNode,
+      t,
+      updateNodeData,
+    ]);
+
+    // 区间合法性：时长探测失败、区间为空、或终点越过源视频时长，一律不许提交。
+    const reshootRangeInvalid =
+      reshootDurationSeconds === null ||
+      !(reshootRange.end > reshootRange.start) ||
+      reshootRange.end > reshootDurationSeconds;
+    // 模型 maxDuration：区间超上限时后端会拒（不静默截断），前端提前拦并报出
+    // 具体数字。拿不到目录（isFallback）就不拦——后端那层已经有兜底。
+    const reshootModelId =
+      typeof node.data.model === "string" ? node.data.model : "";
+    const reshootModelMaxDuration = useMemo(() => {
+      if (!reshootModelId) return null;
+      const match = reshootModels.models.find(
+        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+      );
+      const limit = match?.maxDuration;
+      return typeof limit === "number" && limit > 0 ? limit : null;
+    }, [reshootModels.models, reshootModelId]);
+    const reshootOverMaxDuration =
+      reshootModelMaxDuration !== null &&
+      reshootRange.end - reshootRange.start > reshootModelMaxDuration;
+    // 模型 minDuration：多数模型的 seconds 有硬下限（agnes/seedance/MiniMax 都是
+    // 4s），区间短于下限时上游直接 400。生成段时长不可能小于该下限，所以提前拦。
+    const reshootModelMinDuration = useMemo(() => {
+      if (!reshootModelId) return null;
+      const match = reshootModels.models.find(
+        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+      );
+      const limit = match?.minDuration;
+      return typeof limit === "number" && limit > 0 ? limit : null;
+    }, [reshootModels.models, reshootModelId]);
+    const reshootUnderMinDuration =
+      reshootModelMinDuration !== null &&
+      reshootRange.end - reshootRange.start < reshootModelMinDuration;
+
+    // 「继续生成」生成多久：与重拍用同一份模型时长边界（同一个模型的同一个限制），
+    // 目录读不到时给 4~12 秒的保守区间——后端还会再判一次，这里只保证滑杆有范围。
+    const CONTINUE_FALLBACK_MIN_SECONDS = 4;
+    const CONTINUE_FALLBACK_MAX_SECONDS = 12;
+    const continueMinSeconds = reshootModelMinDuration ?? CONTINUE_FALLBACK_MIN_SECONDS;
+    const continueMaxSeconds = Math.max(
+      continueMinSeconds,
+      reshootModelMaxDuration ?? CONTINUE_FALLBACK_MAX_SECONDS,
+    );
+    // 首尾帧锚定是片段重拍唯一的生成路径：模型没声明 first_last_frame 就没得可跑。
+    // 目录没加载出来（找不到匹配项）时不拦——后端有同一道校验兜底，别在这里
+    // 因为列表还没到就把入口锁死。
+    // 提成单个候选的判定函数：入口按钮用当前模型，模型选择器要用它逐个置灰选项。
+    const reshootModelUnsupportedFor = useCallback(
+      (option: ModelOption) => {
+        const modes = option.supportedModes;
+        // 没配 supportedModes 的老条目不拦：那份数据是后加的，缺省时以目录为准的
+        // 前端判定无从下手。
+        if (!Array.isArray(modes) || modes.length === 0) return false;
+        return !modes.includes("first_last_frame");
+      },
+      [],
+    );
+    const reshootModelUnsupported = useMemo(() => {
+      if (!reshootModelId) return false;
+      const match = reshootModels.models.find(
+        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+      );
+      if (!match) return false;
+      return reshootModelUnsupportedFor(match);
+    }, [reshootModels.models, reshootModelId, reshootModelUnsupportedFor]);
     // 用统一 helper 解析节点当前图片源，避免每种图片节点各写一套判断。
     const imageSource = useMemo(() => resolveNodeSourceImageUrl(node), [node]);
     const canHandleImage = Boolean(imageSource);
@@ -1026,6 +1477,229 @@ export const NodeActionToolbar = memo(
       })();
     }, [openingWorkbench, workbenchTarget]);
 
+    // 提示词推荐：让视觉模型看着首尾两帧联想一段。结果只填进输入框，不自动提交
+    // ——模型看不到两帧之间原来发生了什么，推荐值必须经用户过目。
+    // 失败时不清空用户已写的内容：推荐是"帮忙"，不是"接管"。
+    const handleSuggestReshootPrompt = useCallback(async () => {
+      const videoUrl = reshootVideoUrl;
+      const projectId = readUrl().project;
+      if (!videoUrl || !projectId || isSuggestingPrompt) return;
+      const start = reshootRange.start;
+      const end =
+        reshootRange.end > reshootRange.start
+          ? reshootRange.end
+          : (reshootDurationSeconds ?? 0);
+      if (!(end > start)) {
+        console.warn("[video-reshoot] suggest prompt: empty range");
+        return;
+      }
+      setIsSuggestingPrompt(true);
+      try {
+        const ref = await submitFreezoneVideoReshootSuggestPrompt(projectId, {
+          sourceUrl: videoUrl,
+          startSeconds: start,
+          endSeconds: end,
+          canvasId: readUrl().canvas ?? undefined,
+          nodeId: node.id,
+        });
+        await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
+        // SSE 的 result 只带 output_format；提示词文本要走下面那个 job-result
+        // 端点，与 TextAnnotationNode 的反推同一套路。
+        const { prompt } = await fetchFreezoneVideoReshootSuggestPromptResult(
+          projectId,
+          ref.job_id,
+        );
+        const trimmed = (prompt ?? "").trim();
+        if (!trimmed) {
+          throw new Error(t("node.reshoot.suggestEmpty"));
+        }
+        console.info("[video-reshoot] prompt suggested", { jobId: ref.job_id });
+        setReshootPrompt(trimmed);
+      } catch (error) {
+        // 脱离监听 ≠ 失败：任务可能还在后台跑，结果仍会落到磁盘上。
+        // 这里不弹「仍在后台继续」那种通用文案——它对不上本场景：推荐是一次
+        // 性的、没有节点句柄可以回填，用户要知道的是「去哪取」。指到任务中心。
+        if (isTaskPollTimeoutError(error)) {
+          console.warn("[video-reshoot] suggest prompt detached", {
+            taskKey: error.taskKey,
+          });
+          toast.error(t("node.reshoot.suggestDetached"));
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[video-reshoot] suggest prompt failed", error);
+          toast.error(message);
+        }
+      } finally {
+        setIsSuggestingPrompt(false);
+      }
+      // readUrl 是模块级纯函数（不随渲染变），不进依赖数组。
+    }, [
+      isSuggestingPrompt,
+      node.id,
+      reshootDurationSeconds,
+      reshootRange.end,
+      reshootRange.start,
+      reshootVideoUrl,
+      t,
+    ]);
+
+    // 「片段重拍」：提交一次，派生两个下游节点——「重拍片段」放区间新生成的
+    // 片段（试看用），「拼接整片」放 前段+新段+后段 的整片（后端已拼好）。
+    // 范式仿 handleVideoGreybox：先建节点让用户立刻看到占位，再 awaitTaskCompletion
+    // 回填；失败时错误落在两个派生节点上（走 video 节点既有的 generationError 渲染）。
+    const handleVideoReshoot = useCallback(async () => {
+      const videoUrl = reshootVideoUrl;
+      if (!isVideoNode(node) || !videoUrl || node.data.isReshooting) {
+        return;
+      }
+      const projectId = readUrl().project;
+      if (!projectId) {
+        console.error("[video-reshoot] no project in URL");
+        return;
+      }
+      const span = reshootDurationSeconds ?? 0;
+      const start = reshootRange.start;
+      const end = reshootRange.end > reshootRange.start ? reshootRange.end : span;
+      if (!(end > start)) {
+        console.warn("[video-reshoot] empty range, refusing to submit");
+        return;
+      }
+      const previewImageUrl =
+        typeof node.data.previewImageUrl === "string"
+          ? node.data.previewImageUrl
+          : null;
+      const aspectRatio =
+        typeof node.data.aspectRatio === "string" ? node.data.aspectRatio : "16:9";
+      const clipPosition = findNodePosition(node.id, 580, 380);
+      // 「整片」固定落在「片段」正下方 420px（380 节点高 + 40 间隙）——不能
+      // 再调一次 findNodePosition：那时片段节点已入列，避让算法会把整片绕到
+      // 旁边一列，两个相关产物就看得不像一组了。
+      const fullPosition = { x: clipPosition.x, y: clipPosition.y + 420 };
+      const clipNodeId = addNode(
+        CANVAS_NODE_TYPES.video,
+        clipPosition,
+        {
+          displayName: t("node.reshoot.clipTitle"),
+          videoUrl: null,
+          previewImageUrl,
+          aspectRatio,
+          // 与 greybox 同：抑制底部生成面板，本节点由工具栏直接提交。
+          referenceOnly: true,
+          isReshootNode: true,
+          reshootSourceUrl: videoUrl,
+          isGenerating: true,
+        } as unknown as Parameters<typeof addNode>[2],
+      );
+      const fullNodeId = addNode(
+        CANVAS_NODE_TYPES.video,
+        fullPosition,
+        {
+          displayName: t("node.reshoot.fullTitle"),
+          videoUrl: null,
+          previewImageUrl,
+          aspectRatio,
+          referenceOnly: true,
+          isReshootNode: true,
+          reshootSourceUrl: videoUrl,
+          isGenerating: true,
+        } as unknown as Parameters<typeof addNode>[2],
+      );
+      addEdge(node.id, clipNodeId);
+      addEdge(node.id, fullNodeId);
+      // 选中「拼接整片」——它才是用户最终要的那条产物。
+      onNodesChange([
+        { id: node.id, type: "select", selected: false },
+        { id: fullNodeId, type: "select", selected: true },
+      ]);
+      setSelectedNode(fullNodeId);
+      setShowReshootTimeline(false);
+      // 提交态落 node.data 而不是组件 state：任务跑几十秒，期间用户很可能
+      // 点去别的节点把工具条卸载了，落组件 state 会让 loading 指示静默消失。
+      updateNodeData(node.id, { isReshooting: true });
+      const identityCalls = "identityCalls" in node.data ? node.data.identityCalls : undefined;
+      if (Array.isArray(identityCalls) && identityCalls.length > 0) {
+        toast.info(t("node.identityCall.reshootKeepsFrames"));
+      }
+      try {
+        const ref = await submitFreezoneVideoReshoot(projectId, {
+          sourceUrl: videoUrl,
+          startSeconds: start,
+          endSeconds: end,
+          prompt: reshootPrompt.trim() || undefined,
+          // 带节点上已选的模型：不传的话后端回落到自己的默认后端，用户在视频节点
+          // 面板里挑的那个模型就白挑了。
+          model: typeof node.data.model === "string" ? node.data.model : undefined,
+        });
+        const completed = await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
+        console.info("[video-reshoot] task completed", completed.result);
+        const result = (completed.result ?? {}) as Record<string, unknown>;
+        const clipUrl =
+          (typeof result.clip_url === "string" && result.clip_url) ||
+          (typeof result.clipUrl === "string" && result.clipUrl) ||
+          null;
+        const fullUrl =
+          (typeof result.output_url === "string" && result.output_url) ||
+          (typeof result.outputUrl === "string" && result.outputUrl) ||
+          (typeof result.video_url === "string" && result.video_url) ||
+          (typeof result.videoUrl === "string" && result.videoUrl) ||
+          null;
+        if (!clipUrl || !fullUrl) {
+          throw new Error(t("node.reshoot.noResult"));
+        }
+        updateNodeData(clipNodeId, {
+          videoUrl: clipUrl,
+          isGenerating: false,
+          generationError: null,
+        });
+        updateNodeData(fullNodeId, {
+          videoUrl: fullUrl,
+          isGenerating: false,
+          generationError: null,
+        });
+      } catch (error) {
+        // 脱离监听 ≠ 失败：任务可能仍在后台跑，结果去任务中心取。两个派生
+        // 节点都不能一直转圈，落一条提示后停掉 loading。
+        if (isTaskPollTimeoutError(error)) {
+          console.warn("[video-reshoot] detached from a still-running job", {
+            taskKey: error.taskKey,
+            idleMs: error.idleMs,
+          });
+          notifyTaskStillRunning(t);
+          for (const id of [clipNodeId, fullNodeId]) {
+            updateNodeData(id, {
+              isGenerating: false,
+              generationError: t("errorDialog.stillRunningMessage"),
+            });
+          }
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[video-reshoot] failed", error);
+          for (const id of [clipNodeId, fullNodeId]) {
+            updateNodeData(id, { isGenerating: false, generationError: message });
+          }
+        }
+      } finally {
+        updateNodeData(node.id, { isReshooting: false });
+      }
+    }, [
+      addNode,
+      addEdge,
+      findNodePosition,
+      node,
+      onNodesChange,
+      reshootDurationSeconds,
+      reshootPrompt,
+      reshootRange,
+      reshootVideoUrl,
+      setSelectedNode,
+      t,
+      updateNodeData,
+    ]);
+
     const handleEnsureBeatContextNode = useCallback(
       (event: ReactMouseEvent) => {
         event.stopPropagation();
@@ -1100,12 +1774,13 @@ export const NodeActionToolbar = memo(
           position={NODE_TOOLBAR_POSITION}
           align={NODE_TOOLBAR_ALIGN}
           offset={NODE_TOOLBAR_OFFSET}
-          className={NODE_TOOLBAR_CLASS}
+          className={`${NODE_TOOLBAR_CLASS} !w-max`}
         >
           <ZoomScaledToolbar origin="bottom center" mode="counter" counterMax={1}>
           {/* 节点激活时，顶部菜单从节点上沿淡入+轻微上滑浮现（而非生硬地直接出现），
-              与下方操作区的入场动画呼应。motion-reduce 下退化为无动画。 */}
-          <UiPanel className="flex animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1.5 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
+              与下方操作区的入场动画呼应。motion-reduce 下退化为无动画。
+              按钮按内容排成一行，不跟节点等宽，避免中文折行。 */}
+          <UiPanel className="flex w-max max-w-none flex-nowrap animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1.5 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
             {/* Mainline lock indicator — shown as a leading pill when the
                 node is preset-managed (or canvas-level fallback applies).
                 The chips below remain visible for spawn-style edits; the
@@ -1767,6 +2442,125 @@ export const NodeActionToolbar = memo(
                   setSelectedNode(upscaleNodeId);
                 };
 
+                const isGreyboxing = Boolean(videoData.isGreyboxing);
+
+                // 「转深度视频」（内部代号 greybox）：在下游建一个视频节点（复用 video
+                // 节点的播放器/角标/尺寸，打 isGreyboxNode 标记）。点入口按钮直接带默认
+                // 参数提交——提交范式仿 handleAudioSeparate（无配置浮层），
+                // awaitTaskCompletion 拿到 output_url 后回填派生节点 videoUrl；
+                // 失败时错误落在派生节点上（走 video 节点既有的 generationError 渲染）。
+                const handleVideoGreybox = async () => {
+                  if (!hasVideo || !videoUrl || isGreyboxing) {
+                    return;
+                  }
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    console.error("[video-greybox] no project in URL");
+                    return;
+                  }
+                  const position = findNodePosition(node.id, 580, 380);
+                  const greyboxNodeId = addNode(
+                    CANVAS_NODE_TYPES.video,
+                    position,
+                    {
+                      displayName: t("node.videoGreybox.nodeTitle"),
+                      videoUrl: null,
+                      previewImageUrl:
+                        typeof videoData.previewImageUrl === "string"
+                          ? videoData.previewImageUrl
+                          : null,
+                      aspectRatio:
+                        typeof videoData.aspectRatio === "string"
+                          ? videoData.aspectRatio
+                          : "16:9",
+                      // 抑制底部生成面板：转白模由工具栏直接提交，不走常规生成流。
+                      referenceOnly: true,
+                      isGreyboxNode: true,
+                      greyboxSourceUrl: videoUrl,
+                      isGenerating: true,
+                    } as unknown as Parameters<typeof addNode>[2],
+                  );
+                  const greyboxEdgeId = addEdge(node.id, greyboxNodeId);
+                  // 诊断：源节点 → 深度视频节点的溯源边偶发不显示。打出建边返回值与
+                  // 当前 edges，区分「没建成」（store 层拦截）和「建成了没渲染」。
+                  console.info(
+                    "[video-greybox] edge",
+                    greyboxEdgeId,
+                    "edges:",
+                    useCanvasStore.getState().edges.length,
+                    JSON.stringify(useCanvasStore.getState().edges),
+                  );
+                  onNodesChange([
+                    { id: node.id, type: "select", selected: false },
+                    { id: greyboxNodeId, type: "select", selected: true },
+                  ]);
+                  setSelectedNode(greyboxNodeId);
+                  updateNodeData(node.id, { isGreyboxing: true });
+                  try {
+                    const ref = await submitFreezoneVideoGreybox(projectId, {
+                      sourceUrl: videoUrl,
+                      ...DEPTH_VIDEO_PARAMS,
+                    });
+                    const completed = await awaitTaskCompletion(
+                      ref.task_key,
+                      projectId,
+                      { taskType: ref.task_type },
+                    );
+                    console.info(
+                      "[video-greybox] task completed",
+                      completed.result,
+                    );
+                    // runner 固定返回 output_url（runners/freezone.py 灰盒 result），
+                    // 其余键名宽容兜底。
+                    const result = (completed.result ?? {}) as Record<
+                      string,
+                      unknown
+                    >;
+                    const outputUrl =
+                      (typeof result.output_url === "string" &&
+                        result.output_url) ||
+                      (typeof result.outputUrl === "string" &&
+                        result.outputUrl) ||
+                      (typeof result.video_url === "string" &&
+                        result.video_url) ||
+                      (typeof result.videoUrl === "string" &&
+                        result.videoUrl) ||
+                      null;
+                    if (!outputUrl) {
+                      throw new Error(t("node.videoGreybox.noResult"));
+                    }
+                    updateNodeData(greyboxNodeId, {
+                      videoUrl: outputUrl,
+                      isGenerating: false,
+                      generationError: null,
+                    });
+                  } catch (error) {
+                    if (isTaskPollTimeoutError(error)) {
+                      // 脱离监听 ≠ 失败。任务可能仍在后台跑，结果去任务中心取；
+                      // 派生节点不能一直转圈，落一条提示后停掉 loading。
+                      console.warn(
+                        "[video-greybox] detached from a still-running job",
+                        { taskKey: error.taskKey, idleMs: error.idleMs },
+                      );
+                      notifyTaskStillRunning(t);
+                      updateNodeData(greyboxNodeId, {
+                        isGenerating: false,
+                        generationError: t("errorDialog.stillRunningMessage"),
+                      });
+                    } else {
+                      const message =
+                        error instanceof Error ? error.message : String(error);
+                      console.error("[video-greybox] failed", error);
+                      updateNodeData(greyboxNodeId, {
+                        isGenerating: false,
+                        generationError: message,
+                      });
+                    }
+                  } finally {
+                    updateNodeData(node.id, { isGreyboxing: false });
+                  }
+                };
+
                 const isSeparatingAv = Boolean(videoData.isSeparatingAv);
 
                 const handleAudioSeparate = async () => {
@@ -2046,6 +2840,116 @@ export const NodeActionToolbar = memo(
                     >
                       <ImageUpscale className="h-3.5 w-3.5" />
                       {t("nodeToolbar.video.hd")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-greybox"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || isGreyboxing
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : isGreyboxing
+                            ? t("node.videoGreybox.generating")
+                            : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo || isGreyboxing) {
+                          return;
+                        }
+                        // 一键出效果：不展开预设条，直接用默认参数（纯深度图）跑。
+                        void handleVideoGreybox();
+                      }}
+                    >
+                      {isGreyboxing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Boxes className="h-3.5 w-3.5" />
+                      )}
+                      {t("nodeToolbar.video.greybox")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-reshoot"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || isReshooting || reshootModelUnsupported
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      title={
+                        reshootModelUnsupported
+                          ? t("nodeToolbar.video.reshootModelUnsupported")
+                          : !hasVideo
+                            ? t("nodeToolbar.video.requiresVideo")
+                            : isReshooting
+                              ? t("node.reshoot.generating")
+                              : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo || isReshooting || reshootModelUnsupported) {
+                          return;
+                        }
+                        // 再点一次收起；展开时把选区铺满整条源视频。
+                        if (showReshootTimeline) {
+                          setShowReshootTimeline(false);
+                          return;
+                        }
+                        openReshootTimeline();
+                      }}
+                    >
+                      {isReshooting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                      {t("nodeToolbar.video.reshoot")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-continue"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || isContinuing ? "opacity-50 cursor-not-allowed" : ""
+                      }`}
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : reshootDurationSeconds === null
+                            ? t("nodeToolbar.video.reshootRangeUnknown")
+                            : t("nodeToolbar.video.continueHint")
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo || isContinuing || reshootDurationSeconds === null) {
+                          return;
+                        }
+                        // 打开面板只开面板：**不**自动跑推荐。推荐要花一次视觉模型
+                        // 调用，用户可能只想自己写一句；要推荐就点面板里的按钮。
+                        setShowContinuePanel((open) => !open);
+                      }}
+                    >
+                      {isContinuing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Forward className="h-3.5 w-3.5" />
+                      )}
+                      {t("nodeToolbar.video.continue")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-identity-call"
+                      className={stubButtonClass}
+                      title={t("node.identityCall.toggle")}
+                      data-testid="video-node-identity-call-toggle"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        canvasEventBus.publish("video-node/identity-call", {
+                          nodeId,
+                        });
+                      }}
+                    >
+                      <GitBranch className="h-3.5 w-3.5" />
+                      {t("node.identityCall.toggle")}
                     </UiChipButton>
                     <UiChipButton
                       key="video-analyze"
@@ -2530,6 +3434,263 @@ export const NodeActionToolbar = memo(
               </UiChipButton>
             )}
           </UiPanel>
+          {/* 继续生成：只问两件事——生成多久、要演什么。提交后直接出片。 */}
+          {isVideoNode(node) && showContinuePanel && (
+            <UiPanel className="nodrag mt-1.5 w-full min-w-[280px] animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-3 py-2.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none">
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 text-[11px] text-text-dim">
+                  {t("nodeToolbar.video.continueDurationLabel")}
+                </span>
+                <input
+                  type="range"
+                  min={continueMinSeconds}
+                  max={continueMaxSeconds}
+                  step={1}
+                  value={continueDurationSeconds}
+                  disabled={isContinuing}
+                  onChange={(event) =>
+                    setContinueDurationSeconds(Number(event.target.value))
+                  }
+                  onClick={(event) => event.stopPropagation()}
+                  className="nodrag h-1.5 min-w-0 flex-1 cursor-pointer accent-cyan-300"
+                  aria-label={t("nodeToolbar.video.continueDurationLabel")}
+                />
+                <span className="shrink-0 tabular-nums text-[12px] text-text-main">
+                  {t("nodeToolbar.video.continueSeconds", {
+                    count: continueDurationSeconds,
+                  })}
+                </span>
+              </div>
+              <textarea
+                value={continuePrompt}
+                onChange={(event) => setContinuePrompt(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                rows={2}
+                placeholder={t("nodeToolbar.video.continuePromptPlaceholder")}
+                className="nodrag mt-2 w-full resize-y rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] leading-relaxed text-text-main outline-none placeholder:text-text-dim focus:border-[rgb(var(--accent-rgb)/0.6)]"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-text-dim">
+                  {isSuggestingContinuePrompt
+                    ? t("nodeToolbar.video.reshootPromptSuggestRunning")
+                    : t("nodeToolbar.video.continueHint")}
+                </span>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={
+                      isSuggestingContinuePrompt ||
+                      isContinuing ||
+                      reshootDurationSeconds === null
+                    }
+                    title={t("nodeToolbar.video.reshootPromptSuggest")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleSuggestContinuePrompt();
+                    }}
+                    className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    data-testid="video-continue-suggest"
+                  >
+                    {isSuggestingContinuePrompt ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3 w-3" />
+                    )}
+                    {isSuggestingContinuePrompt
+                      ? t("nodeToolbar.video.reshootPromptSuggestRunning")
+                      : t("nodeToolbar.video.reshootPromptSuggest")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isContinuing}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setShowContinuePanel(false);
+                    }}
+                    className="rounded-full border border-white/15 px-3 py-1 text-[12px] text-text-main transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("nodeToolbar.video.continueCancel")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isContinuing || continuePrompt.trim().length === 0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleVideoContinue();
+                    }}
+                    className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    data-testid="video-continue-submit"
+                  >
+                    {isContinuing && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {t("nodeToolbar.video.continueSubmit")}
+                  </button>
+                </div>
+              </div>
+            </UiPanel>
+          )}
+          {/* 片段重拍的时间轴：放在工具栏面板外面、竖排在其下方——面板本身是
+              flex 行，塞进去会把一排 chip 挤成两行。ZoomScaledToolbar 的子节点
+              是普通块级盒，天然竖排。 */}
+          {isVideoNode(node) && showReshootTimeline && (
+            <UiPanel className="nodrag mt-1.5 w-full min-w-[280px] animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-3 py-2.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none">
+              <VideoReshootTimeline
+                durationSeconds={reshootDurationSeconds}
+                startSeconds={reshootRange.start}
+                endSeconds={
+                  reshootRange.end > reshootRange.start
+                    ? reshootRange.end
+                    : (reshootDurationSeconds ?? 0)
+                }
+                disabled={isReshooting}
+                videoUrl={reshootVideoUrl}
+                onChange={(start, end) => setReshootRange({ start, end })}
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <span className="shrink-0 text-[11px] text-text-dim">
+                  {t("nodeToolbar.video.reshootModelLabel")}
+                </span>
+                {/* 重拍用的模型。这里改的不是局部状态，而是直接写回节点的
+                    `model`——单一状态源，节点面板里的选择器会跟着变。
+                    不然同一节点上有两个模型下拉框，用户不知道以哪个为准。 */}
+                <ProviderModelPicker
+                  selectedModelId={reshootModelId}
+                  models={reshootModels.models}
+                  domain="video"
+                  popoverPlacement="top"
+                  getOptionDisabledReason={(option) =>
+                    reshootModelUnsupportedFor(option)
+                      ? t("nodeToolbar.video.reshootModelUnsupported")
+                      : null
+                  }
+                  onChange={(nextModelId) => {
+                    if (nextModelId === reshootModelId) return;
+                    updateNodeData(node.id, { model: nextModelId });
+                  }}
+                />
+              </div>
+              {/* 提示词用多行文本域而不是单行 input：推荐出来的提示词动辄两三百字，
+                  单行输入框只能看到末尾十几个字，用户没法改。 */}
+              <textarea
+                value={reshootPrompt}
+                onChange={(event) => setReshootPrompt(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                rows={3}
+                placeholder={t("nodeToolbar.video.reshootPromptPlaceholder")}
+                className="nodrag mt-2 w-full resize-y rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] leading-relaxed text-text-main outline-none placeholder:text-text-dim focus:border-[rgb(var(--accent-rgb)/0.6)]"
+              />
+              <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                {/* 提示词注入：让视觉模型看着区间首尾两帧 + 时长，写进输入框。
+                    只填框，不自动提交——模型看不到两帧之间原来发生了什么。 */}
+                <button
+                  type="button"
+                  disabled={
+                    isSuggestingPrompt ||
+                    isReshooting ||
+                    reshootRangeInvalid ||
+                    reshootUnderMinDuration ||
+                    !reshootVideoUrl
+                  }
+                  title={t("nodeToolbar.video.reshootPromptSuggest")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleSuggestReshootPrompt();
+                  }}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2 text-[11px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSuggestingPrompt ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                  {isSuggestingPrompt
+                    ? t("nodeToolbar.video.reshootPromptSuggestRunning")
+                    : t("nodeToolbar.video.reshootPromptSuggest")}
+                </button>
+                {/* 提示词强化：按当前重拍模型的方言改写框里已有的文字。
+                    空框没有可改的内容，先注入再强化。 */}
+                <button
+                  type="button"
+                  disabled={
+                    reshootPromptEnhance.busy ||
+                    isReshooting ||
+                    reshootPrompt.trim().length === 0
+                  }
+                  title={t("nodeToolbar.video.reshootPromptEnhance")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    reshootPromptEnhance.setOpen(true);
+                  }}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2 text-[11px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {reshootPromptEnhance.busy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="h-3 w-3" />
+                  )}
+                  {reshootPromptEnhance.busy
+                    ? t("nodeToolbar.video.reshootPromptEnhanceRunning")
+                    : t("nodeToolbar.video.reshootPromptEnhance")}
+                </button>
+              </div>
+              <EnhancePromptDialog
+                open={reshootPromptEnhance.open}
+                onOpenChange={reshootPromptEnhance.setOpen}
+                dialects={VIDEO_PROMPT_DIALECTS}
+                defaultDialect={dialectForVideoModel(reshootModelId)}
+                busy={reshootPromptEnhance.busy}
+                onConfirm={(dialect, strength) => {
+                  void reshootPromptEnhance.run(reshootPrompt, dialect, strength);
+                }}
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-text-dim">
+                  {reshootPrompt.trim().length === 0
+                    ? t("nodeToolbar.video.reshootPromptRequired")
+                    : reshootOverMaxDuration
+                      ? t("nodeToolbar.video.reshootOverMaxDuration", {
+                          limit: reshootModelMaxDuration,
+                        })
+                      : reshootUnderMinDuration
+                        ? t("nodeToolbar.video.reshootUnderMinDuration", {
+                            limit: reshootModelMinDuration,
+                          })
+                        : reshootRangeInvalid
+                          ? reshootDurationSeconds === null
+                            ? t("nodeToolbar.video.reshootRangeUnknown")
+                            : t("nodeToolbar.video.reshootRangeInvalid")
+                          : t("nodeToolbar.video.reshootHint")}
+                </span>
+                <button
+                  type="button"
+                  disabled={
+                    reshootRangeInvalid ||
+                    reshootOverMaxDuration ||
+                    reshootUnderMinDuration ||
+                    isReshooting ||
+                    reshootPrompt.trim().length === 0
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (
+                      reshootRangeInvalid ||
+                      reshootOverMaxDuration ||
+                      reshootUnderMinDuration ||
+                      isReshooting
+                    ) {
+                      return;
+                    }
+                    void handleVideoReshoot();
+                  }}
+                  className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isReshooting && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
+                  {t("nodeToolbar.video.reshootSubmit")}
+                </button>
+              </div>
+            </UiPanel>
+          )}
           </ZoomScaledToolbar>
         </ReactFlowNodeToolbar>
       </>

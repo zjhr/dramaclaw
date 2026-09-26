@@ -1,6 +1,7 @@
 """角色列表 & 肖像/身份图生成端点。"""
 
 import asyncio
+import hashlib
 import logging
 import re
 import shutil
@@ -43,6 +44,7 @@ from novelvideo.api.schemas import (
     CharacterAssetRestoreRequest,
     IdentityCreate,
     IdentityUpdate,
+    IdentityLookPackRequest,
     IdentityImageGenRequest,
     CharacterVoiceRecordRequest,
     CharacterVoiceTrimRequest,
@@ -66,10 +68,14 @@ from novelvideo.utils.path_resolver import (
     compute_identity_path,
     compute_identity_costume_path,
     compute_identity_portrait_path,
+    compute_identity_three_view_path,
+    compute_identity_expression_grid_path,
     canonical_portrait_path,
     canonical_identity_path,
     canonical_identity_costume_path,
     canonical_identity_portrait_path,
+    canonical_identity_three_view_path,
+    canonical_identity_expression_grid_path,
 )
 from novelvideo.utils.static_urls import project_static_url
 from novelvideo.utils.async_ops import metadata_io_limiter
@@ -102,6 +108,8 @@ CHARACTER_ASSET_KINDS = {
     "identity",
     "identity_costume",
     "identity_portrait",
+    "identity_three_view",
+    "identity_expression_grid",
 }
 
 VOICE_SLOT_LABELS = {
@@ -378,6 +386,18 @@ def _resolve_character_asset_path(
             canonical_identity_costume_path(project_dir, character.name, identity_name),
             identity,
         )
+    if kind == "identity_three_view":
+        return (
+            canonical_identity_three_view_path(project_dir, character.name, identity_name),
+            identity,
+        )
+    if kind == "identity_expression_grid":
+        return (
+            canonical_identity_expression_grid_path(
+                project_dir, character.name, identity_name
+            ),
+            identity,
+        )
     return (
         canonical_identity_portrait_path(project_dir, character.name, identity_name),
         identity,
@@ -638,6 +658,36 @@ def _character_voice_fields(
         )
         or {},
     }
+
+
+def _effective_voice(ctx: ProjectContext, project_dir: Path, character, identity) -> dict:
+    """身份自己的声线优先，否则用角色默认声线。"""
+    identity_rel = getattr(identity, "reference_audio_path", "") or ""
+    identity_url = _voice_sample_url(
+        ctx=ctx, project_dir=project_dir, rel_path=identity_rel
+    )
+    if identity_rel and identity_url:
+        return {
+            "voice_url": identity_url,
+            "voice_source": "identity",
+            "reference_audio_path": identity_rel,
+        }
+    character_rel = getattr(character, "reference_audio_path", "") or ""
+    character_url = _voice_sample_url(
+        ctx=ctx, project_dir=project_dir, rel_path=character_rel
+    )
+    if character_rel and character_url:
+        return {
+            "voice_url": character_url,
+            "voice_source": "default",
+            "reference_audio_path": character_rel,
+        }
+    return {"voice_url": "", "voice_source": "", "reference_audio_path": identity_rel}
+
+
+def _identity_voice_slot(identity_id: str) -> str:
+    digest = hashlib.sha256(identity_id.encode("utf-8")).hexdigest()[:16]
+    return f"ident_{digest}"
 
 
 def _identity_voice_fields(ctx: ProjectContext, project_dir: Path, identity) -> dict:
@@ -1095,6 +1145,20 @@ async def get_character_identities(
                 if identity_name
                 else ""
             )
+            abs_three = (
+                compute_identity_three_view_path(project_dir, target.name, identity_name)
+                if identity_name
+                else ""
+            )
+            abs_grid = (
+                compute_identity_expression_grid_path(
+                    project_dir, target.name, identity_name
+                )
+                if identity_name
+                else ""
+            )
+            from novelvideo.characters.look_design import normalize_look
+
             item = {
                 "identity_id": (
                     ident.identity_id if hasattr(ident, "identity_id") else ""
@@ -1116,14 +1180,24 @@ async def get_character_identities(
                 "portrait_image_url": (
                     _asset_url(ctx, project_dir, abs_portrait) if abs_portrait else ""
                 ),
+                "three_view_url": (
+                    _asset_url(ctx, project_dir, abs_three) if abs_three else ""
+                ),
+                "expression_grid_url": (
+                    _asset_url(ctx, project_dir, abs_grid) if abs_grid else ""
+                ),
+                "look_design": normalize_look(getattr(ident, "look_design", {}) or {}),
                 "updated_at": newest_updated_at(
                     getattr(ident, "updated_at", ""),
                     getattr(target, "updated_at", ""),
                     tree_updated_at(abs_image),
                     tree_updated_at(abs_costume),
                     tree_updated_at(abs_portrait),
+                    tree_updated_at(abs_three),
+                    tree_updated_at(abs_grid),
                 ),
             }
+            item.update(_effective_voice(ctx, project_dir, target, ident))
             item.update(
                 _character_asset_links(
                     project=asset_project,
@@ -1144,6 +1218,22 @@ async def get_character_identities(
                 kind="identity_portrait",
                 identity_id=getattr(ident, "identity_id", ""),
             )["history_url"]
+            three_links = _character_asset_links(
+                project=asset_project,
+                character_name=target.name,
+                kind="identity_three_view",
+                identity_id=getattr(ident, "identity_id", ""),
+            )
+            grid_links = _character_asset_links(
+                project=asset_project,
+                character_name=target.name,
+                kind="identity_expression_grid",
+                identity_id=getattr(ident, "identity_id", ""),
+            )
+            item["three_view_history_url"] = three_links["history_url"]
+            item["three_view_restore_url"] = three_links["restore_url"]
+            item["expression_grid_history_url"] = grid_links["history_url"]
+            item["expression_grid_restore_url"] = grid_links["restore_url"]
             item.update(_identity_voice_fields(ctx, project_dir, ident))
             identities.append(item)
 
@@ -1612,6 +1702,13 @@ async def update_identity(
     updates = body.model_dump(exclude_none=True)
     if not updates:
         return {"ok": True, "data": {"message": "No fields to update"}}
+    if "look_design" in updates:
+        from novelvideo.characters.look_design import validate_look
+
+        try:
+            updates["look_design"] = validate_look(updates["look_design"])
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
 
     await store.update_character_identity(name, identity_id, **updates)
 
@@ -1619,6 +1716,256 @@ async def update_identity(
         "ok": True,
         "data": {"identity_id": identity_id, "updated_fields": list(updates.keys())},
     }
+
+
+@router.get("/projects/{project}/identity-looks")
+async def list_identity_looks(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """视频节点选用身份时要的脸、三视图、表情九宫格和声线。"""
+    async with _character_project_scope(
+        project,
+        user,
+        required_role="viewer",
+        load_graph_state=False,
+    ) as (ctx, _username, _project_name, project_dir, _output_dir, store):
+        characters = await store.list_characters()
+
+    rows = []
+    for character in characters:
+        for ident in getattr(character, "identities", None) or []:
+            identity_name = getattr(ident, "identity_name", "") or ""
+            face = (
+                compute_identity_path(project_dir, character.name, identity_name)
+                if identity_name
+                else ""
+            )
+            three = (
+                compute_identity_three_view_path(project_dir, character.name, identity_name)
+                if identity_name
+                else ""
+            )
+            grid = (
+                compute_identity_expression_grid_path(
+                    project_dir, character.name, identity_name
+                )
+                if identity_name
+                else ""
+            )
+            voice = _effective_voice(ctx, project_dir, character, ident)
+            rows.append(
+                {
+                    "character_name": character.name,
+                    "identity_id": getattr(ident, "identity_id", "") or "",
+                    "identity_name": identity_name,
+                    "face_url": _asset_url(ctx, project_dir, face) if face else "",
+                    "three_view_url": _asset_url(ctx, project_dir, three) if three else "",
+                    "expression_grid_url": _asset_url(ctx, project_dir, grid) if grid else "",
+                    "voice_url": voice["voice_url"],
+                    "voice_source": voice["voice_source"],
+                }
+            )
+    return {"ok": True, "data": rows}
+
+
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/look-pack/generate-async"
+)
+async def generate_identity_look_pack_async(
+    project: str,
+    name: str,
+    identity_id: str,
+    body: IdentityLookPackRequest = IdentityLookPackRequest(),
+    user: dict = Depends(get_api_user),
+):
+    """按已保存的点选生成三视图和表情九宫格。没有脸时先画出第一张脸。"""
+    ctx, username, project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
+    )
+    character = store.get_character(name)
+    if character is None:
+        return {"ok": False, "error": f"Character '{name}' not found"}
+    identity = _identity_by_id(character, identity_id)
+    if identity is None:
+        return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+
+    config = load_project_config(username, project_name)
+    scope = f"character:{name}:identity_look:{identity.identity_name}"
+    model = _resolve_character_image_model(username, project_name, body.model)
+    billing = _character_image_billing_metadata(model, image_role="identity")
+    if ctx is None:
+        return {"ok": False, "error": "身份图生成需要 project context"}
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        product_surface="mainline",
+        task_type="identity_image",
+        queue_kind="default",
+        episode=0,
+        scope=scope,
+        payload={
+            "mode": "identity_look_pack",
+            "task_type": "identity_image",
+            "character_name": name,
+            "identity_id": identity_id,
+            "identity_name": identity.identity_name,
+            "style": config.get("visual_style", "chinese_period_drama"),
+            "model": model,
+            "scope": scope,
+            "output_dir": str(project_dir),
+            "billing": billing,
+        },
+    )
+    return {
+        "ok": True,
+        "task_type": "identity_image",
+        "scope": scope,
+        "task_id": queued.task_state.task_id,
+        "task_key": project_task_state_key(
+            "identity_image", ctx.project_id, 0, scope=scope
+        ),
+        "backend": queued.backend,
+        "queue": queued.queue,
+        "message": f"身份设计图已进入队列: {identity.identity_name}",
+    }
+
+
+async def _save_identity_voice(ctx, project_dir, store, character, identity, result):
+    rel_path, sha256, updated_at = result
+    await store.update_character_identity(
+        character.name,
+        identity.identity_id,
+        reference_audio_path=rel_path,
+        reference_audio_sha256=sha256,
+        reference_audio_updated_at=updated_at,
+    )
+    return {
+        "reference_audio_path": rel_path,
+        "voice_url": _voice_sample_url(
+            ctx=ctx, project_dir=project_dir, rel_path=rel_path
+        ),
+        "voice_source": "identity",
+    }
+
+
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/voice/upload"
+)
+async def upload_identity_voice(
+    project: str,
+    name: str,
+    identity_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
+    )
+    character = store.get_character(name)
+    if character is None:
+        return {"ok": False, "error": f"Character '{name}' not found"}
+    identity = _identity_by_id(character, identity_id)
+    if identity is None:
+        return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+    slot = _identity_voice_slot(identity_id)
+
+    async def finalize(result):
+        return await _save_identity_voice(
+            ctx, project_dir, store, character, identity, result
+        )
+
+    try:
+        key = character_voice_resource_key(
+            project_dir=project_dir, character_name=name, slot=slot
+        )
+        async with voice_resource_lock(key):
+            data = await run_voice_media_operation(
+                _persist_uploaded_character_voice,
+                file,
+                project_dir=project_dir,
+                character_name=name,
+                slot=slot,
+                filename=file.filename or "",
+                finalize=finalize,
+            )
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": data}
+
+
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/voice/record"
+)
+async def record_identity_voice(
+    project: str,
+    name: str,
+    identity_id: str,
+    body: CharacterVoiceRecordRequest,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
+    )
+    character = store.get_character(name)
+    if character is None:
+        return {"ok": False, "error": f"Character '{name}' not found"}
+    identity = _identity_by_id(character, identity_id)
+    if identity is None:
+        return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+    slot = _identity_voice_slot(identity_id)
+
+    async def finalize(result):
+        return await _save_identity_voice(
+            ctx, project_dir, store, character, identity, result
+        )
+
+    try:
+        key = character_voice_resource_key(
+            project_dir=project_dir, character_name=name, slot=slot
+        )
+        async with voice_resource_lock(key):
+            data = await run_voice_media_operation(
+                _persist_recorded_character_voice,
+                body.data_url,
+                project_dir=project_dir,
+                character_name=name,
+                slot=slot,
+                finalize=finalize,
+            )
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": data}
+
+
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/voice/clear"
+)
+async def clear_identity_voice(
+    project: str,
+    name: str,
+    identity_id: str,
+    user: dict = Depends(get_api_user),
+):
+    """清掉身份自己的声线，改回角色默认。"""
+    ctx, _username, _project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
+    )
+    character = store.get_character(name)
+    if character is None:
+        return {"ok": False, "error": f"Character '{name}' not found"}
+    identity = _identity_by_id(character, identity_id)
+    if identity is None:
+        return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+    await store.update_character_identity(
+        name,
+        identity_id,
+        reference_audio_path="",
+        reference_audio_sha256="",
+        reference_audio_updated_at="",
+    )
+    identity.reference_audio_path = ""
+    voice = _effective_voice(ctx, project_dir, character, identity)
+    return {"ok": True, "data": voice}
 
 
 @router.delete("/projects/{project}/characters/{name}/identities/{identity_id}")

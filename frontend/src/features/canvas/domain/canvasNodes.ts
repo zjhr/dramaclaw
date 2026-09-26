@@ -166,11 +166,22 @@ export interface VideoNodeData extends NodeDisplayData {
   /** id of a [[cameraMovementPresets]] entry — libtv-style 运镜 preset. */
   cameraMovement?: string | null;
   /**
+   * 视频提示词技能。选中后只参与「强化」：按这段指令改写用户自己的想法，
+   * 不会被当成一条成片提示词插进输入框。
+   */
+  promptSkill?: {
+    id: string;
+    title: string;
+    instruction: string;
+  } | null;
+  /**
    * 用户手动拖拽调整后的上游引用顺序(上游节点 id 列表)。决定参考 chips 的展示顺序、
    * 「图片N / 音频N」编号,以及提交给后端的 reference/首尾帧 顺序。未列入的上游节点
    * (如新接入的)排在其后,按节点 y 坐标兜底。
    */
   referenceOrder?: string[];
+  /** 这一镜选用的虾塘身份，顺序就是送图和送声线的顺序。 */
+  identityCalls?: { characterName: string; identityId: string }[];
   /** Uploaded document reference for all-reference generation. */
   referenceFileUrl?: string | null;
   referenceFileName?: string | null;

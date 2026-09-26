@@ -64,6 +64,20 @@ import {
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
 } from "@/lib/api-errors";
+import { IdentityLookDesign } from "@/components/assets/IdentityLookDesign";
+import {
+  VISUAL_BODY,
+  VISUAL_EXPRESSION,
+  VISUAL_EYES,
+  VISUAL_FACE,
+  VISUAL_HAIR,
+  VISUAL_MAKEUP,
+  VisualPick,
+  ageGlyph,
+  composeCharacterFace,
+  genderGlyph,
+  parseCharacterFace,
+} from "@/components/assets/visual-look";
 import { useCharacterImageSelection } from "@/lib/queries/character-image-selection";
 import { useProject } from "@/lib/queries/projects";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -457,7 +471,7 @@ function CharacterAssetHistoryButton({
                             {entry.filename}
                           </p>
                           {(createdAt || sizeLabel) && (
-                            <p className="truncate text-[11px] text-muted-foreground">
+                            <p className="truncate text-xs text-muted-foreground">
                               {[createdAt, sizeLabel].filter(Boolean).join(" · ")}
                             </p>
                           )}
@@ -572,7 +586,7 @@ function CharactersPageHeader({
             <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">
               {t("nav.assets")}
             </h1>
-            <span className="rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+            <span className="rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
               {t(`characters.assetTabs.${activeTab}`)}
             </span>
             {isCharactersTab && <ProjectStyleChip project={project} />}
@@ -703,7 +717,7 @@ function CharacterListItem({
       <CharacterAvatar character={character} size="md" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-semibold text-foreground">
+          <span className="truncate text-sm font-semibold text-foreground">
             {character.name}
           </span>
           {character.is_main && (
@@ -716,7 +730,7 @@ function CharacterListItem({
           )}
         </div>
         {metaParts.length > 0 && (
-          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {metaParts.join(" · ")}
           </p>
         )}
@@ -827,7 +841,7 @@ function CharacterHeaderRow({
           <Venus className="size-4 text-pink-400" aria-hidden />
         )}
         {/* i18n-exempt-end */}
-        <h2 className="truncate text-[19px] font-semibold tracking-tight text-foreground">
+        <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
           {character.name}
         </h2>
         {(roleLabel || character.is_main) && (
@@ -1218,32 +1232,16 @@ function DetailsFormCard({
               className={CHARACTER_INPUT_CLASS}
             />
           </Field>
-          <Field label={t("characters.basics.gender")}>
-            <Select
-              value={character.gender ?? ""}
-              onValueChange={(v) => handleInstantSelect("gender", v)}
-            >
-              <SelectTrigger className={CHARACTER_SELECT_TRIGGER_CLASS}>
-                <SelectValue placeholder={t("ingest.selectPlaceholder")}>
-                  {(val: string) => {
-                    const key = labelKeyFor(GENDER_OPTIONS, val);
-                    return key ? t(key) : val;
-                  }}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent
-                alignItemWithTrigger={false}
-                sideOffset={8}
-                className={CHARACTER_SELECT_CONTENT_CLASS}
-              >
-                {GENDER_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {t(o.labelKey)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+          <VisualPick
+            label={t("characters.basics.gender")}
+            options={GENDER_OPTIONS.map((option) => ({
+              id: option.value,
+              label: t(option.labelKey),
+              glyph: genderGlyph(option.value),
+            }))}
+            selected={character.gender ?? ""}
+            onPick={(value) => handleInstantSelect("gender", value === character.gender ? "" : value)}
+          />
         </div>
 
         {/* Column 2: aliases + age/body */}
@@ -1259,64 +1257,56 @@ function DetailsFormCard({
               className={CHARACTER_INPUT_CLASS}
             />
           </Field>
-          <Field label={t("characters.basics.ageGroup")}>
-            <Select
-              value={character.age_group ?? ""}
-              onValueChange={(v) => handleInstantSelect("age_group", v)}
-            >
-              <SelectTrigger className={CHARACTER_SELECT_TRIGGER_CLASS}>
-                <SelectValue placeholder={t("ingest.selectPlaceholder")}>
-                  {(val: string) => {
-                    const key = labelKeyFor(AGE_GROUP_OPTIONS, val);
-                    return key ? t(key) : val;
-                  }}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent
-                alignItemWithTrigger={false}
-                sideOffset={8}
-                className={CHARACTER_SELECT_CONTENT_CLASS}
-              >
-                {AGE_GROUP_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {t(o.labelKey)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label={t("characters.basics.bodyType")}>
-            <Input
-              value={bodyType}
-              onChange={(e) => setBodyType(e.target.value)}
-              onBlur={handleBlurBodyType}
-              placeholder={t("characters.bodyTypePlaceholder")}
-              className={CHARACTER_INPUT_CLASS}
-            />
-          </Field>
+          <VisualPick
+            label={t("characters.basics.ageGroup")}
+            options={AGE_GROUP_OPTIONS.map((option) => ({
+              id: option.value,
+              label: t(option.labelKey),
+              glyph: ageGlyph(option.value),
+            }))}
+            selected={character.age_group ?? ""}
+            onPick={(value) =>
+              handleInstantSelect("age_group", value === character.age_group ? "" : value)
+            }
+          />
+          <VisualPick
+            label={t("characters.basics.bodyType")}
+            options={VISUAL_BODY}
+            selected={bodyType}
+            onPick={(value) => {
+              const next = bodyType === value ? "" : value;
+              setBodyType(next);
+              saveField({ body_type: next || undefined });
+            }}
+          />
         </div>
 
-        {/* Column 3: prompts */}
         <div className="min-w-0 space-y-3">
-          <Field label={t("characters.basics.description")}>
-            <textarea
-              className={cn(CHARACTER_TEXTAREA_CLASS, "min-h-[96px]")}
-              rows={3}
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              onBlur={handleBlurDesc}
+          {(
+            [
+              ["face", t("characters.lookDesign.faceShape"), VISUAL_FACE],
+              ["eyes", t("characters.lookDesign.eyes"), VISUAL_EYES],
+              ["hair", t("characters.lookDesign.hair"), VISUAL_HAIR],
+              ["makeup", t("characters.lookDesign.makeup"), VISUAL_MAKEUP],
+              ["expression", t("characters.lookDesign.expression"), VISUAL_EXPRESSION],
+            ] as const
+          ).map(([key, label, options]) => (
+            <VisualPick
+              key={key}
+              label={label}
+              options={options}
+              selected={parseCharacterFace(facePrompt)[key]}
+              onPick={(value) => {
+                const current = parseCharacterFace(facePrompt);
+                const next = composeCharacterFace({
+                  ...current,
+                  [key]: current[key] === value ? "" : value,
+                });
+                setFacePrompt(next);
+                saveField({ face_prompt: next || undefined });
+              }}
             />
-          </Field>
-          <Field label={t("characters.basics.facePrompt")}>
-            <textarea
-              className={cn(CHARACTER_TEXTAREA_CLASS, "min-h-[96px]")}
-              rows={3}
-              value={facePrompt}
-              onChange={(e) => setFacePrompt(e.target.value)}
-              onBlur={handleBlurFacePrompt}
-              placeholder="oval face, big eyes…"
-            />
-          </Field>
+          ))}
         </div>
       </div>
     </div>
@@ -1611,7 +1601,7 @@ function IdentityCard({
           <h4 className="truncate text-sm font-semibold text-foreground">
             {identityPeriodLabel(identity.identity_name, t)}
           </h4>
-          <code className="truncate rounded-[5px] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+          <code className="truncate rounded-[5px] bg-white/[0.04] px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
             {identity.identity_id}
           </code>
           {isAgeVariant && (
@@ -1720,28 +1710,45 @@ function IdentityCard({
           )}
         </div>
 
-        {/* Appearance editor + primary actions */}
+        <IdentityLookDesign
+          project={project}
+          characterName={characterName}
+          identity={identity}
+          imageModel={imageModel}
+        />
+        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            {t("characters.lookDesign.threeView")}
+            <CharacterAssetHistoryButton
+              project={project}
+              characterName={characterName}
+              kind="identity_three_view"
+              identityId={identity.identity_id}
+              historyUrl={identity.three_view_history_url}
+              restoreUrl={identity.three_view_restore_url}
+            />
+          </span>
+          <span className="inline-flex items-center gap-1">
+            {t("characters.lookDesign.expressionGrid")}
+            <CharacterAssetHistoryButton
+              project={project}
+              characterName={characterName}
+              kind="identity_expression_grid"
+              identityId={identity.identity_id}
+              historyUrl={identity.expression_grid_history_url}
+              restoreUrl={identity.expression_grid_restore_url}
+            />
+          </span>
+        </div>
+
         <div className="flex min-w-0 flex-col gap-2.5">
-          <Label className="flex items-center gap-1 text-xs font-medium leading-4 text-muted-foreground">
-            {t("characters.identities.appearanceHeading")}
-          </Label>
-          <textarea
-            className={cn(CHARACTER_TEXTAREA_CLASS, "min-h-[84px] flex-1")}
-            value={appearance}
-            onChange={(e) => setAppearance(e.target.value)}
-            placeholder={t("characters.identities.appearancePlaceholder")}
-          />
           <div className="flex flex-wrap items-center gap-1.5">
             <Button
               size="sm"
               variant="outline"
               className={identityCreditButtonClass}
               onClick={handleGenImage}
-              disabled={
-                genImg.isPending ||
-                identityImageTask.started ||
-                !appearance.trim()
-              }
+              disabled={genImg.isPending || identityImageTask.started}
             >
               {genImg.isPending || identityImageTask.started ? (
                 <Loader2 className="size-3 animate-spin" />
@@ -1845,7 +1852,7 @@ function IdentityCard({
               ) : (
                 <div className="flex h-full w-full flex-1 flex-col items-center justify-center gap-1 rounded-[8px] border border-dashed border-white/10 bg-white/[0.02]">
                   <Shirt className="size-5 text-muted-foreground/40" />
-                  <span className="text-[10px] text-muted-foreground/40">
+                  <span className="text-xs text-muted-foreground/40">
                     {t("characters.identities.costumeRef")}
                   </span>
                 </div>
@@ -1941,37 +1948,6 @@ function IdentityCard({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">
-                    {t("characters.basics.bodyType")}
-                  </Label>
-                  <Input
-                    value={bodyType}
-                    onChange={(e) => setBodyType(e.target.value)}
-                    onBlur={() => {
-                      if (refsDirty) handleSaveRefs();
-                    }}
-                    className={CHARACTER_INPUT_CLASS}
-                    placeholder={t(
-                      "characters.identities.bodyTypePlaceholder",
-                    )}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">
-                  {t("characters.basics.facePrompt")}
-                </Label>
-                <textarea
-                  className={CHARACTER_TEXTAREA_CLASS}
-                  rows={2}
-                  value={facePrompt}
-                  onChange={(e) => setFacePrompt(e.target.value)}
-                  onBlur={() => {
-                    if (refsDirty) handleSaveRefs();
-                  }}
-                  placeholder={t("characters.basics.facePromptHint")}
-                />
               </div>
 
               {/* Identity-level face portrait */}
@@ -2384,13 +2360,11 @@ function IdentitiesGridSection({
   );
   const [newName, setNewName] = useState("");
   const [newAgeGroup, setNewAgeGroup] = useState("");
-  const [newAppearance, setNewAppearance] = useState("");
   const [addIdentityOpen, setAddIdentityOpen] = useState(false);
 
   useEffect(() => {
     setNewName("");
     setNewAgeGroup("");
-    setNewAppearance("");
     setAddIdentityOpen(false);
   }, [character.name]);
 
@@ -2404,11 +2378,9 @@ function IdentitiesGridSection({
       await createIdentity.mutateAsync({
         identity_name: newName.trim(),
         age_group: newAgeGroup || undefined,
-        appearance_details: newAppearance.trim() || undefined,
       });
       setNewName("");
       setNewAgeGroup("");
-      setNewAppearance("");
       setAddIdentityOpen(false);
       toast.success(t("characters.toasts.identityAdded"));
     } catch {
@@ -2421,7 +2393,6 @@ function IdentitiesGridSection({
     if (!open) {
       setNewName("");
       setNewAgeGroup("");
-      setNewAppearance("");
     }
   };
 
@@ -2548,18 +2519,6 @@ function IdentitiesGridSection({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">
-                {t("characters.identities.appearance")}
-              </Label>
-              <textarea
-                className={cn(CHARACTER_TEXTAREA_CLASS, "min-h-24")}
-                rows={4}
-                value={newAppearance}
-                onChange={(e) => setNewAppearance(e.target.value)}
-                placeholder={t("characters.identities.appearancePlaceholder")}
-              />
             </div>
             <DialogFooter className={CHARACTER_DIALOG_FOOTER_CLASS}>
               <Button
@@ -2827,58 +2786,17 @@ function AddCharacterDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label className={labelClass}>
-                {t("characters.basics.gender")}
-              </Label>
-              <Select
-                value={genderValue}
-                onValueChange={(value) => {
-                  if (value !== null) {
-                    setValue("gender", value, { shouldDirty: true });
-                  }
-                }}
-              >
-                <SelectTrigger className={selectTriggerClass}>
-                  <SelectValue
-                    placeholder={`${t("characters.genders.male")} / ${t(
-                      "characters.genders.female",
-                    )}`}
-                  >
-                    {(val: string) => {
-                      const opt = GENDER_OPTIONS.find((o) => o.value === val);
-                      return opt ? t(opt.labelKey) : val;
-                    }}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent
-                  alignItemWithTrigger={false}
-                  sideOffset={8}
-                  className={CHARACTER_SELECT_CONTENT_CLASS}
-                >
-                  {GENDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {t(option.labelKey)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className={labelClass}>
-              {t("characters.basics.description")}
-            </Label>
-            <Input {...register("description")} className={inputClass} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className={labelClass}>
-              {t("characters.basics.facePrompt")}
-            </Label>
-            <Input
-              placeholder="oval face, big eyes"
-              className={inputClass}
-              {...register("face_prompt")}
+            <VisualPick
+              label={t("characters.basics.gender")}
+              options={GENDER_OPTIONS.map((option) => ({
+                id: option.value,
+                label: t(option.labelKey),
+                glyph: genderGlyph(option.value),
+              }))}
+              selected={genderValue}
+              onPick={(value) =>
+                setValue("gender", genderValue === value ? "" : value, { shouldDirty: true })
+              }
             />
           </div>
           <DialogFooter className={CHARACTER_DIALOG_FOOTER_CLASS}>

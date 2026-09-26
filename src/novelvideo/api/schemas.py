@@ -548,6 +548,29 @@ class FreezoneFrameFromContextRequest(BaseModel):
     )
 
 
+class FreezoneDirectorDeskPanoramaRequest(BaseModel):
+    """导演台背景：纯文本 → 2:1 等距圆柱全景图。
+
+    与 `FreezoneScene360Request` 的关键区别是**不依赖场景源图**（那条是图生图，
+    必须给一张 scene master）。产物只落在导演台自己的目录里、且 `update_manifest=False`
+    —— 不写项目 scene 资产，所以「修改生成只作用于当前节点」这条边界在这条路由上是
+    结构上成立的，不靠调用方自觉。
+    """
+
+    description: str = Field(
+        description="场景描述，例如「雨夜的天台，远处有霓虹招牌」"
+    )
+    node_id: str = Field(
+        description="画布上的导演台节点 id，产物按它分目录（一个节点一份背景）"
+    )
+    model: str = Field(default="", description="留空则用配置里的 360 模型")
+    catalog_id: str = Field(default="")
+    image_size: str = Field(default="2K")
+    quality: str = Field(default="")
+    style: str = Field(default="")
+    timeout_seconds: int = Field(default=1800)
+
+
 class FreezoneScene360Request(BaseModel):
     """场景 360 全景生成请求。
 
@@ -1513,6 +1536,81 @@ class FreezoneVideoUpscaleRequest(BaseModel):
     )
 
 
+class FreezoneVideoGreyboxRequest(BaseModel):
+    """视频转深度视频请求。
+
+    四段全部本地完成，零 API 成本：ffmpeg 抽帧 -> DA V2 深度推理 ->
+    灰白几何渲染 -> 合帧（保留原音轨）。渲染参数可经请求体调节，
+    不传则走后端默认值。
+    """
+
+    source_url: str = Field(description="待转深度视频的源视频静态地址")
+    fps: int = Field(default=8, ge=1, le=30, description="抽帧帧率，范围 1 到 30")
+    fov_deg: float = Field(
+        default=60.0,
+        ge=20.0,
+        le=140.0,
+        description="深度反投影视场角（度），决定起伏强度",
+    )
+    ambient: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        description="环境光比例 0-1（图形学经典值 0.1；越大画面越平）",
+    )
+    base_grey: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="受光面基准灰度 0-1（线性空间）",
+    )
+    outline: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="深度边缘描边强度 0-1，0 为关闭",
+    )
+    invert: bool = Field(default=False, description="是否反转深度映射")
+    gamma: float = Field(
+        default=2.2,
+        ge=0.0,
+        le=4.0,
+        description="输出 gamma 编码指数（显示器 2.2 定律；0 为关闭，暗部会糊）",
+    )
+    smooth: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=4.0,
+        description="深度预平滑强度（0 关；1 推荐，压量化噪声防法线条纹）",
+    )
+    fill_strength: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=1.0,
+        description="填充光强度（背光面兜底；0 关，背光面死黑）",
+    )
+    temporal_window: int = Field(
+        default=1,
+        ge=1,
+        le=15,
+        description="跨帧时序平滑窗口（帧数，1 关）。逐帧推理有帧间抖动，但窗口均值"
+        "会把真实运动一起抹掉产生拖影——默认关，仅静止/慢速场景按需开",
+    )
+    backend: str = Field(
+        default="frame",
+        description="深度后端：frame=DA V2 逐帧（快，可能有帧间闪烁）；"
+        "vda=Video-Depth-Anything 整段（时序一致不闪烁，慢数倍，"
+        "需 clone 仓库+下载权重，见 greybox_depth.py 头部说明）",
+    )
+    shade: str = Field(
+        default="lambert",
+        description="着色模式：lambert=法线朗伯光照（有明暗起伏与体积感，"
+        "观感偏素描/浮雕，默认）；depth=纯深度灰度（深度值直接当灰度，"
+        "近处白远处暗，无光照无描边，即最常见的深度图可视化样式）",
+    )
+    device_name: str = Field(default="auto", description="推理设备名，auto 为自动选择")
+
+
 class FreezoneAudioSeparateRequest(BaseModel):
     """音视频分离请求。
 
@@ -1711,6 +1809,70 @@ class FreezoneVideoComposeTrack(BaseModel):
     items: list[FreezoneVideoComposeItem] = Field(default_factory=list, description="轨道片段列表")
 
 
+class FreezoneVideoReshootRequest(BaseModel):
+    """视频片段重拍请求。
+
+    按秒选区间的首尾帧锚定重新生成该段，再拼回原片，避免整条重跑。
+    模型上限（maxDuration）不在此写死——由端点入队前从 catalog 读出随
+    payload 传给 runner；查不到就不限制。
+    """
+
+    source_url: str = Field(description="待重拍的源视频静态地址")
+    # 上界 86400（一天）：区间值最终会以字符串进 ffmpeg 的 -ss/-t，
+    # 不设顶的话荒谬输入（1e30、inf）会变成 ffmpeg 的怪异行为而不是明确报错。
+    start_seconds: float = Field(default=0.0, ge=0.0, le=86400.0, description="重拍区间起始秒")
+    end_seconds: float = Field(
+        gt=0.0, le=86400.0, description="重拍区间结束秒，必须大于 start_seconds"
+    )
+    # 必填：上游 newAPI 的 video/generations 强校验 prompt（空串直接 400）。
+    # 首尾帧只规定起止状态，中间演什么全靠 prompt，留空等于让模型自由发挥。
+    # min_length 放 schema 层而不是只在端点拦：别的调用方（脚本/测试）也走这里。
+    prompt: str = Field(
+        min_length=1, max_length=2000, description="重拍段的新提示词（必填）"
+    )
+    model: str = Field(default="", description="视频模型；空为后端默认（与 keyframes 端点一致）")
+    duration_seconds: int = Field(default=0, ge=0, description="生成段时长；0 = 按区间长度自动")
+    resolution: str = Field(default="720p", description="输出清晰度档位")
+    generate_audio: bool = Field(default=False, description="是否生成原生音频")
+    camera_template_id: Optional[str] = Field(default=None, description="运镜模板 id")
+    canvas_id: str = Field(default="", description="可选：来源画布 id")
+    node_id: str = Field(default="", description="可选：来源节点 id")
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "FreezoneVideoReshootRequest":
+        # 跨字段校验放 schema 层：端点与 runner 都依赖这个前提，
+        # 只在端点拦一次的话，别的调用方（脚本/测试）会漏。
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
+
+
+class FreezoneVideoReshootSuggestPromptRequest(BaseModel):
+    """片段重拍的提示词推荐请求。
+
+    不需要 prompt：推荐的意义就是让模型看着首尾帧替用户想一段。区间口径与
+    `FreezoneVideoReshootRequest` 完全一致（含 le=86400 上界）。
+    """
+
+    source_url: str = Field(description="待分析的源视频静态地址")
+    start_seconds: float = Field(default=0.0, ge=0.0, le=86400.0, description="区间起始秒")
+    end_seconds: float = Field(gt=0.0, le=86400.0, description="区间结束秒，必须大于 start_seconds")
+    canvas_id: str = Field(default="", description="可选：来源画布 id")
+    node_id: str = Field(default="", description="可选：来源节点 id")
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "FreezoneVideoReshootSuggestPromptRequest":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
+
+
+class FreezoneVideoReshootSuggestPromptData(BaseModel):
+    """提示词推荐结果。"""
+
+    prompt: str
+
+
 class FreezoneVideoComposeRequest(BaseModel):
     title: str = Field(default="", description="合成任务标题，可为空")
     canvas_id: str = Field(default="", description="来源画布 id，可为空")
@@ -1718,6 +1880,10 @@ class FreezoneVideoComposeRequest(BaseModel):
     fps: int = Field(default=30, ge=1, le=60, description="输出帧率")
     background_color: str = Field(default="#000000", description="补边或空隙使用的背景色")
     keep_original_audio: bool = Field(default=True, description="是否保留视频片段自带音频")
+    preserve_source_size: bool = Field(
+        default=False,
+        description="为真时按第一条视频的宽高输出，不套用 16:9 画布",
+    )
     tracks: list[FreezoneVideoComposeTrack] = Field(
         default_factory=list, description="时间线轨道列表"
     )
@@ -1792,6 +1958,11 @@ class FreezoneTextEnhanceRequest(BaseModel):
     strength: FreezonePromptStrength = Field(
         default="standard",
         description="改写力度。conservative 保留原句式只补缺口，aggressive 允许扩写",
+    )
+    guidance: str = Field(
+        default="",
+        max_length=4000,
+        description="可选技能指令。强化时按这个方法改写用户的想法，不把技能正文当成成片提示词",
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
@@ -2168,7 +2339,14 @@ class IdentityImageGenRequest(BaseModel):
     model: Optional[str] = None
 
 
-CharacterAssetKind = Literal["portrait", "identity", "identity_costume", "identity_portrait"]
+CharacterAssetKind = Literal[
+    "portrait",
+    "identity",
+    "identity_costume",
+    "identity_portrait",
+    "identity_three_view",
+    "identity_expression_grid",
+]
 
 
 class CharacterAssetRestoreRequest(BaseModel):
@@ -2211,6 +2389,11 @@ class IdentityUpdate(BaseModel):
     age_group: Optional[str] = None
     body_type: Optional[str] = None
     fish_voice_id: Optional[str] = None
+    look_design: Optional[dict] = None
+
+
+class IdentityLookPackRequest(BaseModel):
+    model: Optional[str] = None
 
 
 # ── 脚本保存 ─────────────────────────────────────────────────────────────────

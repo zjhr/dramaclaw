@@ -177,6 +177,10 @@ export interface CanvasEventMap {
   'video-node/reupload': {
     nodeId: string;
   };
+  /** 视频工具条上的「角色」：打开或收起该节点旁的身份选择。 */
+  'video-node/identity-call': {
+    nodeId: string;
+  };
   /**
    * 「上传资源」菜单等外部入口注入 File 给 video 节点（仅视频）。
    * 同 upload-node/external-file：File 走 [[pendingExternalFiles]] 暂存，不进 payload。

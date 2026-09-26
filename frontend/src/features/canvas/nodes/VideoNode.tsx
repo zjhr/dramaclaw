@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,6 +13,7 @@ import {
   type DragEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Handle,
   Position,
@@ -30,7 +32,6 @@ import {
   ChevronDown,
   Download,
   Film,
-  GitBranch,
   Images,
   Layers,
   Loader2,
@@ -213,7 +214,13 @@ import { readUrl } from "@/lib/url-params";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
-import { ShotRecipePanel } from "@/features/canvas/ui/ShotRecipePanel";
+import { IdentityCallPanel } from "@/features/canvas/ui/IdentityCallPanel";
+import { fetchIdentityLooks } from "@/lib/queries/characters";
+import {
+  mergeCappedUrls,
+  planIdentityCall,
+  type IdentityCallSelection,
+} from "@/features/canvas/domain/identityCallPlan";
 
 type VideoNodeProps = NodeProps & {
   id: string;
@@ -637,6 +644,10 @@ export const VideoNode = memo(
     // 镜头配方溯源面板：与生成历史一样只在节点选中时挂载，没选中就不发请求。
     const [showShotRecipePanel, setShowShotRecipePanel] = useState(false);
     const recipeProjectId = useMemo(() => readUrl().project ?? "", []);
+    const flowTransform = useStore((state) =>
+      showShotRecipePanel ? state.transform : null,
+    );
+    const [recipeDock, setRecipeDock] = useState<{ left: number; top: number } | null>(null);
 
     // 每节点生成历史：仅在节点被选中时拉取，避免画布上每个视频节点都各发一次
     // 请求。生成完成后调用 refreshHistory 把新记录拉进来。
@@ -1107,6 +1118,34 @@ export const VideoNode = memo(
     // 收拢时主视频后探出 N-1 张卡片边；hover 出现右上角数量徽标，点开展开成
     // 宫格画册。展开态点视频设为主视频、可单独「应用到画布」/ 下载。
     const albumRootRef = useRef<HTMLDivElement | null>(null);
+    useLayoutEffect(() => {
+      if (!showShotRecipePanel) {
+        setRecipeDock(null);
+        return;
+      }
+      const place = () => {
+        const rect = albumRootRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const panelWidth = 520;
+        const margin = 16;
+        const maxHeight = Math.min(640, Math.round(window.innerHeight * 0.72));
+        const roomOnRight = window.innerWidth - rect.right - margin;
+        const roomOnLeft = rect.left - margin;
+        let left = rect.right + margin;
+        if (roomOnRight < panelWidth && roomOnLeft > roomOnRight) {
+          left = rect.left - margin - panelWidth;
+        }
+        left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
+        let top = rect.top;
+        if (top + maxHeight > window.innerHeight - margin) {
+          top = Math.max(margin, window.innerHeight - maxHeight - margin);
+        }
+        setRecipeDock({ left, top });
+      };
+      place();
+      window.addEventListener("resize", place);
+      return () => window.removeEventListener("resize", place);
+    }, [flowTransform, showShotRecipePanel]);
     const albumPointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
     const [albumExpanded, setAlbumExpanded] = useState(false);
     // 本次会话内"应到条数"——未完成的在画册里占位。存模块级登记表而非组件
@@ -1459,6 +1498,13 @@ export const VideoNode = memo(
       return canvasEventBus.subscribe("video-node/reupload", ({ nodeId }) => {
         if (nodeId !== id) return;
         inputRef.current?.click();
+      });
+    }, [id]);
+
+    useEffect(() => {
+      return canvasEventBus.subscribe("video-node/identity-call", ({ nodeId }) => {
+        if (nodeId !== id) return;
+        setShowShotRecipePanel((open) => !open);
       });
     }, [id]);
 
@@ -2105,11 +2151,45 @@ export const VideoNode = memo(
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
-      const composedPrompt = fragment
+      let composedPrompt = fragment
         ? userPrompt
           ? `${fragment}，${userPrompt}`
           : fragment
         : userPrompt;
+      const identityCalls: IdentityCallSelection[] = Array.isArray(data.identityCalls)
+        ? data.identityCalls.filter(
+            (item): item is IdentityCallSelection =>
+              Boolean(item) &&
+              typeof item === "object" &&
+              typeof item.characterName === "string" &&
+              typeof item.identityId === "string",
+          )
+        : [];
+      let identityImageUrls: string[] = [];
+      let identityVoiceRefs: { url: string; label: string }[] = [];
+      if (identityCalls.length > 0) {
+        try {
+          const rows = await fetchIdentityLooks(projectId);
+          const plan = planIdentityCall(
+            identityCalls,
+            rows.map((row) => ({
+              characterName: row.character_name,
+              identityId: row.identity_id,
+              identityName: row.identity_name,
+              faceUrl: row.face_url || "",
+              threeViewUrl: row.three_view_url || "",
+              expressionGridUrl: row.expression_grid_url || "",
+              voiceUrl: row.voice_url || "",
+            })),
+            referenceCaps ? referenceCaps.image : null,
+            referenceCaps ? referenceCaps.audio : null,
+          );
+          identityImageUrls = plan.imageUrls;
+          identityVoiceRefs = plan.voiceUrls;
+        } catch (error) {
+          console.warn("[video-node] identity looks failed", error);
+        }
+      }
       try {
         // Walk the current edges/nodes once — used by every non-textToVideo
         // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
@@ -2233,8 +2313,16 @@ export const VideoNode = memo(
         let doSubmit: ((targetId: string) => Promise<FreezoneJobRef>) | null = null;
         if (genMode === "firstFrame" || genMode === "firstLastFrame") {
           const keyframes = collectUpstreamKeyframeUrls();
-          const firstFrameUrl = keyframes.firstFrameUrl;
-          const lastFrameUrl = genMode === "firstLastFrame" ? keyframes.lastFrameUrl : null;
+          const cap = referenceCaps?.image ?? (genMode === "firstLastFrame" ? 2 : 1);
+          const mergedFrames = mergeCappedUrls(
+            identityImageUrls,
+            [keyframes.firstFrameUrl, genMode === "firstLastFrame" ? keyframes.lastFrameUrl : null].filter(
+              (url): url is string => Boolean(url),
+            ),
+            cap,
+          );
+          const firstFrameUrl = mergedFrames[0] ?? null;
+          const lastFrameUrl = genMode === "firstLastFrame" ? mergedFrames[1] ?? null : null;
           if (!firstFrameUrl && !lastFrameUrl) {
             console.warn(
               "[video-node] firstLastFrame submit without any frame",
@@ -2265,8 +2353,9 @@ export const VideoNode = memo(
             });
         } else if (genMode === "imageToVideo" || genMode === "imageReference") {
           // Unified i2v endpoint: 1 image = 图生视频, 2-9 images = 图片参考视频.
-          const imageUrls = collectUpstreamImageUrls().slice(
-            0,
+          const imageUrls = mergeCappedUrls(
+            identityImageUrls,
+            collectUpstreamImageUrls(),
             referenceCaps?.image ?? 9,
           );
           if (imageUrls.length === 0) {
@@ -2312,17 +2401,23 @@ export const VideoNode = memo(
           }
           const allImageUrls = collectUpstreamImageUrls();
           const imageLimit = referenceCaps?.image ?? 5;
-          if (allImageUrls.length > imageLimit) {
+          const imageUrls = mergeCappedUrls(identityImageUrls, allImageUrls, imageLimit);
+          if (allImageUrls.length + identityImageUrls.length > imageLimit) {
             toast.warning(
               t("node.videoNode.videoEdit.imageLimit", {
                 limit: imageLimit,
-                ignored: allImageUrls.length - imageLimit,
+                ignored: allImageUrls.length + identityImageUrls.length - imageLimit,
               }),
             );
           }
-          const imageUrls = allImageUrls.slice(0, imageLimit);
           const audioLimit = referenceCaps?.audio ?? 0;
-          const audioRefs = upstream
+          const identityAudioRefs = identityVoiceRefs.map((item, index) => ({
+            url: item.url,
+            nodeId: `identity-voice-${index}`,
+            label: item.label,
+            durationMs: null as number | null,
+          }));
+          const upstreamAudioRefs = upstream
             .filter(isAudioNode)
             .map((node, index) => {
               const url =
@@ -2346,8 +2441,8 @@ export const VideoNode = memo(
                     : null,
               };
             })
-            .filter((item) => item.url.length > 0)
-            .slice(0, audioLimit);
+            .filter((item) => item.url.length > 0);
+          const audioRefs = [...identityAudioRefs, ...upstreamAudioRefs].slice(0, audioLimit);
           if (!(await validateReferenceDurations("audio", audioRefs))) return;
           doSubmit = (targetId) =>
             submitFreezoneVideoEdit(projectId, {
@@ -2406,6 +2501,27 @@ export const VideoNode = memo(
           let imageCount = 0;
           let videoCount = 0;
           let audioCount = 0;
+          for (const url of identityImageUrls) {
+            if (references.length >= totalReferenceLimit || imageCount >= caps.image) break;
+            references.push({ type: "image", url });
+            imageCount += 1;
+          }
+          for (const voice of identityVoiceRefs) {
+            if (references.length >= totalReferenceLimit || audioCount >= caps.audio) break;
+            references.push({
+              type: "audio",
+              url: voice.url,
+              role: "角色声线", // i18n-exempt —— references[].role 是发给后端的协议字段
+              label: voice.label,
+            });
+            audioRefs.push({
+              url: voice.url,
+              nodeId: `identity-voice-${audioCount}`,
+              label: voice.label,
+              durationMs: null,
+            });
+            audioCount += 1;
+          }
           for (const node of upstream) {
             if (references.length >= totalReferenceLimit) break;
             const videoRefUrl = referenceVideoUrl(node);
@@ -3458,36 +3574,30 @@ export const VideoNode = memo(
           />
         )}
 
-        {showVideoOpsPanel && recipeProjectId && (
+        {showVideoOpsPanel && recipeProjectId && showShotRecipePanel && recipeDock && createPortal(
           <div
-            className="nodrag absolute z-[320]"
+            className="nodrag nopan nowheel"
             style={{
-              // 生成历史占的是「操作面板 + 间隔」那一行，配方面板挂在它上面一行：
-              // 展开配方时历史条仍然看得见（两者互不遮挡）。
-              bottom: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
-              left: -panelOverhang,
-              right: -panelOverhang,
+              position: "fixed",
+              left: recipeDock.left,
+              top: recipeDock.top,
+              width: 520,
+              zIndex: 80,
             }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
           >
-            {showShotRecipePanel ? (
-              <ShotRecipePanel
-                project={recipeProjectId}
-                nodeId={id}
-                onClose={() => setShowShotRecipePanel(false)}
-              />
-            ) : (
-              <button
-                type="button"
-                className={`${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] text-white/60 hover:text-white/85`}
-                onClick={() => setShowShotRecipePanel(true)}
-                data-testid="video-node-shot-recipe-toggle"
-              >
-                <GitBranch className="h-3.5 w-3.5" />
-                {t("node.shotRecipe.toggle")}
-              </button>
-            )}
-          </div>
+            <IdentityCallPanel
+              project={recipeProjectId}
+              selected={Array.isArray(data.identityCalls) ? data.identityCalls : []}
+              imageCap={referenceCaps ? referenceCaps.image : null}
+              audioCap={referenceCaps ? referenceCaps.audio : null}
+              onChange={(next) => updateNodeData(id, { identityCalls: next })}
+              onClose={() => setShowShotRecipePanel(false)}
+            />
+          </div>,
+          document.body,
         )}
 
         {selected &&

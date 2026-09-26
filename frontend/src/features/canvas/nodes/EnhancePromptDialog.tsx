@@ -46,6 +46,8 @@ export interface EnhancePromptDialogProps {
   defaultDialect: FreezonePromptDialect;
   /** 强化请求进行中：禁用重复提交。 */
   busy?: boolean;
+  /** 已选技能名。有值时，这次强化会按该技能改写，而不是只走方言。 */
+  skillTitle?: string;
   onConfirm: (
     dialect: FreezonePromptDialect,
     strength: FreezonePromptStrength,
@@ -88,6 +90,7 @@ export function EnhancePromptDialog({
   dialects,
   defaultDialect,
   busy = false,
+  skillTitle,
   onConfirm,
 }: EnhancePromptDialogProps) {
   const { t } = useTranslation();
@@ -108,6 +111,11 @@ export function EnhancePromptDialog({
           <DialogDescription>
             {t("node.promptEnhance.description")}
           </DialogDescription>
+          {skillTitle ? (
+            <p className="text-xs text-amber-100/90">
+              {t("node.promptEnhance.withSkill", { name: skillTitle })}
+            </p>
+          ) : null}
         </DialogHeader>
 
         <div className="space-y-4">

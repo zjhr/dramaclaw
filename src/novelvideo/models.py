@@ -1038,6 +1038,11 @@ class CharacterIdentity(BaseModel):
         description="服装参考图路径（用户上传，生成四视图时用于服装锚定）",
     )
 
+    look_design: dict = Field(
+        default_factory=dict,
+        description="身份设计点选。空字符串或空列表表示这一行没选。",
+    )
+
     # 来源
     source: str = Field(
         default="extracted",
@@ -1059,6 +1064,13 @@ class CharacterIdentity(BaseModel):
         if value is None:
             return ""
         return str(value)
+
+    @field_validator("look_design", mode="before")
+    @classmethod
+    def normalize_look_design(cls, value):
+        if not isinstance(value, dict):
+            return {}
+        return value
 
     def __setattr__(self, name, value):
         if name == "age_group" and value is None:

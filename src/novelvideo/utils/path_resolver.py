@@ -291,6 +291,12 @@ def compute_identity_costume_path(project_dir: Path, char_name: str, identity_na
 
 def canonical_identity_costume_path(project_dir: Path, char_name: str, identity_name: str) -> Path:
     """Canonical identity costume slot path. Does not require the file to exist."""
+    return _identity_slot_path(project_dir, char_name, identity_name, "_costume.png")
+
+
+def _identity_slot_path(
+    project_dir: Path, char_name: str, identity_name: str, suffix: str
+) -> Path:
     prefix = f"{char_name}_"
     if identity_name.startswith(prefix):
         identity_name = identity_name[len(prefix) :]
@@ -301,8 +307,34 @@ def canonical_identity_costume_path(project_dir: Path, char_name: str, identity_
         / "characters"
         / char_name
         / "identities"
-        / f"{safe_name}_costume.png"
+        / f"{safe_name}{suffix}"
     )
+
+
+def compute_identity_three_view_path(project_dir: Path, char_name: str, identity_name: str) -> str:
+    path = canonical_identity_three_view_path(project_dir, char_name, identity_name)
+    return str(path) if path.exists() else ""
+
+
+def canonical_identity_three_view_path(
+    project_dir: Path, char_name: str, identity_name: str
+) -> Path:
+    """正面、侧面、背面全身三视图。文件可以还不存在。"""
+    return _identity_slot_path(project_dir, char_name, identity_name, "_three_view.png")
+
+
+def compute_identity_expression_grid_path(
+    project_dir: Path, char_name: str, identity_name: str
+) -> str:
+    path = canonical_identity_expression_grid_path(project_dir, char_name, identity_name)
+    return str(path) if path.exists() else ""
+
+
+def canonical_identity_expression_grid_path(
+    project_dir: Path, char_name: str, identity_name: str
+) -> Path:
+    """表情九宫格。文件可以还不存在。"""
+    return _identity_slot_path(project_dir, char_name, identity_name, "_expression_grid.png")
 
 
 def compute_scoped_grid_filename(

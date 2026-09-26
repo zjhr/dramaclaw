@@ -33,7 +33,9 @@ export type CharacterAssetKind =
   | "portrait"
   | "identity"
   | "identity_costume"
-  | "identity_portrait";
+  | "identity_portrait"
+  | "identity_three_view"
+  | "identity_expression_grid";
 
 export interface CharacterAssetHistoryEntry {
   history_id: string;
@@ -102,6 +104,27 @@ export interface Identity {
   costume_image_url?: string | null;
   portrait_image_path?: string | null;
   portrait_image_url?: string | null;
+  three_view_url?: string | null;
+  expression_grid_url?: string | null;
+  three_view_history_url?: string;
+  three_view_restore_url?: string;
+  expression_grid_history_url?: string;
+  expression_grid_restore_url?: string;
+  look_design?: {
+    makeup?: string;
+    clothing?: string;
+    accessories?: string[];
+    face_shape?: string;
+    eyes?: string;
+    eyebrows?: string;
+    nose?: string;
+    lips?: string;
+    body?: string;
+    hair?: string;
+    style?: string;
+  };
+  voice_url?: string;
+  voice_source?: "" | "identity" | "default" | string;
   history_url?: string;
   restore_url?: string;
   costume_history_url?: string;

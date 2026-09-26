@@ -173,6 +173,16 @@ async def _run_character_image(
                 update=update,
                 egress_context=egress_context,
             )
+        elif mode == "identity_look_pack":
+            output_path = await _generate_identity_look_pack(
+                character=character,
+                identity_id=identity_id,
+                identity_name=identity_name,
+                output_dir=output_dir,
+                model=model,
+                update=update,
+                egress_context=egress_context,
+            )
         elif mode == "identity_image":
             output_path = await _generate_identity_image(
                 character=character,
@@ -201,6 +211,76 @@ async def _run_character_image(
         }
     finally:
         await store.close()
+
+
+async def _generate_identity_look_pack(
+    *,
+    character,
+    identity_id: str,
+    identity_name: str,
+    output_dir: Path,
+    model: str,
+    update,
+    egress_context,
+) -> Path:
+    """没有脸时先按点选画出第一张脸。已有的脸不换。然后重画三视图和表情九宫格。"""
+    from novelvideo.characters.look_design import face_prompt, normalize_look, sheet_prompt
+    from novelvideo.config import _image_provider_config
+    from novelvideo.generators.nanobanana_grid import (
+        generate_reference_edit_image,
+        generate_text_to_image,
+    )
+    from novelvideo.utils.path_resolver import (
+        canonical_identity_expression_grid_path,
+        canonical_identity_path,
+        canonical_identity_three_view_path,
+    )
+
+    identity = _find_identity(character, identity_id, identity_name)
+    if identity is None:
+        raise RuntimeError(f"找不到身份: {identity_id or identity_name}")
+    look = normalize_look(getattr(identity, "look_design", {}) or {})
+    name = identity.identity_name or identity_name
+    face = canonical_identity_path(output_dir, character.name, name)
+    three = canonical_identity_three_view_path(output_dir, character.name, name)
+    grid = canonical_identity_expression_grid_path(output_dir, character.name, name)
+    image_config = _image_provider_config("", selection_override=model) if model else None
+
+    if not face.exists():
+        update(0.35, "按点选画出第一张脸...")
+        temp_face = face.with_name(f".tmp_{face.stem}_{_asset_suffix()}.png")
+        await generate_text_to_image(
+            face_prompt(character.name, look),
+            str(temp_face),
+            aspect_ratio="3:4",
+            config=image_config,
+            egress_context=egress_context,
+        )
+        _replace_canonical_asset(temp_face, face)
+
+    update(0.6, "画出三视图...")
+    temp_three = three.with_name(f".tmp_{three.stem}_{_asset_suffix()}.png")
+    await generate_reference_edit_image(
+        sheet_prompt(character.name, look, "three_view"),
+        [str(face)],
+        str(temp_three),
+        aspect_ratio="3:2",
+        config=image_config,
+        egress_context=egress_context,
+    )
+    _replace_canonical_asset(temp_three, three)
+
+    update(0.85, "画出表情九宫格...")
+    temp_grid = grid.with_name(f".tmp_{grid.stem}_{_asset_suffix()}.png")
+    await generate_reference_edit_image(
+        sheet_prompt(character.name, look, "expression_grid"),
+        [str(face)],
+        str(temp_grid),
+        aspect_ratio="1:1",
+        config=image_config,
+        egress_context=egress_context,
+    )
+    return _replace_canonical_asset(temp_grid, grid)
 
 
 async def _generate_character_portrait(

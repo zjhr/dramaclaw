@@ -498,6 +498,7 @@ export function useUpdateIdentity(project: string, name: string) {
         face_prompt?: string;
         age_group?: string;
         body_type?: string;
+        look_design?: Identity["look_design"];
       };
     }) =>
       api.patch(p`api/v1/projects/${project}/characters/${name}/identities/${identityId}`, { json: data }).json<OkResponse<Identity>>(),
@@ -520,6 +521,91 @@ export function useDeleteIdentity(project: string, name: string) {
     mutationFn: (identityId: string) =>
       api.delete(p`api/v1/projects/${project}/characters/${name}/identities/${identityId}`).json<OkResponse<unknown>>(),
     onSuccess: () => invalidateIdentityMembership(qc, project, name),
+  });
+}
+
+export function useGenerateIdentityLookPack(project: string, name: string) {
+  return useMutation({
+    mutationFn: (input: { identityId: string; model?: string }) =>
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
+          p`api/v1/projects/${project}/characters/${name}/identities/${input.identityId}/look-pack/generate-async`,
+          { json: { model: input.model }, throwHttpErrors: false },
+        ),
+      ),
+  });
+}
+
+export function useUploadIdentityVoice(project: string, name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ identityId, file }: { identityId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return uploadApi
+        .post(
+          p`api/v1/projects/${project}/characters/${name}/identities/${identityId}/voice/upload`,
+          { body: formData },
+        )
+        .json<OkResponse<{ voice_url: string; voice_source: string }>>();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) }),
+  });
+}
+
+export function useRecordIdentityVoice(project: string, name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ identityId, dataUrl }: { identityId: string; dataUrl: string }) =>
+      api
+        .post(
+          p`api/v1/projects/${project}/characters/${name}/identities/${identityId}/voice/record`,
+          { json: { data_url: dataUrl } },
+        )
+        .json<OkResponse<{ voice_url: string; voice_source: string }>>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) }),
+  });
+}
+
+export function useClearIdentityVoice(project: string, name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (identityId: string) =>
+      api
+        .post(
+          p`api/v1/projects/${project}/characters/${name}/identities/${identityId}/voice/clear`,
+        )
+        .json<OkResponse<{ voice_url: string; voice_source: string }>>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) }),
+  });
+}
+
+export type IdentityLookRow = {
+  character_name: string;
+  identity_id: string;
+  identity_name: string;
+  face_url: string;
+  three_view_url: string;
+  expression_grid_url: string;
+  voice_url: string;
+  voice_source: string;
+};
+
+export async function fetchIdentityLooks(project: string): Promise<IdentityLookRow[]> {
+  const res = await api
+    .get(p`api/v1/projects/${project}/identity-looks`)
+    .json<OkResponse<IdentityLookRow[]>>();
+  return res.ok ? res.data : [];
+}
+
+export function useIdentityLooks(project: string, enabled = true) {
+  return useQuery({
+    queryKey: ["identity-looks", project] as const,
+    queryFn: ({ signal }) =>
+      api
+        .get(p`api/v1/projects/${project}/identity-looks`, { signal })
+        .json<OkResponse<IdentityLookRow[]>>(),
+    enabled: enabled && !!project,
   });
 }
 

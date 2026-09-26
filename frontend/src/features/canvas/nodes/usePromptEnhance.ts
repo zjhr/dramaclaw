@@ -69,6 +69,7 @@ export function usePromptEnhance(
       text: string,
       dialect: FreezonePromptDialect,
       strength: FreezonePromptStrength,
+      guidance?: string,
     ) => {
       const trimmed = text.trim();
       const projectId = readUrl().project;
@@ -82,6 +83,7 @@ export function usePromptEnhance(
           text: trimmed,
           dialect,
           strength,
+          guidance: guidance?.trim() || undefined,
           canvasId: readUrl().canvas ?? "default",
           nodeId,
         });

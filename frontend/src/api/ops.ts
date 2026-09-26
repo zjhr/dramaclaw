@@ -174,6 +174,7 @@ export interface FreezoneJobRef {
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_video_greybox"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -184,6 +185,7 @@ export interface FreezoneJobRef {
     | "freezone_text_enhance"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
+    | "freezone_video_greybox"
     | "stage_asset";
   job_id: string;
   task_key: string;
@@ -305,6 +307,60 @@ export async function submitFreezoneVideoUpscale(
   );
 }
 
+// /freezone/video/greybox ------------------------------------------------- //
+
+/**
+ * 视频转白模：ffmpeg 抽帧 -> DA V2 深度推理 -> 灰白几何渲染 -> 合帧（保留原音轨）。
+ * 四段全部本地完成，零 API 成本。除 `sourceUrl` 外全部可选——不传的键
+ * JSON.stringify 会直接丢掉，走后端默认值（fps=8 / fov_deg=60 / ambient=0.35 /
+ * base_grey=0.85 / outline=0 / invert=false / device_name=auto）。
+ */
+export interface FreezoneVideoGreyboxPayload {
+  /** Static URL of the source video to convert to a depth-video render. */
+  sourceUrl: string;
+  fps?: number;
+  fovDeg?: number;
+  ambient?: number;
+  baseGrey?: number;
+  outline?: number;
+  invert?: boolean;
+  gamma?: number;
+  smooth?: number;
+  fillStrength?: number;
+  temporalWindow?: number;
+  deviceName?: string;
+  backend?: string;
+  shade?: string;
+}
+
+export async function submitFreezoneVideoGreybox(
+  project: string,
+  payload: FreezoneVideoGreyboxPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/greybox`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        fps: payload.fps,
+        fov_deg: payload.fovDeg,
+        ambient: payload.ambient,
+        base_grey: payload.baseGrey,
+        outline: payload.outline,
+        invert: payload.invert,
+        gamma: payload.gamma,
+        smooth: payload.smooth,
+        fill_strength: payload.fillStrength,
+        temporal_window: payload.temporalWindow,
+        device_name: payload.deviceName,
+        backend: payload.backend,
+        shade: payload.shade,
+      },
+    },
+  );
+}
+
 export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   /** Static URL of the first frame. At least one of first/last must be set. */
   firstFrameUrl?: string | null;
@@ -356,6 +412,74 @@ export async function submitFreezoneVideoKeyframes(
         gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+// /freezone/video/reshoot ------------------------------------------------- //
+
+export interface FreezoneVideoReshootPayload extends FreezoneNodeContext {
+  sourceUrl: string;
+  startSeconds: number;
+  endSeconds: number;
+  prompt?: string;
+  model?: string;
+  durationSeconds?: number;
+  resolution?: string;
+  generateAudio?: boolean;
+  cameraTemplateId?: string;
+}
+
+export async function submitFreezoneVideoReshoot(
+  project: string,
+  payload: FreezoneVideoReshootPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/reshoot`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        start_seconds: payload.startSeconds,
+        end_seconds: payload.endSeconds,
+        prompt: payload.prompt ?? "",
+        duration_seconds: payload.durationSeconds ?? 0,
+        resolution: payload.resolution ?? "720p",
+        generate_audio: payload.generateAudio ?? false,
+        camera_template_id: payload.cameraTemplateId ?? null,
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+/**
+ * 提示词推荐：抽区间首尾帧让视觉模型联想一段"这段该怎么演"。
+ *
+ * 与 `submitFreezoneReversePrompt` 走同一条视觉网关，区别只在上游喂的是
+ * 两张关键帧 + 时长，所以 job 类型和结果路径都不同。
+ */
+export interface FreezoneVideoReshootSuggestPromptPayload extends FreezoneNodeContext {
+  sourceUrl: string;
+  startSeconds: number;
+  endSeconds: number;
+}
+
+export async function submitFreezoneVideoReshootSuggestPrompt(
+  project: string,
+  payload: FreezoneVideoReshootSuggestPromptPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/reshoot/suggest-prompt`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        start_seconds: payload.startSeconds,
+        end_seconds: payload.endSeconds,
         ...nodeContextBody(payload),
       },
     },
@@ -694,6 +818,8 @@ export interface FreezoneVideoComposePayload {
   fps?: number;
   backgroundColor?: string;
   keepOriginalAudio?: boolean;
+  /** 按第一条视频的真实宽高输出，避免竖屏被套进 16:9。 */
+  preserveSourceSize?: boolean;
   /**
    * 封面图 URL（已上传到后端的稳定地址）。后端支持时会把它挂成 MP4 的封面流
    * （attached_pic，不改正片时长）；不支持时忽略，前端缩略图仍用同一个 url。
@@ -713,6 +839,7 @@ export async function submitFreezoneVideoCompose(
     fps: payload.fps ?? 30,
     background_color: payload.backgroundColor ?? "#000000",
     keep_original_audio: payload.keepOriginalAudio ?? true,
+    preserve_source_size: payload.preserveSourceSize ?? false,
     cover_url: payload.coverUrl ?? "",
     tracks: payload.tracks.map((track) => ({
       track_id: track.trackId,
@@ -2002,6 +2129,7 @@ export async function fetchFreezoneJobResult(
     | "freezone_text_enhance"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
+    | "freezone_video_greybox"
     | "stage_asset",
   jobId: string,
 ): Promise<FreezoneJobResult> {
@@ -2025,6 +2153,15 @@ export async function fetchFreezoneReversePromptResult(
 ): Promise<FreezoneReversePromptResult> {
   return await apiCall<FreezoneReversePromptResult>(
     `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_image_reverse_prompt/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+export async function fetchFreezoneVideoReshootSuggestPromptResult(
+  project: string,
+  jobId: string,
+): Promise<FreezoneReversePromptResult> {
+  return await apiCall<FreezoneReversePromptResult>(
+    `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_video_reshoot_suggest_prompt/${encodeURIComponent(jobId)}/result`,
   );
 }
 
@@ -2398,6 +2535,8 @@ export interface FreezoneTextEnhancePayload extends FreezoneNodeContext {
   text: string;
   dialect: FreezonePromptDialect;
   strength?: FreezonePromptStrength;
+  /** 选中的技能指令。强化时按它改写用户的想法。 */
+  guidance?: string;
 }
 
 export async function submitFreezoneTextEnhance(
@@ -2412,6 +2551,7 @@ export async function submitFreezoneTextEnhance(
         text: payload.text,
         dialect: payload.dialect,
         strength: payload.strength ?? "standard",
+        ...(payload.guidance ? { guidance: payload.guidance } : {}),
         ...nodeContextBody(payload),
       },
     },
@@ -2943,493 +3083,6 @@ export async function deleteFreezoneVideoCharacterLibraryItem(
   return await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/video/character-library/${encodeURIComponent(itemId)}`,
     { method: "DELETE" },
-  );
-}
-
-// /shot-recipes ----------------------------------------------------------- //
-
-/**
- * Shot recipe 版本溯源的展示契约。
- *
- * 字段形状对齐后端 `novelvideo/api/routes/shot_recipes.py`。这里刻意**不做**运行时
- * 强制校验：源数据是 append-only JSONL，历史行可能比前端契约老，缺字段是正常状态，
- * 不是错误——所以全部标可选，由消费面按「缺失即未知」处理。
- */
-export interface ShotRecipeVersionModelSnapshot {
-  model_id?: string;
-  catalog_id?: string | null;
-  /** false = 目录读不到（不是「模型不支持」）。消费面必须显式降级，禁止当成已支持。 */
-  capabilities_known?: boolean;
-  frozen_at?: string;
-  minDuration?: number | null;
-  maxDuration?: number | null;
-  referenceImageMax?: number | null;
-  referenceVideoMax?: number | null;
-  referenceAudioMax?: number | null;
-  referenceFileMax?: number | null;
-  referenceLinkMax?: number | null;
-  supportedModes?: string[];
-  resolutionOptions?: string[];
-}
-
-/**
- * 版本创建时**记录**的计费报价（复用既有 generation_credit_quote，不是新账本）。
- *
- * `quoted=false` 表示这条版本没有拿到报价，`reason` 说明原因——消费面必须展示
- * 「报价不可用」，绝不能把缺失的 total_cost 渲染成 0 或任何价格。
- */
-export interface ShotRecipeCostLedger {
-  source?: string;
-  quoted?: boolean;
-  reason?: string;
-  pricing_kind?: string;
-  pricing_model?: string;
-  pricing_params?: Record<string, unknown>;
-  quantity?: number;
-  total_cost?: number;
-  display?: string;
-  unit?: string;
-  unit_cost?: number;
-  recorded_at?: string;
-}
-
-export interface ShotRecipePromptDelta {
-  /** "full" = 首版存全量；"delta" = 相对父版本的差异。 */
-  mode?: string;
-  prompt?: string;
-  changes?: Record<string, unknown>;
-}
-
-export interface ShotRecipeVersion {
-  version_id: string;
-  /** null = 首版（无父版本）。 */
-  parent_version_id?: string | null;
-  prompt_delta?: ShotRecipePromptDelta;
-  model_snapshot?: ShotRecipeVersionModelSnapshot;
-  cost_ledger?: ShotRecipeCostLedger;
-  status?: string;
-  source_refs?: Record<string, unknown>;
-  look_decision_ids?: string[];
-  duration_seconds?: number | null;
-  resolution?: string | null;
-  model_id?: string | null;
-  recorded_at?: string;
-  /** 仅 GET 详情返回：root → … → 本版本的 id 链。 */
-  lineage?: string[];
-}
-
-export interface ShotRecipeIdentitySnapshot {
-  identity_id?: string;
-  /** false = 角色库读取不可用，基线为空——不是「角色不存在」。 */
-  identity_known?: boolean;
-  reason?: string;
-  known_at?: string;
-  face_prompt?: string | null;
-  appearance_details?: string | null;
-  costume_image?: string | null;
-  reference_images?: string[] | null;
-  voice?: string | null;
-}
-
-export interface ShotRecipeLookDecision {
-  decision_id: string;
-  identity_id?: string;
-  character_name?: string;
-  version_id?: string | null;
-  identity_known?: boolean;
-  identity_snapshot?: ShotRecipeIdentitySnapshot;
-  overrides?: Record<string, unknown>;
-  look_diff?: {
-    identity_locked?: Record<string, ShotRecipeLookDiffEntry>;
-    shot_variable?: Record<string, ShotRecipeLookDiffEntry>;
-  };
-  source_refs?: Record<string, unknown>;
-  recorded_at?: string;
-}
-
-export interface ShotRecipeLookDiffEntry {
-  base?: unknown;
-  override?: unknown;
-  changed?: boolean;
-}
-
-export interface ShotRecipeHeader {
-  recipe_id: string;
-  title?: string;
-  canvas_id?: string | null;
-  node_id?: string | null;
-  recorded_at?: string;
-}
-
-export interface ShotRecipe {
-  recipe: ShotRecipeHeader;
-  look_decisions: ShotRecipeLookDecision[];
-  versions: ShotRecipeVersion[];
-}
-
-export interface AppendShotRecipeVersionInput {
-  parentVersionId?: string | null;
-  prompt?: string;
-  changes?: Record<string, unknown>;
-  status?: string;
-  modelId?: string;
-  videoBackend?: string;
-  durationSeconds?: number | null;
-  resolution?: string | null;
-  lookDecisionIds?: string[];
-  sourceRefs?: Record<string, unknown>;
-}
-
-export interface BindCharacterLookDecisionInput {
-  identityId: string;
-  characterName?: string;
-  versionId?: string | null;
-  overrides?: Record<string, unknown>;
-  sourceRefs?: Record<string, unknown>;
-}
-
-export interface RenderShotRecipeVersionInput {
-  /** 必填：后端按它现查模型目录，取不到就 409 拒绝（capabilities_known=false）。 */
-  modelId: string;
-  videoBackend?: string;
-  prompt?: string;
-  aspectRatio?: string;
-  durationSeconds?: number | null;
-  resolution?: string | null;
-  generateAudio?: boolean;
-  humanReview?: boolean;
-  sceneOptimize?: string;
-}
-
-/** `POST .../versions/{id}/render` 的回执：只证明「已入队」，不代表已出片。 */
-export interface ShotRecipeRenderReceipt {
-  recipe_id: string;
-  version_id: string;
-  job_id: string;
-  task_id?: string;
-  task_type?: string;
-  backend?: string;
-  queue?: string;
-  status?: string;
-  parent_version_id?: string | null;
-  cost_ledger?: ShotRecipeCostLedger;
-  source_refs?: Record<string, unknown>;
-}
-
-/**
- * `POST .../versions/{id}/sync` 的回执：把渲染任务推进到终态。
- *
- * `changed: false` 表示**一行都没写**——任务仍在跑、查不到、或该版本已是终态。
- * `task_status` 是任务中心的原词（submitting/queued/running/completed/failed/
- * cancelled），`status` 是本版本行推进后的版本状态（中间态时仍是 rendering）。
- */
-export interface ShotRecipeSyncReceipt {
-  recipe_id: string;
-  version_id: string;
-  job_id?: string;
-  task_id?: string;
-  task_status?: string;
-  task_found?: boolean;
-  changed: boolean;
-  status?: string;
-  parent_version_id?: string | null;
-  artifact_url?: string | null;
-  error?: string | null;
-  source_refs?: Record<string, unknown>;
-  cost_ledger?: ShotRecipeCostLedger;
-}
-
-export interface ReshootShotRecipeVersionInput {
-  /** 必填：后端按它现查模型目录，未声明 firstLastFrame 或目录取不到都会拒绝。 */
-  modelId: string;
-  videoBackend?: string;
-  startSeconds: number;
-  endSeconds: number;
-  /** 缺省用源版本 source_refs.artifact_url（重拍对象就是那条版本自己的成片）。 */
-  sourceUrl?: string;
-  prompt?: string;
-  resolution?: string;
-  generateAudio?: boolean;
-  cameraTemplateId?: string;
-}
-
-/**
- * `POST .../versions/{id}/reshoot` 的回执：**一条新的子版本**已入队。
- *
- * 与 render 的回执不同，`version_id` 是新子版本的 id，`source_version_id` 才是被
- * 重拍的那条；源版本行逐字节不变（后端 append-only）。只证明「已入队」，不代表
- * 已出片——产物要靠 sync 推进终态。
- */
-export interface ShotRecipeReshootReceipt {
-  recipe_id: string;
-  version_id: string;
-  source_version_id: string;
-  job_id: string;
-  task_id?: string;
-  task_type?: string;
-  backend?: string;
-  queue?: string;
-  status?: string;
-  parent_version_id?: string | null;
-  start_seconds?: number;
-  end_seconds?: number;
-  duration_seconds?: number | null;
-  cost_ledger?: ShotRecipeCostLedger;
-  source_refs?: Record<string, unknown>;
-}
-
-/**
- * `POST .../versions/{id}/preflight` 的回执：入队**之前**的结构化预检结论。
- *
- * `ok=false` 表示存在 block 项（`blocking` 列出其 id）；**是否阻止渲染由调用方决定**，
- * 预检端点自己绝不 409。`warn` 是「这个事实没读到」（目录查不到、身份读不到、素材
- * 解析不到、报价拿不到），消费面必须显式展示，不得渲染成通过。
- */
-export interface ShotRecipePreflightCheck {
-  id: string;
-  status: "pass" | "warn" | "block";
-  detail?: string;
-}
-
-export interface ShotRecipePreflightReport {
-  recipe_id: string;
-  version_id: string;
-  ok: boolean;
-  checks: ShotRecipePreflightCheck[];
-  /** 处于 block 的 check id。 */
-  blocking: string[];
-  /** 处于 warn 的 check id。 */
-  warnings: string[];
-  checked_at?: string;
-}
-
-export interface PreflightShotRecipeVersionInput {
-  /** 不传则后端回退到版本上冻结的 model_id（那一路会得到 capabilities_known=false 的 warn）。 */
-  modelId?: string;
-  videoBackend?: string;
-  aspectRatio?: string;
-  durationSeconds?: number | null;
-  resolution?: string | null;
-}
-
-export async function listShotRecipes(project: string): Promise<ShotRecipeHeader[]> {
-  const payload = await apiCall<unknown>(
-    `projects/${encodeURIComponent(project)}/shot-recipes`,
-  );
-  if (!Array.isArray(payload)) return [];
-  return payload.filter(
-    (item): item is ShotRecipeHeader =>
-      Boolean(item) &&
-      typeof item === "object" &&
-      typeof (item as { recipe_id?: unknown }).recipe_id === "string",
-  );
-}
-
-export async function getShotRecipe(
-  project: string,
-  recipeId: string,
-): Promise<ShotRecipe> {
-  return await apiCall<ShotRecipe>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}`,
-  );
-}
-
-/**
- * 追加一个版本。后端是 append-only：即使本次以 `failed` 结束，父版本行也不会被
- * 重写，所以这里失败重试永远安全——失败只会留下一条新的溯源行。
- */
-export async function appendShotRecipeVersion(
-  project: string,
-  recipeId: string,
-  input: AppendShotRecipeVersionInput,
-): Promise<ShotRecipeVersion> {
-  const json: Record<string, unknown> = {
-    prompt: input.prompt ?? "",
-  };
-  if (input.parentVersionId) json.parent_version_id = input.parentVersionId;
-  if (input.changes) json.changes = input.changes;
-  if (input.status) json.status = input.status;
-  if (input.modelId) json.model_id = input.modelId;
-  if (input.videoBackend) json.video_backend = input.videoBackend;
-  if (typeof input.durationSeconds === "number") {
-    json.duration_seconds = input.durationSeconds;
-  }
-  if (input.resolution) json.resolution = input.resolution;
-  if (input.lookDecisionIds) json.look_decision_ids = input.lookDecisionIds;
-  if (input.sourceRefs) json.source_refs = input.sourceRefs;
-  return await apiCall<ShotRecipeVersion>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions`,
-    { method: "POST", json },
-  );
-}
-
-/**
- * 绑定镜头级角色造型决策。`identityId` 必须是真实角色库里的身份：后端解析不到会
- * 返回 404 并抛 ApiError，不会静默接受任意字符串。
- */
-export async function bindCharacterLookDecision(
-  project: string,
-  recipeId: string,
-  input: BindCharacterLookDecisionInput,
-): Promise<ShotRecipeLookDecision> {
-  const json: Record<string, unknown> = { identity_id: input.identityId };
-  if (input.characterName) json.character_name = input.characterName;
-  if (input.versionId) json.version_id = input.versionId;
-  if (input.overrides) json.overrides = input.overrides;
-  if (input.sourceRefs) json.source_refs = input.sourceRefs;
-  return await apiCall<ShotRecipeLookDecision>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/look-decisions`,
-    { method: "POST", json },
-  );
-}
-
-/**
- * 把 `ready` 版本接到真实视频生成。后端只**构造 payload 并入队**：canvas/node 取自
- * 版本自己的 source_refs，计费沿用既有链路。版本已带 job_id 或不是 ready 都会 409，
- * 目录取不到 modelId 也会 409（capabilities_known=false，不按「已支持」放行）。
- */
-export async function renderShotRecipeVersion(
-  project: string,
-  recipeId: string,
-  versionId: string,
-  input: RenderShotRecipeVersionInput,
-): Promise<ShotRecipeRenderReceipt> {
-  const json: Record<string, unknown> = { model_id: input.modelId };
-  if (input.videoBackend) json.video_backend = input.videoBackend;
-  if (input.prompt) json.prompt = input.prompt;
-  if (input.aspectRatio) json.aspect_ratio = input.aspectRatio;
-  if (typeof input.durationSeconds === "number") {
-    json.duration_seconds = input.durationSeconds;
-  }
-  if (input.resolution) json.resolution = input.resolution;
-  if (input.generateAudio) json.generate_audio = true;
-  if (input.humanReview) json.human_review = true;
-  if (input.sceneOptimize) json.scene_optimize = input.sceneOptimize;
-  return await apiCall<ShotRecipeRenderReceipt>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/render`,
-    { method: "POST", json },
-  );
-}
-
-/**
- * 对账一次渲染任务，把它推进到终态。
- *
- * 幂等：`changed: false` 时一行都没写（任务仍在跑 / 查不到 / 已是终态）。任务查不到
- * 时后端保留 `rendering` 并回报 `task_found: false`，**不会**伪装成已渲染。
- */
-export async function syncShotRecipeVersion(
-  project: string,
-  recipeId: string,
-  versionId: string,
-): Promise<ShotRecipeSyncReceipt> {
-  return await apiCall<ShotRecipeSyncReceipt>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/sync`,
-    { method: "POST" },
-  );
-}
-
-/**
- * 重拍一条已完成版本里的一段：产出**一条新的子版本**（父指针指向源版本）。
- *
- * 源版本必须是 completed 且有产物（`sourceUrl` 或它的 `source_refs.artifact_url`），
- * 区间必须 `end > start` 且落在模型的 min/maxDuration 内——越界是 400 而不是静默
- * 截断。同一源版本重拍过再点会 409（幂等）。调用方拿到回执后应继续 sync 到终态。
- */
-export async function reshootShotRecipeVersion(
-  project: string,
-  recipeId: string,
-  versionId: string,
-  input: ReshootShotRecipeVersionInput,
-): Promise<ShotRecipeReshootReceipt> {
-  const json: Record<string, unknown> = {
-    model_id: input.modelId,
-    start_seconds: input.startSeconds,
-    end_seconds: input.endSeconds,
-  };
-  if (input.videoBackend) json.video_backend = input.videoBackend;
-  if (input.sourceUrl) json.source_url = input.sourceUrl;
-  if (input.prompt) json.prompt = input.prompt;
-  if (input.resolution) json.resolution = input.resolution;
-  if (input.generateAudio) json.generate_audio = true;
-  if (input.cameraTemplateId) json.camera_template_id = input.cameraTemplateId;
-  return await apiCall<ShotRecipeReshootReceipt>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/reshoot`,
-    { method: "POST", json },
-  );
-}
-
-/**
- * 渲染预检：只读，不写版本行、不入队、不扣费。
- *
- * 返回结构化 check 列表，而不是单一分数——`warn`（读不到）与 `pass`（确认支持）
- * 必须能分辨。block 项存在时 `ok=false`，但**是否继续渲染由调用方决定**：本端点
- * 自己不会 409（render 端点才会）。
- */
-export async function preflightShotRecipeVersion(
-  project: string,
-  recipeId: string,
-  versionId: string,
-  input: PreflightShotRecipeVersionInput = {},
-): Promise<ShotRecipePreflightReport> {
-  const json: Record<string, unknown> = {};
-  if (input.modelId) json.model_id = input.modelId;
-  if (input.videoBackend) json.video_backend = input.videoBackend;
-  if (input.aspectRatio) json.aspect_ratio = input.aspectRatio;
-  if (typeof input.durationSeconds === "number") {
-    json.duration_seconds = input.durationSeconds;
-  }
-  if (input.resolution) json.resolution = input.resolution;
-  return await apiCall<ShotRecipePreflightReport>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/preflight`,
-    { method: "POST", json },
-  );
-}
-
-/** 风险严重度：沿用后端既有词汇（critical/warning/info），不是新造的分档。 */
-export type ShotRecipeRiskSeverity = "critical" | "warning" | "info";
-
-/**
- * `GET .../versions/{id}/quality` 报告里的一条风险。
- *
- * `evidence` 必须能指回具体记录（version_id / decision_id / 漂移两侧的数值）——
- * 报告要可审计，散文不算。`detail` 是给人看的那句话（渲染失败时是后端原话）。
- */
-export interface ShotRecipeQualityRisk {
-  id: string;
-  severity: ShotRecipeRiskSeverity;
-  detail?: string;
-  evidence?: Record<string, unknown>;
-}
-
-/**
- * 版本质量报告：**结构化风险列表**，不是评分。
- *
- * `counts` 由 `risks` 派生；报告 schema 里没有、也不该有总分/评分/评级字段——
- * 单一分数会把「哪条事实坏了」和「读不到」一起糊掉。空列表 = 逐条读过且没发现风险。
- */
-export interface ShotRecipeQualityReport {
-  recipe_id: string;
-  version_id: string;
-  risks: ShotRecipeQualityRisk[];
-  counts: Record<ShotRecipeRiskSeverity, number>;
-  /** risks 里出现的 id，顺序即展示顺序（由重到轻）。 */
-  risk_ids: string[];
-  checked_at?: string;
-}
-
-/**
- * 版本质量报告：只读，不写版本行、不入队、不扣费、不落盘。
- *
- * 返回**结构化 risks 列表**（每条带 severity / detail / evidence），而不是单一分数。
- * 读不到的事实会如实降级成 warning/info，绝不会被省略成「干净」。
- */
-export async function qualityShotRecipeVersion(
-  project: string,
-  recipeId: string,
-  versionId: string,
-): Promise<ShotRecipeQualityReport> {
-  return await apiCall<ShotRecipeQualityReport>(
-    `projects/${encodeURIComponent(project)}/shot-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/quality`,
   );
 }
 
