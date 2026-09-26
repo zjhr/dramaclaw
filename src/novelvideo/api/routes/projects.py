@@ -599,26 +599,26 @@ async def create_project(
     body: ProjectCreate, user: dict = Depends(require_scope("projects:write"))
 ):
     """创建新项目。"""
-    logger.info("create_project: %s", body.name)
-    validate_project_name(body.name)
+    name = validate_project_name(body.name)
+    logger.info("create_project: %s", name)
     user_id = await user_id_from_api_user(user)
     registry = get_project_registry()
     try:
         record = await registry.create_project(
             owner_user_id=user_id,
             owner_username=user["username"],
-            name=body.name,
+            name=name,
         )
     except asyncpg.exceptions.UniqueViolationError as exc:
         raise HTTPException(
             status_code=409,
-            detail=f"Project '{body.name}' already exists",
+            detail=f"Project '{name}' already exists",
         ) from exc
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(
                 status_code=409,
-                detail=f"Project '{body.name}' already exists",
+                detail=f"Project '{name}' already exists",
             ) from exc
         raise
     try:
@@ -649,7 +649,7 @@ async def create_project(
         except Exception:
             logger.warning("failed to cleanup uncommitted project directories", exc_info=True)
         raise
-    return {"ok": True, "data": {"id": record.id, "project_id": record.id, "name": body.name}}
+    return {"ok": True, "data": {"id": record.id, "project_id": record.id, "name": name}}
 
 
 @router.get("/projects/{project}")

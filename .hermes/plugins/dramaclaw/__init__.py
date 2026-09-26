@@ -307,8 +307,71 @@ def _query_string(params: Any) -> str:
     return f"?{urlencode(cleaned, doseq=True)}" if cleaned else ""
 
 
+def _chat_scope() -> str:
+    """宿主注入的对话作用域（`DRAMACLAW_CHAT_SCOPE`）。
+
+    缺省为空串 = 老行为（不限制）。
+    """
+    return os.environ.get("DRAMACLAW_CHAT_SCOPE", "").strip()
+
+
+# 导演台 scope 只给「换背景」这一条写入口 + 只读查询。
+#
+# 为什么需要它：导演台的产品承诺是「agent 可以引用外部节点信息，**修改生成只作用于
+# 当前节点**」。但插件原本把 34 个工具无条件注册给所有 scope，agent 手里握着
+# dramaclaw_generate_script / compose_episode 这些能改整个项目的家伙 —— 只靠提示词
+# 约束等于没约束（模型不听话就穿透）。
+_DIRECTOR_DESK_TOOLS = frozenset({
+    "dramaclaw_post",  # 唯一写入口，且被下面的路径白名单锁死
+    "dramaclaw_get",
+    "dramaclaw_get_task",
+    "dramaclaw_list_tasks",
+    "dramaclaw_pipeline_status",
+})
+
+
+def _allowed_tool_names() -> frozenset[str] | None:
+    """返回 None 表示不限制（项目助手 / home 保持全量）。"""
+    if _chat_scope() == "directorDesk":
+        return _DIRECTOR_DESK_TOOLS
+    return None
+
+
+def _is_director_desk_write_path(api_path: str) -> bool:
+    """规范化后的 `/api/v1/projects/<id>/freezone/director-desk-panorama`。"""
+    parts = [part for part in api_path.split("/") if part]
+    return (
+        len(parts) == 6
+        and parts[0] == "api"
+        and parts[1] == "v1"
+        and parts[2] == "projects"
+        and parts[4] == "freezone"
+        and parts[5] == "director-desk-panorama"
+    )
+
+
+def _guard_chat_scope_write(method: str, api_path: str) -> None:
+    """导演台 scope 下，写操作只放行那一条按节点隔离的全景路由。
+
+    工具白名单挡不住通用 HTTP 工具 —— `dramaclaw_post` 能打**任意**路由。
+    所以这里再按路径卡一道。放在 `_request` 而不是某个 handler 里，是为了让今后
+    新增的工具自动受约束，而不是靠作者记得加。
+    """
+    if _chat_scope() != "directorDesk":
+        return
+    if method.upper() in ("GET", "HEAD", "OPTIONS"):
+        return
+    if _is_director_desk_write_path(api_path):
+        return
+    raise PermissionError(
+        f"导演台对话只能改当前节点的背景，{method.upper()} {api_path} 已拒绝。"
+        "要改项目其他部分，请在「项目助手」里说。"
+    )
+
+
 def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
+    _guard_chat_scope_write(method, api_path)
     url = f"{_base_url()}{api_path}{_query_string(query)}"
     payload = None
     headers = {
@@ -2359,7 +2422,11 @@ TOOLS = (
 
 
 def register(ctx) -> None:
+    allowed = _allowed_tool_names()
     for name, schema, handler in TOOLS:
+        # 导演台 scope 下不注册写项目资产的工具 —— 它压根调不到，而不是「被劝说别调」。
+        if allowed is not None and name not in allowed:
+            continue
         for toolset in REGISTER_TOOLSETS:
             ctx.register_tool(
                 name=name,

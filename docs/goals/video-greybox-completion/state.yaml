@@ -1,0 +1,618 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "视频转白模管线收尾与验证"
+  slug: video-greybox-completion
+  kind: existing_plan
+  tranche: "白模收尾（接线+测试+证据报告）已完成并经终审；阶段二四功能（片段重拍/视频延长/角色库/多语言口型）转后续 tranche 占位（T007-T010 blocked）"
+  status: done
+  oracle:
+    signal: "L1/L2 单测命令真实通过 + 端到端白模 mp4 通过 ffprobe 时长/音轨验收 + 目视可辨人体与结构"
+    cadence: "after each Worker package and at final audit"
+    final_proof: "三个 Worker 切片 receipt + 分层测试命令输出 + ffprobe 验收结果 + 证据报告文件路径"
+  intake:
+    original_request: "继续完成后续工作，并且自己测试，最后拿到证据报告结果"
+    interpreted_outcome: "白模管线剩余接线全部完成并通过分层测试，拿到可复现的证据报告"
+    input_shape: existing_plan
+    audience: "主人（自用）"
+    authority: requested
+    proof_type: test
+    completion_proof: "L1/L2 单测通过 + 端到端产物 ffprobe 验收 + 证据报告落盘"
+    likely_misfire: "代码写完零验证；端点通了前端没入口；音轨丢失或时长不符"
+    blind_spots_considered:
+      - "测试环境能力未知（已由 T001 实测澄清：python/.venv/world extra/ffmpeg/代理均可用）"
+      - "白模纯本地渲染，不依赖 agnes 模型能力边界"
+      - "音轨保留依赖 -map 1:a? + -shortest，无声源视频须也能出片"
+    existing_plan_facts:
+      - "计划文件 /Users/mac/.claude/plans/sprightly-beaming-riddle.md（16 锚点已复核，3 处修正已落盘）"
+      - "L1 greybox_render.py / L2 greybox_depth.py / 3a jobs.py runner 为前置会话已写"
+      - "queue_kind 必须显式 video；前端直接提交仿 handleAudioSeparate"
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  exact_human_approval_can_terminal_wait: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  selected: local
+  local:
+    status: live
+    url: "http://goalbuddy.localhost:41737/video-greybox-completion/"
+    command: "node /Users/mac/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/video-greybox-completion"
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: low
+    objective: "盘点白模管线的测试环境能力与既有实现证据，锁定 oracle 的可执行形式。"
+    inputs:
+      - "src/novelvideo/generators/greybox_render.py"
+      - "src/novelvideo/generators/greybox_depth.py"
+      - "src/novelvideo/freezone/jobs.py::run_freezone_video_greybox"
+      - "/Users/mac/.claude/plans/sprightly-beaming-riddle.md"
+      - "pyproject.toml（world extra 声明）"
+    constraints:
+      - "Read-only，不改任何文件。"
+      - "沙箱限制要实测（python/ffmpeg/网络），不能假设。"
+      - "输出必须包含每条 oracle 命令的「沙箱内可跑/需真实环境」判定。"
+    expected_output:
+      - "环境能力矩阵（python/ffmpeg/world extra/权重可达性）"
+      - "三个已写文件的完整性核对（语法/导入/签名一致性）"
+      - "oracle 命令清单 + 每条的可执行环境判定"
+      - "风险与降级建议"
+    receipt:
+      result: done
+      summary: "环境实测：python 可用（mise shim 3.14.0 含 numpy 2.4.4，早前 exit127 记录已过时）；.venv 为 py3.11.13 且 editable 安装指向 src，world extra 齐备（torch 2.12.1/transformers 4.57.6/timm/sharp/PIL）；ffmpeg 8.1.1+ffprobe、node v24.11.1、tsc 均就位。HF 权重零缓存；直连被断但 127.0.0.1:7897 代理可达（curl 200）。L1 oracle 沙箱实跑通过（5 组 assert 全过）。L2 依赖探测通过（须 .venv/bin/python）。最高价值发现：predict_depth 的 squeeze(0) 返回 (1,H,W) 而非 (H,W)，jobs.py 直传 depth_to_greybox 必炸 ValueError（torch 实证），修复前 L3 不可能通过。"
+      evidence:
+        - "which: python/python3=mise shims 3.14.0（numpy 2.4.4）；ffmpeg 8.1.1/ffprobe /opt/homebrew/bin；node v24.11.1；.venv py3.11.13 site-packages 含 torch 2.12.1/transformers 4.57.6/timm/PIL 11.3.0/sharp，editable pth 指向 src"
+        - "HF 权重缓存不存在（~/.cache/huggingface 与 ~/Library/Caches 均无）；curl https://huggingface.co → 200（走 HTTP_PROXY=127.0.0.1:7897）；venv python socket 直连 → Errno 65"
+        - "L1 oracle 实跑：python src/novelvideo/generators/greybox_render.py → 'greybox_render self-check OK' exit=0（5 组 assert 全过）"
+        - "L2 oracle 实跑：./.venv/bin/python src/novelvideo/generators/greybox_depth.py → 'depth_model_available: True / OK'；mise python 同命令 → ModuleNotFoundError: novelvideo"
+        - "形状 bug 实证（venv torch 哑张量）：(1,518,686) → unsqueeze(1) → interpolate → squeeze(0) 得 (1,720,1280)；h,w = depth01.shape → ValueError: too many values to unpack"
+        - "jobs.py L499-628 调用链核对：参数名匹配（device_name/progress_callback）、顶部导入齐全、ffmpeg -map 0:v + -map 1:a? + -c:a copy + -shortest 语义正确"
+        - "pano_sharp.py L14 from __future__ import annotations + torch=_LazyModule（L95）→ greybox_depth 顶层 import 不触发真 torch"
+        - "frontend/node_modules/.bin/tsc 存在；三文件 python -c ast.parse 均 ast-ok（零写入语法检查）"
+      facts:
+        - "python 可用（mise 3.14.0 + .venv py3.11.13 world extra 全量）；须用 ./.venv/bin/python（裸 python 无 editable 安装）"
+        - "ffmpeg 8.1.1/ffprobe/node v24.11.1/tsc 可用；HF 权重零缓存；代理 7897 可达"
+        - "L1 oracle 沙箱实跑通过（5 组 assert）；L2a 依赖探测通过"
+        - "降级验证：ast.parse 零写入语法检查 / import 冒烟 / 哑模型形状契约 / 合成 ffmpeg 腿"
+      contradictions:
+        - "形状 bug（最高价值）：greybox_depth.py predict_depth 的 .squeeze(0) 得 (1,H,W)，jobs.py 直传必崩；修复取 [0,0]"
+        - "goal.md 环境描述过时（沙箱无 python 不成立；代理可达）"
+      ambiguity_requiring_judge:
+        - "形状 bug 归属哪个切片修复"
+        - "oracle 命令是否限定 .venv/bin/python"
+        - "代理下载权重是否算合法 L2 证据"
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "基于 T001 证据锁定最终 oracle 与每个 Worker 切片的 verify 命令，确认降级路径。"
+    inputs:
+      - "T001 receipt"
+    constraints:
+      - "Do not implement."
+      - "沙箱内不可验的项必须给出真实环境复跑命令，禁止放宽验收标准。"
+    expected_output:
+      - "最终 oracle 定义（含降级路径）"
+      - "T003/T004/T005 的 verify 命令定稿"
+      - "T006 证据报告的验收清单"
+    receipt:
+      result: done
+      decision: "approve T003 finalized card; create T011 shape-bug fix before T006; goal.md oracle interpreter rewritten to ./.venv/bin/python; L2b weights and L3 real leg gated on proxy-liveness + real video with SKIP-with-rerun-command fallback, no standard relaxation"
+      full_outcome_complete: false
+      rationale: "Every finalized command was executed with measured baselines so pass/fail is decidable and cannot be faked. The bug fix is a one-line root-cause change at predict_depth (all callers route through it) in a file no existing slice owns. Proxy-downloaded weights remain legitimate L2 evidence only with same-session liveness proof; otherwise SKIP plus rerun command, never a relaxed pass."
+      worker_package:
+        objective: "3b-1：在 task_backend/runners/freezone.py 注册 greybox runner（egress 条目 + async runner + sync 包装 + register_project_task_runner），仿 freezone_video_upscale 四件套。"
+        allowed_files:
+          - "src/novelvideo/task_backend/runners/freezone.py"
+        verify:
+          - "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('src/novelvideo/task_backend/runners/freezone.py').read())\" && echo AST_OK"
+          - "grep -c 'freezone_video_greybox' src/novelvideo/task_backend/runners/freezone.py  # expect >=4 (baseline 0)"
+          - "grep -A1 '\"run_freezone_video_greybox\": LeafEgressRule' src/novelvideo/task_backend/runners/freezone.py | grep -c 'LeafEgress.LOCAL'  # expect 1"
+        stop_if:
+          - "需要改 allowed_files 之外的文件。"
+          - "_call_freezone_leaf 签名与 upscale 用法不一致。"
+          - "验证两次失败。"
+      blocked_tasks: []
+      facts:
+        - "定稿 oracle L1/L2a（沙箱必过）：PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python 前缀，实测通过"
+        - "定稿 oracle L2b（环境门槛）：带 HTTPS_PROXY=http://127.0.0.1:7897 的 load+predict 单帧断言；代理死则 SKIP 禁假过"
+        - "定稿 oracle L3 合成腿（沙箱必过）：testsrc+sine 合成源实测 3.000s/aac/320x240"
+        - "i18n 实测三语扁平叶子键各 6387+（顶层 len()=64 的旧检查无效）"
+        - "tsc 基线 exit 0 零输出；grep 基线 runners 0 / FreezoneVideoGreyboxRequest 0 / queue_kind=video 1 / tasks.py 0"
+      ambiguity_resolved:
+        - "ambiguity 1 → 新建 T011 专修 greybox_depth.py（单文件一行根因，哑模型契约检查定罪）"
+        - "ambiguity 2 → oracle 正式改写为 ./.venv/bin/python（消除 mise 3.14 假阴性）"
+        - "ambiguity 3 → 代理下载算合法 L2 证据但须三条件：同会话代理存活证据 + 逐字命令输出 + 显式代理 env；代理不存活则 SKIP"
+      commands:
+        - cmd: "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python src/novelvideo/generators/greybox_render.py"
+          status: pass
+          note: "L1 oracle 定稿解释器实测通过 exit=0"
+        - cmd: "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python src/novelvideo/generators/greybox_depth.py"
+          status: pass
+          note: "L2a 依赖探测通过"
+        - cmd: "venv torch 哑模型走真实 predict_depth 代码路径"
+          status: fail
+          note: "当前代码 AssertionError (1,720,1280)——bug 实证；T011 修复后翻绿"
+        - cmd: "interpolate(...)[0,0] 修复处方 torch 复现"
+          status: pass
+          note: "(720,1280) ndim==2"
+        - cmd: "ffmpeg testsrc+sine 合成腿（抽帧24帧+合帧+ffprobe）"
+          status: pass
+          note: "3.000s / aac / 320x240"
+        - cmd: "cd frontend && npx tsc --noEmit -p tsconfig.json"
+          status: pass
+          note: "基线 exit=0 零输出"
+        - cmd: "i18n 扁平叶子键计数"
+          status: fail
+          note: "当前 [6387,6387,6387] <6388，T005 加键后翻绿"
+        - cmd: "curl -x http://127.0.0.1:7897 https://huggingface.co"
+          status: pass
+          note: "代理本会话存活 200"
+
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "3b-1：在 task_backend/runners/freezone.py 注册 greybox runner（egress 条目 + async runner + sync 包装 + register_project_task_runner），仿 freezone_video_upscale 四件套。"
+    inputs:
+      - "task_backend/runners/freezone.py:84（FREEZONE_LEAF_EGRESS）"
+      - "task_backend/runners/freezone.py:836（_run_freezone_video_upscale_async 范式）"
+      - "task_backend/runners/freezone.py:964（sync 包装范式）"
+      - "task_backend/runners/freezone.py:1562（register 范式）"
+    constraints:
+      - "只增不改：FREEZONE_LEAF_EGRESS 新增键，不动已有条目。"
+      - "async runner 内用 _call_freezone_leaf 调 leaf，用 _update 上报进度。"
+      - "leaf rule 为 LeafEgress.LOCAL（纯本地无外部调用）。"
+    allowed_files:
+      - "src/novelvideo/task_backend/runners/freezone.py"
+    verify:
+      - "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('src/novelvideo/task_backend/runners/freezone.py').read())\" && echo AST_OK"
+      - "grep -c 'freezone_video_greybox' src/novelvideo/task_backend/runners/freezone.py  # expect >=4 (baseline 0, measured 2026-09-20)"
+      - "grep -A1 '\"run_freezone_video_greybox\": LeafEgressRule' src/novelvideo/task_backend/runners/freezone.py | grep -c 'LeafEgress.LOCAL'  # expect 1"
+    stop_if:
+      - "需要改 allowed_files 之外的文件。"
+      - "_call_freezone_leaf 签名与 upscale 用法不一致。"
+      - "验证两次失败。"
+    receipt:
+      result: done
+      changed_files:
+        - "src/novelvideo/task_backend/runners/freezone.py"
+      commands:
+        - cmd: "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; ast.parse(open('src/novelvideo/task_backend/runners/freezone.py').read())\" && echo AST_OK"
+          status: pass
+          note: "AST_OK"
+        - cmd: "grep -c 'freezone_video_greybox' src/novelvideo/task_backend/runners/freezone.py"
+          status: pass
+          note: "10 >= 4"
+        - cmd: "grep -A1 '\"run_freezone_video_greybox\": LeafEgressRule' src/novelvideo/task_backend/runners/freezone.py | grep -c 'LeafEgress.LOCAL'"
+          status: pass
+          note: "1"
+        - cmd: "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -c \"import novelvideo.task_backend.runners.freezone\""
+          status: pass
+          note: "IMPORT_OK"
+      summary: "按 upscale 四件套注册 greybox runner：FREEZONE_LEAF_EGRESS 新增 LOCAL/EG-20a 键（只增不改，插在 upscale 与 compose 之间）；async runner 解 payload、ensure_freezone_dirs、_update 0.05 起步、_call_freezone_leaf 透传全部参数；进度经 on_progress 闭包转 _update（_call_freezone_leaf 只分发 kwargs 不透传 callback，已读源码确认）；同步包装走 _run_cancellable；register_project_task_runner(requires_home_node=False)。四条 verify 全 pass，+57 行纯新增。"
+      deviations: []
+      remaining_blockers: []
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "3b-2：API 层接线——schemas.py 新增 FreezoneVideoGreyboxRequest、routes/freezone.py 新增 POST /freezone/video/greybox 端点（显式 queue_kind=\"video\"）、routes/tasks.py 加任务标签。"
+    inputs:
+      - "api/schemas.py:1737（FreezoneVideoComposeRequest 范式）"
+      - "api/routes/freezone.py:9926（freezone_video_upscale 端点范式）"
+      - "api/routes/freezone.py:2749（_enqueue_or_start_freezone_media_job）"
+      - "api/routes/tasks.py:82（标签表）"
+    constraints:
+      - "入队必须显式 queue_kind=\"video\"，不接受默认 ffmpeg。"
+      - "端点流程：_resolve_freezone_project → resolve_static_url_to_path → _new_job_id → 入队 → _accepted_job_response。"
+      - "参数全部可选，默认值走后端。"
+    allowed_files:
+      - "src/novelvideo/api/schemas.py"
+      - "src/novelvideo/api/routes/freezone.py"
+      - "src/novelvideo/api/routes/tasks.py"
+    verify:
+      - "PYTHONDONTWRITEBYTECODE=1 python3 -c \"import ast; [ast.parse(open(f).read()) for f in ['src/novelvideo/api/schemas.py','src/novelvideo/api/routes/freezone.py','src/novelvideo/api/routes/tasks.py']]\" && echo AST_OK"
+      - "grep -c 'FreezoneVideoGreyboxRequest' src/novelvideo/api/schemas.py src/novelvideo/api/routes/freezone.py  # 合计 >=2"
+      - "grep -c 'queue_kind=\"video\"' src/novelvideo/api/routes/freezone.py  # >=2（原 video_gen + 新增 greybox）"
+      - "grep -c '/freezone/video/greybox' src/novelvideo/api/routes/freezone.py  # >=1"
+      - "grep -c 'freezone_video_greybox' src/novelvideo/api/routes/tasks.py  # >=1"
+    stop_if:
+      - "需要改 allowed_files 之外的文件。"
+      - "_enqueue_or_start_freezone_media_job 签名与 upscale 用法不一致。"
+      - "验证两次失败。"
+    receipt:
+      result: done
+      changed_files:
+        - "src/novelvideo/api/schemas.py"
+        - "src/novelvideo/api/routes/freezone.py"
+        - "src/novelvideo/api/routes/tasks.py"
+      commands:
+        - cmd: "三文件 ast parse"
+          status: pass
+          note: "AST_OK"
+        - cmd: "grep -c 'FreezoneVideoGreyboxRequest' schemas+freezone"
+          status: pass
+          note: "3 (>=2)"
+        - cmd: "grep -c 'queue_kind=\"video\"' freezone.py"
+          status: pass
+          note: "2 (>=2)"
+        - cmd: "grep -c '/freezone/video/greybox' freezone.py"
+          status: pass
+          note: "1 (>=1)"
+        - cmd: "grep -c 'freezone_video_greybox' tasks.py"
+          status: pass
+          note: "1 (>=1)"
+        - cmd: "import novelvideo.api.schemas / novelvideo.api.routes.freezone 冒烟"
+          status: pass
+          note: "SCHEMA_OK / ROUTES_OK"
+        - cmd: "router.routes 含 greybox 路径 + model_dump 默认值一致性"
+          status: pass
+          note: "ROUTE_PATHS + DEFAULTS_OK"
+      summary: "schemas.py 新增 FreezoneVideoGreyboxRequest（source_url 必填，渲染参数全可选，默认值与 jobs.py runner 一致）；freezone.py 仿 upscale 新增 POST /freezone/video/greybox，显式 queue_kind=\"video\"；tasks.py 加标签「视频转白模」。8 条命令全 pass。"
+      deviations:
+        - "端点对 _enqueue_or_start_freezone_media_job 无条件 return（greybox 无 routes 内本地 _start_* 函数；helper 的 ctx-None 分支本身返回 _accepted_job_response），故未包 try/except RuntimeError。"
+        - "在 _enqueue_or_start_freezone_media_job 的 task_type Literal 中增加 freezone_video_greybox（类型正确性所需）。"
+      remaining_blockers: []
+
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "3c：前端接线——ops.ts 新增 freezoneVideoGreybox 客户端、NodeActionToolbar 加「转白模」入口（节点派生仿 handleVideoUpscale + 直接提交仿 handleAudioSeparate）、三语 translation.json 加词条。"
+    inputs:
+      - "frontend/src/api/ops.ts:272-294（upscale 客户端范式）"
+      - "frontend/src/features/canvas/ui/NodeActionToolbar.tsx:1735（handleVideoUpscale）"
+      - "frontend/src/features/canvas/ui/NodeActionToolbar.tsx:1769（handleAudioSeparate 直接提交范式）"
+    constraints:
+      - "不做配置浮层，入口直接提交（计划 ponytail 决策）。"
+      - "三语扁平叶子键数必须对齐（实测当前各 6387）。"
+      - "不改 upscale/audio-separate 现有行为。"
+    allowed_files:
+      - "frontend/src/api/ops.ts"
+      - "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+      - "frontend/public/locales/zh/translation.json"
+      - "frontend/public/locales/en/translation.json"
+      - "frontend/public/locales/vi/translation.json"
+    verify:
+      - "cd frontend && npx tsc --noEmit -p tsconfig.json && echo TSC_CLEAN  # 基线 exit 0，任何新错误即失败（禁止 | head 掩盖）"
+      - "cd frontend && node -e 扁平叶子键计数  # 三数相等且各 >=6388（基线 6387）"
+    stop_if:
+      - "需要改 allowed_files 之外的文件。"
+      - "tsc 报错与本次改动无关且无法判断。"
+      - "验证两次失败。"
+    receipt:
+      result: done
+      changed_files:
+        - "frontend/src/api/ops.ts"
+        - "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+        - "frontend/public/locales/zh/translation.json"
+        - "frontend/public/locales/en/translation.json"
+        - "frontend/public/locales/vi/translation.json"
+      commands:
+        - cmd: "cd frontend && npx tsc --noEmit -p tsconfig.json && echo TSC_CLEAN"
+          status: pass
+          note: "TSC_CLEAN，exit 0 零输出"
+        - cmd: "cd frontend && node -e 扁平叶子键计数"
+          status: pass
+          note: "[6395,6395,6395] 三数相等且 >=6388；每语新增 4 键且键名一致"
+      summary: "前端接线完成：ops.ts 新增 submitFreezoneVideoGreybox（参数对齐 T004 schema，未传键 JSON.stringify 丢弃走后端默认）；NodeActionToolbar 新增「转白模」入口——仿 upscale 建派生节点（isGreyboxNode/greyboxSourceUrl/addEdge/选中），仿 audio-separate 直接提交端点并 awaitTaskCompletion 回填 output_url，失败落节点 generationError；三语各加 4 键。diff 纯新增 179 insertions/0 deletions，upscale/audio-separate 行为零改动。"
+      deviations:
+        - "派生节点用 referenceOnly:true 抑制底部生成面板（isUpscaleNode 同款抑制在不可改的 VideoNode.tsx，referenceOnly 是既有连线零跨文件改动达同样效果）。"
+        - "isGreyboxNode/greyboxSourceUrl 打标作语义存档（当前无读取方，面板抑制实际由 referenceOnly 承担）。"
+        - "未用 fetchFreezoneJobResult 兜底：/jobs result 端点 task_type Literal 未含 greybox 且 routes/freezone.py 不在 allowed_files；SSE result 固定携带 output_url 无需兜底。"
+        - "失败提示复用 video 节点既有 generationError 渲染，故仅新增 noResult 键；generating 键用作按钮 busy 态 title。"
+      remaining_blockers: []
+
+  - id: T011
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "修复 greybox_depth.predict_depth 形状契约：interpolate 后取 [0,0]（禁止照抄 pano_sharp 的 squeeze(0)，那边模型输出已 3D），返回 (H,W) float32 与 docstring/jobs.py 调用方一致。"
+    inputs:
+      - "T001/T002 实证：当前代码 squeeze(0) 得 (1,H,W)，jobs.py L575 直传必崩 ValueError；处方 [0,0] 实测翻绿"
+      - "src/novelvideo/generators/greybox_depth.py L52-68"
+      - "src/novelvideo/freezone/jobs.py L575 调用点"
+    constraints:
+      - "只改 predict_depth 内的取帧方式，不动签名/其他函数/docstring 承诺。"
+      - "这是 T002 裁决的阻断性 bug 修复（根因在 predict_depth，全部调用方汇聚处）。"
+    allowed_files:
+      - "src/novelvideo/generators/greybox_depth.py"
+    verify:
+      - "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -c 哑模型 predict_depth 契约检查  # expect OK (720,1280)；当前代码必败"
+      - "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python src/novelvideo/generators/greybox_depth.py  # expect OK: 依赖就绪"
+    stop_if:
+      - "修复需要动 jobs.py 或其他文件（契约判断有误，停下汇报）。"
+      - "验证两次失败。"
+    receipt:
+      result: done
+      changed_files:
+        - "src/novelvideo/generators/greybox_depth.py"
+      commands:
+        - cmd: "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -c 哑模型 predict_depth 契约检查"
+          status: pass
+          note: "修复前 AssertionError (1,720,1280)；修复后 OK (720,1280) ndim==2，符合 docstring 与 depth_to_pointcloud 契约"
+        - cmd: "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python src/novelvideo/generators/greybox_depth.py"
+          status: pass
+          note: "OK: 依赖就绪"
+      summary: "修复 predict_depth 形状契约：interpolate 后由 .squeeze(0) 改为 [0,0]，返回 (720,1280) ndim==2，与 docstring 及 jobs.py 消费方 depth_to_pointcloud 的 h,w=depth01.shape 一致。仅改一行取帧方式；调用方核查确认 predict_depth 是全部调用汇聚处，无需越界改 jobs.py。"
+      deviations: []
+      remaining_blockers: []
+
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "执行分层测试并产出证据报告：L1 复跑、L2a 依赖探测+哑模型形状契约（T011 后必须双过）、L2b 权重冒烟（按代理裁决）、L3 合成 ffmpeg 腿（必过）+ 真实腿（环境门槛），结果落盘 notes/evidence-report.md。"
+    inputs:
+      - "T003/T004/T005/T011 receipt"
+      - "T002 定稿 oracle（goal.md Goal Oracle 块）"
+      - "goal.md 的验收标准"
+    constraints:
+      - "每条命令的真实输出必须原样进报告，不许只写结论。"
+      - "沙箱可验腿失败=任务失败；环境门槛腿（L2b/L3 真实腿）失败=SKIP+同会话证据+逐字复跑命令，禁止伪造通过。"
+      - "L3 真实腿目视项（人体/结构可辨）标注为主人体检，报告附抽帧样本路径，不自动判过。"
+    allowed_files:
+      - "docs/goals/video-greybox-completion/notes/evidence-report.md"
+    verify:
+      - "test -f docs/goals/video-greybox-completion/notes/evidence-report.md"
+      - "grep -cE 'OK|SKIP|FAIL' docs/goals/video-greybox-completion/notes/evidence-report.md  # >=3"
+      - "报告含 L1 复跑原样输出、L2a 双过、L3 合成腿 ffprobe 时长/音轨/分辨率三要素"
+    stop_if:
+      - "测试需要主人提供真实视频素材。"
+      - "同一失败连续两次且原因不明。"
+    receipt:
+      result: done
+      changed_files:
+        - "docs/goals/video-greybox-completion/notes/evidence-report.md"
+      commands:
+        - cmd: "L1 greybox_render.py 自检"
+          status: pass
+          note: "greybox_render self-check OK, exit 0"
+        - cmd: "L2a-1 greybox_depth.py 依赖探测"
+          status: pass
+          note: "depth_model_available: True / OK"
+        - cmd: "L2a-2 哑模型 predict_depth 契约"
+          status: pass
+          note: "OK (720,1280) ndim==2, T011 修复后复跑留档"
+        - cmd: "curl 代理存活检查 -x http://127.0.0.1:7897"
+          status: pass
+          note: "200，L2b 合法证据三条件之一"
+        - cmd: "L2b 带代理 env load_depth_model+predict_depth 单帧断言"
+          status: pass
+          note: "WEIGHTS_OK (360,640) 0.1446 6.4950，权重经代理下载+CPU 推理通过"
+        - cmd: "ffmpeg testsrc+sine 合成源"
+          status: pass
+          note: "合成源 3.000000s"
+        - cmd: "L3 合成腿完整 runner（/tmp/gb_l3_driver.py）"
+          status: pass
+          note: "24 帧端到端, exit 0"
+        - cmd: "ffprobe 三要素 on 合成腿产物"
+          status: pass
+          note: "3.000000 / aac / h264,320,240"
+        - cmd: "find frontend/public tests state -iname '*.mp4'"
+          status: pass
+          note: "19 条命中, 选用 ai-avatar.mp4 (1600x1200/14.07s/aac)"
+        - cmd: "L3 真实腿完整 runner（/tmp/gb_l3_real_driver.py）"
+          status: pass
+          note: "113 帧端到端, exit 0"
+        - cmd: "ffprobe 三要素 on 真实腿产物"
+          status: pass
+          note: "14.048005 (源 14.066667) / aac / h264,1600,1200"
+        - cmd: "ffmpeg select 抽帧样本 + numpy 非空白检查"
+          status: pass
+          note: "样本帧 std 46+ 非空白, 目视判定归主人"
+        - cmd: "test -f + grep 三要素关键证据"
+          status: pass
+          note: "V1 pass, V2 count=27>=3, V3 关键证据 15 处在场"
+      summary: "分层测试全部实跑通过，零 FAIL 零 SKIP：L1 复跑 OK；L2a 双过；L2b 代理存活(200)下权重下载+推理通过；L3 合成腿完整 runner 端到端 3.000000s/aac/320x240；L3 真实腿用仓库 ai-avatar.mp4 113 帧端到端，14.048005s(源14.066667)/aac/1600x1200 机械验收过。报告 457 行逐字含全部命令原始输出。"
+      deviations:
+        - "L3 合成腿因 L2b 通过而走完整 runner（非降级 ffmpeg 两段形态），符合任务卡分支条件。"
+        - "真实腿 runner 驱动以 tail -15 收敛 113 行同模式进度日志，报告已逐字标注管道与保留行。"
+      remaining_blockers:
+        - "L3 真实腿目视项（人体/结构可辨）待主人体检：样本帧与完整产物路径见 evidence-report.md，报告未自动判过。"
+
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "片段重拍：时间轴选区 [t1,t2] 局部重生成——保留 [0,t1] 与 [t2,end]，用边界帧作锚重生成中段，ffmpeg 拼回。"
+    inputs:
+      - "freezone compose 端点已支持 source_start/source_end 区间裁剪拼接"
+      - "first_last_frame 模式（models.py:20）作边界锚定"
+      - "VideoComposeModal 时间轴组件（本地剪辑 UI 可加选区交互）"
+      - "memory: dramaclaw-feature-backlog"
+    constraints:
+      - "模型无关：只读能力目录声明，keyframe 模式降级时功能降级不缺席。"
+      - "keyframe 与参考图互斥是模型无关约束，UI 须向主人说明段内一致性仅靠锚帧承载。"
+      - "重拍段若含对白，原音轨不能沿用（纯画面段风险归零）。"
+      - "激活前必须经 Judge 细化 allowed_files/verify（当前为占位卡）。"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "allowed_files/verify 未经 Judge 定稿。"
+      - "边界帧重生成的接缝质量不可接受且无缓解手段。"
+      - "验证两次失败。"
+    receipt:
+      result: blocked
+      blocked_reason: "后续 tranche（阶段二）功能包：白模 tranche 已完成并经终审（T999），本卡转为后续 tranche 占位。激活前必须经 Judge 细化 allowed_files/verify（stop_if 已内置该前置）。核心思路见 goal.md 阶段二表与 memory dramaclaw-feature-backlog。"
+      summary: "阶段二占位卡：白模 tranche 完成后由 PM 在新板/后续 tranche 中细化激活，非本 tranche 范围。"
+
+  - id: T008
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "视频延长：尾帧续接——取上段尾帧作下一段首帧锚，复用原 beat 角色/场景参考与 prompt 生成下一段，ffmpeg concat，可重复至目标时长。"
+    inputs:
+      - "return_last_frame（seedance2_i2v/models.py:39）+ last_frame_path 已落库"
+      - "first_frame 模式 + ffmpeg concat（video_composer.py）"
+      - "memory: dramaclaw-feature-backlog"
+    constraints:
+      - "每次延长多长由该模型 maxDuration 决定（agnes 12s / seedance 30s），功能不写死数字。"
+      - "缓解一致性漂移：第二段须带原 beat 角色 identity 参考图。"
+      - "激活前必须经 Judge 细化 allowed_files/verify（当前为占位卡）。"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "allowed_files/verify 未经 Judge 定稿。"
+      - "尾帧作首帧的模式在当前模型不可用且无降级路径。"
+      - "验证两次失败。"
+    receipt:
+      result: blocked
+      blocked_reason: "后续 tranche（阶段二）功能包：白模 tranche 已完成并经终审（T999），本卡转为后续 tranche 占位。激活前必须经 Judge 细化 allowed_files/verify（stop_if 已内置该前置）。核心思路见 goal.md 阶段二表与 memory dramaclaw-feature-backlog。"
+      summary: "阶段二占位卡：白模 tranche 完成后由 PM 在新板/后续 tranche 中细化激活，非本 tranche 范围。"
+
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "角色库跨项目复用：角色加 is_global_asset 标记 + 全局角色表 + 「提升到全局库/从全局库引入」两个动作 + 标签维度。"
+    inputs:
+      - "sync_global_props.py 的 is_global_asset + 全局表合并同步范式"
+      - "全局共享层 STATE_DIR/_shared/（utils/project_paths.py）"
+      - "角色接口现全挂项目下（api/routes/characters.py），已有 age_group 维度"
+      - "memory: dramaclaw-feature-backlog"
+    constraints:
+      - "自用场景不做 7000 预置角色库，只做跨项目复用自捏主演。"
+      - "处理资产路径复制（角色图在项目内）、重名冲突、删除级联。"
+      - "激活前必须经 Judge 细化 allowed_files/verify（当前为占位卡）。"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "allowed_files/verify 未经 Judge 定稿。"
+      - "跨项目资产复制策略涉及数据迁移风险。"
+      - "验证两次失败。"
+    receipt:
+      result: blocked
+      blocked_reason: "后续 tranche（阶段二）功能包：白模 tranche 已完成并经终审（T999），本卡转为后续 tranche 占位。激活前必须经 Judge 细化 allowed_files/verify（stop_if 已内置该前置）。核心思路见 goal.md 阶段二表与 memory dramaclaw-feature-backlog。"
+      summary: "阶段二占位卡：白模 tranche 完成后由 PM 在新板/后续 tranche 中细化激活，非本 tranche 范围。"
+
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "多语言台词 + 口型：目标语种参数 → 台词翻译 → 逐字注入 prompt（口型走模型原生对话驱动，不接外部 lip-sync）。"
+    inputs:
+      - "spoken_dialogue.py（台词逐字注入 prompt + required_seedance2_dialogue_texts 校验）"
+      - "AssetLanguage 现硬编码 zh/en（utils/source_language.py:14），且是资产文案语言非台词语言"
+      - "配音链路已齐：IndexTTS2 + ElevenLabs + voice_clone.py"
+      - "memory: dramaclaw-feature-backlog"
+    constraints:
+      - "口型能力探测式：模型支持原生出声就用，不支持明确降级提示，不自研 lip-sync。"
+      - "只做中文剧可整项裁剪（需主人确认语种需求后再定范围）。"
+      - "激活前必须经 Judge 细化 allowed_files/verify（当前为占位卡）。"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "allowed_files/verify 未经 Judge 定稿。"
+      - "目标语种需求未获主人确认。"
+      - "验证两次失败。"
+    receipt:
+      result: blocked
+      blocked_reason: "后续 tranche（阶段二）功能包：白模 tranche 已完成并经终审（T999），本卡转为后续 tranche 占位。激活前必须经 Judge 细化 allowed_files/verify（stop_if 已内置该前置）。核心思路见 goal.md 阶段二表与 memory dramaclaw-feature-backlog。"
+      summary: "阶段二占位卡：白模 tranche 完成后由 PM 在新板/后续 tranche 中细化激活，非本 tranche 范围。"
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "终审：映射全部 receipt 与测试证据回原始 outcome（接线完成 + 自己测试 + 证据报告），判定 full_outcome_complete。"
+    inputs:
+      - "All done task receipts"
+      - "notes/evidence-report.md"
+      - "git diff 现状"
+    constraints:
+      - "Do not implement."
+      - "证据不足即 not_complete，禁止因『代码看着对』放行。"
+      - "沙箱阻塞项须有明确 receipt 与复跑命令才算合规。"
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "missing evidence"
+      - "next task if not complete"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      rationale: "白模 tranche 完整达成并经独立复核：接线闭环全部实证（runners 四件套、端点显式 queue_kind=\"video\"、jobs.py 四段 runner、ops.ts 客户端、toolbar handleVideoGreybox、三语键 [6395,6395,6395] 对齐）；七个代码文件 git numstat 全 N/0 纯新增，upscale/compose/audio-separate 行为零改动。L1/L2a 复跑通过；L2b 复跑输出与报告逐字一致且 HF 权重缓存实体在盘；L3 两腿产物 ffprobe 复探 3.000000/aac/320x240 与 14.048005(源14.066667)/aac/1600x1200 与报告一致；tsc 复跑 TSC_CLEAN。目视项按 oracle 设计归主人体检未自动判过，合规。语义边界=白模 tranche（接线+自测+证据报告）；T007-T010 四功能不在本次认证范围。"
+      missing_evidence: []
+      facts:
+        - "接线：git diff --numstat 七代码文件全部 N/0 纯新增（runners 57/schemas 61/freezone 143/tasks 1/jobs 133/ops 43/toolbar 136），两 generators 新文件在盘"
+        - "L1 复跑 OK exit 0；L2a OK exit 0；L2b 复跑输出与报告逐字一致且权重缓存实体在盘"
+        - "L3 合成腿 ffprobe 3.000000/aac/h264,320,240；真实腿 14.048005 vs 源 14.066667/aac/h264,1600x1200"
+        - "i18n 三语 [6395,6395,6395] 对齐；目视项归主人体检，样本路径已列明"
+        - "证据报告 457 行与 T006 receipt 一致；代理 200 同会话证据在场，L2b 合法证据三条件齐备"
+      commands:
+        - cmd: "L1/L2a/L2b 复跑"
+          status: pass
+          note: "全部 exit 0，L2b 与报告逐字一致"
+        - cmd: "ffprobe 三要素 on 合成腿+真实腿产物"
+          status: pass
+          note: "与报告完全吻合"
+        - cmd: "cd frontend && npx tsc --noEmit -p tsconfig.json"
+          status: pass
+          note: "TSC_CLEAN exit 0"
+        - cmd: "git diff --numstat 七代码文件"
+          status: pass
+          note: "全部 N/0 纯新增"
+        - cmd: "node i18n 扁平叶子键计数"
+          status: pass
+          note: "[6395,6395,6395]"
+      next_task_if_not_complete: null
+
+checks:
+  dirty_fingerprint: "白模 9 文件纯新增 + MONOFORM/hermes/scene360/superchat 既有工作区改动"
+  last_verification:
+    result: pass
+    task: T999
+    commands:
+      - "PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python src/novelvideo/generators/greybox_render.py → self-check OK"
+      - "./.venv/bin/python src/novelvideo/generators/greybox_depth.py → depth_model_available True/OK"
+      - "HTTPS_PROXY=... ./.venv/bin/python -c load+predict 单帧 → WEIGHTS_OK (360,640)"
+      - "ffprobe 三要素 → 3.000000/aac/320x240（合成腿）与 14.048005/aac/1600x1200（真实腿）"
+      - "cd frontend && npx tsc --noEmit -p tsconfig.json → TSC_CLEAN"
+      - "git diff --numstat 七文件 → 全部 N/0"

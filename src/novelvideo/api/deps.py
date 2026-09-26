@@ -5,7 +5,7 @@
 """
 
 import contextlib
-import re
+import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,14 +140,31 @@ def may_run_asset_repair(ctx: ProjectContext | None) -> bool:
     return role_allows(getattr(ctx, "effective_role", "") or "", PROJECT_ROLE_EDITOR)
 
 
-def validate_project_name(name: str):
-    """验证项目名称格式。"""
+def _project_name_charset_ok(name: str) -> bool:
+    """与前端 ``getProjectNameValidationKey`` 同一字符集。
+
+    项目名会成为目录的最后一段：允许各文字的字母（含中文）、ASCII 数字和下划线，
+    拒绝空格、标点、路径分隔符。
+    """
+    if not name:
+        return False
+    for ch in name:
+        if ch == "_" or "0" <= ch <= "9":
+            continue
+        if not unicodedata.category(ch).startswith("L"):
+            return False
+    return True
+
+
+def validate_project_name(name: str) -> str:
+    """校验项目名称，并返回 NFC 形式。"""
+    name = unicodedata.normalize("NFC", name)
     if len(name) > 64:
         raise HTTPException(
             status_code=400,
             detail="Project name must be at most 64 characters long",
         )
-    if not name or not re.match(r"^[a-zA-Z0-9_]+$", name):
+    if not _project_name_charset_ok(name):
         raise HTTPException(
             status_code=400,
             detail="Project name must contain only letters, digits, and underscores",
@@ -157,6 +174,7 @@ def validate_project_name(name: str):
             status_code=400,
             detail="Project name must not start with underscore",
         )
+    return name
 
 
 def get_output_dir(username: str, project: str) -> str:

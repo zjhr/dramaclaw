@@ -1038,6 +1038,172 @@ def test_newapi_image_http_5xx_does_not_retry_in_app(monkeypatch):
     assert attempts == 1
 
 
+def test_newapi_image_edit_retries_single_url_after_array_rejected(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = []
+
+    class RejectArrayResponse:
+        status_code = 400
+        text = (
+            '{"error":{"message":"invalid request",'
+            '"type":"invalid_request_error","param":"","code":"10001"}}'
+        )
+        headers = {"x-oneapi-request-id": "req-array"}
+
+        def json(self):
+            return {
+                "error": {
+                    "message": "invalid request",
+                    "type": "invalid_request_error",
+                    "param": "",
+                    "code": "10001",
+                }
+            }
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError(
+                "invalid request",
+                request=httpx.Request("POST", "http://newapi.test/v1/images/edits"),
+                response=self,
+            )
+
+    class OkResponse:
+        status_code = 200
+        headers = {"x-oneapi-request-id": "req-scalar"}
+
+        def json(self):
+            return {"data": [{"b64_json": base64.b64encode(b"edited").decode()}]}
+
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            posted.append(json)
+            if len(posted) == 1:
+                return RejectArrayResponse()
+            return OkResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "upload_image_bytes",
+        lambda data, *, ext="png", ttl=None, image_transform=None: "https://relay.test/one.png",
+    )
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="LingShan-G2",
+            prompt="extend the canvas",
+            reference_images=[b"ref-a"],
+            image_config={"aspect_ratio": "3:4", "image_size": "1K", "quality": "medium"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert error == ""
+    assert image_bytes == b"edited"
+    assert len(posted) == 2
+    assert posted[0]["image"] == ["https://relay.test/one.png"]
+    assert posted[1]["image"] == "https://relay.test/one.png"
+    assert posted[1]["quality"] == posted[0]["quality"]
+    assert posted[1]["width"] == posted[0]["width"]
+    assert posted[1]["height"] == posted[0]["height"]
+
+
+def test_newapi_image_edit_does_not_collapse_multiple_images(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = []
+
+    class RejectResponse:
+        status_code = 400
+        text = (
+            '{"error":{"message":"invalid request",'
+            '"type":"invalid_request_error","param":"","code":"10001"}}'
+        )
+        headers = {"x-oneapi-request-id": "req-multi"}
+
+        def json(self):
+            return {
+                "error": {
+                    "message": "invalid request",
+                    "code": "10001",
+                }
+            }
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError(
+                "invalid request",
+                request=httpx.Request("POST", "http://newapi.test/v1/images/edits"),
+                response=self,
+            )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            posted.append(json)
+            return RejectResponse()
+
+    class FakeUsageMeter:
+        async def reserve_current_model_call_credit(self, **_kwargs):
+            return "reservation_1"
+
+        async def refund_model_call_credit_reservation(self, reservation_id, *, metadata=None):
+            return None
+
+        async def mark_current_paid_execution_attempt(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(nanobanana_grid, "get_usage_meter", lambda: FakeUsageMeter())
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "upload_image_bytes",
+        lambda data, *, ext="png", ttl=None, image_transform=None: f"https://relay.test/{data.decode()}.png",
+    )
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="LingShan-G2",
+            prompt="edit both",
+            reference_images=[b"ref-a", b"ref-b"],
+            image_config={"aspect_ratio": "1:1", "image_size": "1K", "quality": "medium"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes is None
+    assert "HTTP 400" in error
+    assert len(posted) == 1
+    assert posted[0]["image"] == [
+        "https://relay.test/ref-a.png",
+        "https://relay.test/ref-b.png",
+    ]
+
+
 def test_newapi_identity_image_sends_portrait_then_costume_references(
     monkeypatch,
     tmp_path,

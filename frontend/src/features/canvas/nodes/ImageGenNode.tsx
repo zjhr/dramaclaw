@@ -2296,6 +2296,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               插在光标处，不覆盖用户已经写好的内容。 */}
           {promptGalleryOpen && (
             <PromptGalleryModal
+              mediaKind="image"
               onApply={(item) => {
                 promptEditorRef.current?.insertTextAtCursor(item.prompt);
                 setPromptGalleryOpen(false);

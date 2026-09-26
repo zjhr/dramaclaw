@@ -3446,6 +3446,7 @@ async def stream_assistant_reply(
     project_state_dir: str | Path | None = None,
     egress_context=None,
     requester_user_id: str | None = None,
+    chat_scope: str | None = None,
 ) -> dict[str, Any]:
     run_lock_id = _acquire_chat_run_lock(username, project)
     heartbeat_task = asyncio.create_task(
@@ -3484,6 +3485,7 @@ async def stream_assistant_reply(
                 project_state_dir=project_state_dir,
                 egress_context=egress_context,
                 requester_user_id=requester_user_id,
+                chat_scope=chat_scope,
             )
         if backend != "claude":
             raise RuntimeError(f"Unsupported chat backend: {backend}")
@@ -3568,7 +3570,9 @@ async def _stream_deterministic_assistant_reply(
     return message
 
 
-async def prewarm_chat_backend(username: str, *, project: str | None = None) -> None:
+async def prewarm_chat_backend(
+    username: str, *, project: str | None = None, chat_scope: str | None = None
+) -> None:
     """Best-effort pre-warm of the per-user agent worker.
 
     Called when the user opens a chat / switches project so the first real
@@ -3585,6 +3589,7 @@ async def prewarm_chat_backend(username: str, *, project: str | None = None) -> 
             username,
             scope_kind="project" if project else "home",
             project_id=project or None,
+            chat_scope=chat_scope,
         )
     except Exception:
         return
@@ -3650,6 +3655,7 @@ async def _stream_assistant_reply_hermes(
     project_state_dir: str | Path | None = None,
     egress_context=None,
     requester_user_id: str | None = None,
+    chat_scope: str | None = None,
 ) -> dict[str, Any]:
     """Stream via Hermes ACP subprocess (per-user, sandboxed).
 
@@ -3679,6 +3685,7 @@ async def _stream_assistant_reply_hermes(
         egress_project_id=project or None,
         requester_user_id=requester_user_id,
         authorization=authorization,
+        chat_scope=chat_scope,
     )
     previous_assistant = (
         _assistant_history_contents(

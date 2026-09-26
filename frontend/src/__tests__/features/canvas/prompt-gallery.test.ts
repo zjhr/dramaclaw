@@ -83,6 +83,31 @@ describe("parseRegistrySource", () => {
     expect(items[0].sourceUrl).toBe(
       "https://x.com/flowersslop/status/2044334054380552438",
     );
+    expect(items[0].deferImage).toBeUndefined();
+  });
+
+  it("源要求延迟加载封面时，绝对地址原样留下", () => {
+    const items = parseRegistrySource(
+      [
+        {
+          id: "9",
+          title: "镜面自拍",
+          prompt: "a candid mirror selfie",
+          coverUrl: "https://cdn.example.com/cover.png",
+          sourceUrl: "https://x.com/someone",
+        },
+      ],
+      {
+        ...REGISTRY_SOURCE,
+        id: "openzhenzhen-image",
+        urls: ["/prompt-gallery/openzhenzhen-image.json"],
+        deferImage: true,
+      },
+      "/prompt-gallery/openzhenzhen-image.json",
+    );
+    expect(items[0].deferImage).toBe(true);
+    expect(items[0].coverUrl).toBe("https://cdn.example.com/cover.png");
+    expect(items[0].sourceUrl).toBe("https://x.com/someone");
   });
 
   it("丢掉没有标题或没有正文的条目", () => {
@@ -354,17 +379,30 @@ describe("筛选与聚合", () => {
 });
 
 describe("源注册表", () => {
-  it("id 唯一，且都以 main 分支的 raw 地址为准", () => {
+  it("id 唯一，远程源用 main 的 raw 地址，本地生成物用站内路径", () => {
     const ids = PROMPT_SOURCES.map((source) => source.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const source of PROMPT_SOURCES) {
       expect(source.urls.length).toBeGreaterThan(0);
       for (const url of source.urls) {
+        if (source.id === "openzhenzhen-image") {
+          expect(url).toBe("/prompt-gallery/openzhenzhen-image.json");
+          continue;
+        }
+        if (source.id === "video-prompt-corpus") {
+          expect(url).toBe("/prompt-gallery/video-prompts.json");
+          continue;
+        }
         expect(url).toMatch(/^https:\/\/raw\.githubusercontent\.com\//);
       }
       expect(source.homepage).toMatch(/^https:\/\//);
       expect(source.enabled).toBe(true);
     }
+    const zhenzhen = PROMPT_SOURCES.find((source) => source.id === "openzhenzhen-image");
+    expect(zhenzhen?.mediaKind).toBe("image");
+    expect(zhenzhen?.deferImage).toBe(true);
+    const videoCorpus = PROMPT_SOURCES.find((source) => source.id === "video-prompt-corpus");
+    expect(videoCorpus?.mediaKind).toBe("video");
   });
 
   it("CC BY 源带许可标识，UI 才有得展示", () => {

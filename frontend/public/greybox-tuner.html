@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>深度视频调参台 · Depth Video Tuner</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e9ef;
+    --text-dim: #8b93a3;
+    --accent: #6c8cff;
+    --accent-2: #4a68f0;
+    --ok: #3ecf8e;
+    --warn: #f0b429;
+    --err: #f06c6c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header h1 { font-size: 17px; font-weight: 600; }
+  header .sub { color: var(--text-dim); font-size: 12px; }
+  main {
+    display: grid;
+    grid-template-columns: 340px 1fr 300px;
+    gap: 16px;
+    padding: 16px 24px;
+    max-width: 1600px;
+    margin: 0 auto;
+    align-items: start;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 14px;
+  }
+  label.field { display: block; margin-bottom: 12px; }
+  label.field .name {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  label.field .name output { color: var(--accent); font-variant-numeric: tabular-nums; }
+  input[type="text"], select {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .presets button, .actions button {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .presets button:hover, .actions button:hover { border-color: var(--accent); }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .actions .primary {
+    background: var(--accent-2);
+    border-color: var(--accent-2);
+    font-weight: 600;
+    flex: 2;
+  }
+  .actions .primary:disabled { opacity: .5; cursor: not-allowed; }
+  .switch { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 13px; }
+  .status {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    font-size: 12px;
+    min-height: 38px;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .status.running { color: var(--warn); }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  #resultVideo {
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+    margin-bottom: 12px;
+  }
+  .empty {
+    color: var(--text-dim);
+    font-size: 13px;
+    text-align: center;
+    padding: 60px 0;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+  }
+  .history { display: flex; flex-direction: column; gap: 8px; }
+  .history .item {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .history .item:hover { border-color: var(--accent); }
+  .history .item .t { color: var(--text-dim); font-size: 11px; }
+  .copy-btn {
+    width: 100%;
+    background: var(--accent-2);
+    border: none;
+    color: #fff;
+    font-weight: 600;
+    padding: 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 10px;
+  }
+  .copy-btn:hover { filter: brightness(1.1); }
+  .hint { color: var(--text-dim); font-size: 11px; margin-top: 10px; }
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 26px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    margin-bottom: 12px;
+  }
+  .dropzone:hover { border-color: var(--accent); }
+  .dropzone.dragover { border-color: var(--accent); background: rgba(108,140,255,.08); }
+  .dropzone .big { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .dropzone .small { color: var(--text-dim); font-size: 12px; }
+  .dropzone .file {
+    color: var(--ok);
+    font-size: 13px;
+    word-break: break-all;
+    margin-top: 6px;
+  }
+  .dropzone.uploading { pointer-events: none; opacity: .7; }
+  .progress {
+    height: 6px;
+    background: var(--panel-2);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 10px;
+    display: none;
+  }
+  .progress.on { display: block; }
+  .progress > div {
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    transition: width .2s;
+  }
+  .linkbtn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 11px;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+  }
+  .linkbtn:hover { color: var(--accent); }
+  kbd {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>深度视频调参台</h1>
+  <span class="sub">视频 → 深度 → 灰白几何渲染 · 调好参数一键复制发给开发者</span>
+</header>
+
+<main>
+  <!-- 左：参数面板 -->
+  <section class="panel">
+    <h2>任务目标</h2>
+    <label class="field">
+      <div class="name"><span>视频源（本地文件）</span></div>
+      <div class="dropzone" id="dropzone">
+        <div class="big" id="dzTitle">拖视频到这里</div>
+        <div class="small">或点击选择本地文件 · mp4 / mov / mkv 等</div>
+        <div class="file" id="dzFile" style="display:none"></div>
+      </div>
+      <input type="file" id="fileInput" accept="video/*" style="display:none">
+    </label>
+
+    <h2 style="margin-top:18px">渲染参数</h2>
+    <div class="presets">
+      <button data-preset="default">默认</button>
+      <button data-preset="structure">强结构</button>
+      <button data-preset="soft">柔和</button>
+      <button data-preset="steep">强起伏</button>
+      <button data-preset="blueprint">蓝图风</button>
+      <button data-preset="nogamma">无gamma对照</button>
+      <button data-preset="motion">运动优先</button>
+      <button data-preset="static">静止场景</button>
+      <button data-preset="depthmap">纯深度图</button>
+    </div>
+
+    <label class="field">
+      <div class="name"><span>fps（抽帧率）</span><output id="o-fps">8</output></div>
+      <input type="range" id="p-fps" min="1" max="15" step="1" value="8">
+    </label>
+    <label class="field">
+      <div class="name"><span>fov_deg（视场角）</span><output id="o-fov">60</output></div>
+      <input type="range" id="p-fov" min="30" max="100" step="5" value="60">
+    </label>
+    <label class="field">
+      <div class="name"><span>ambient（环境光）</span><output id="o-ambient">0.15</output></div>
+      <input type="range" id="p-ambient" min="0" max="0.8" step="0.05" value="0.15">
+    </label>
+    <label class="field">
+      <div class="name"><span>base_grey（受光灰度）</span><output id="o-base">0.9</output></div>
+      <input type="range" id="p-base" min="0.3" max="1" step="0.05" value="0.9">
+    </label>
+    <label class="field">
+      <div class="name"><span>outline（边缘描边）</span><output id="o-outline">0</output></div>
+      <input type="range" id="p-outline" min="0" max="1" step="0.1" value="0">
+    </label>
+    <label class="field">
+      <div class="name"><span>gamma（明暗编码）</span><output id="o-gamma">2.2</output></div>
+      <input type="range" id="p-gamma" min="1" max="3" step="0.1" value="2.2">
+    </label>
+    <div class="hint" style="margin-top:-4px">gamma 2.2 = 显示器标准（推荐）；调小更暗、暗部细节更少</div>
+    <label class="field">
+      <div class="name"><span>smooth（深度预平滑）</span><output id="o-smooth">1</output></div>
+      <input type="range" id="p-smooth" min="0" max="3" step="0.5" value="1">
+    </label>
+    <label class="field">
+      <div class="name"><span>fill_strength（填充光）</span><output id="o-fill">0.45</output></div>
+      <input type="range" id="p-fill" min="0" max="1" step="0.05" value="0.45">
+    </label>
+    <label class="field">
+      <div class="name"><span>temporal_window（跨帧平滑）</span><output id="o-tw">1</output></div>
+      <input type="range" id="p-tw" min="1" max="11" step="2" value="1">
+    </label>
+    <div class="hint" style="margin-top:-4px">压帧间抖动但会把真实运动抹成拖影——默认关；仅静止/慢速场景试 3</div>
+    <div class="switch">
+      <input type="checkbox" id="p-invert">
+      <label for="p-invert">invert（深度方向翻转：近亮远暗 ↔ 远亮近暗）</label>
+    </div>
+    <label class="field">
+      <div class="name"><span>shade（着色模式）</span></div>
+      <select id="p-shade">
+        <option value="lambert">lambert — 法线光照（有起伏/体积感，偏素描）</option>
+        <option value="depth">depth — 纯深度灰度（近白远灰，无光照）</option>
+      </select>
+    </label>
+    <label class="field">
+      <div class="name"><span>backend（深度后端）</span></div>
+      <select id="p-backend">
+        <option value="frame">frame — DA V2 逐帧（快，可能帧间闪）</option>
+        <option value="vda">vda — Video-Depth-Anything 整段（时序一致，慢）</option>
+      </select>
+    </label>
+    <label class="field">
+      <div class="name"><span>device（推理设备）</span></div>
+      <select id="p-device">
+        <option value="auto">auto（MPS/CUDA 优先）</option>
+        <option value="cpu">cpu（稳，慢）</option>
+      </select>
+    </label>
+
+    <div class="actions">
+      <button class="primary" id="btnRun">跑一次深度视频</button>
+    </div>
+    <div class="status" id="statusBox">填 Project ID 与视频源 URL，调好参数后开跑。12s 视频 CPU 约 1-3 分钟。</div>
+  </section>
+
+  <!-- 中：结果 -->
+  <section class="panel">
+    <h2>结果预览</h2>
+    <div id="resultArea">
+      <div class="empty">还没有结果。跑一次后这里播放深度视频。</div>
+    </div>
+  </section>
+
+  <!-- 右：导出 -->
+  <section class="panel">
+    <h2>导出参数</h2>
+    <button class="copy-btn" id="btnCopy">复制当前参数 JSON</button>
+    <div class="status" id="jsonBox" style="margin-top:0">点上面按钮复制，直接贴给开发者。</div>
+    <h2 style="margin-top:18px">本轮记录</h2>
+    <div class="history" id="historyBox">
+      <div class="hint">每次成功后会留下参数快照，点一下可回填左侧。</div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var PRESETS = {
+    default:   { fps: 8, fov_deg: 60, ambient: 0.15, base_grey: 0.90, outline: 0,   gamma: 2.2, smooth: 1.0, fill: 0.45, tw: 1, invert: false },
+    structure: { fps: 8, fov_deg: 60, ambient: 0.10, base_grey: 0.85, outline: 0.8, gamma: 2.2, smooth: 1.0, fill: 0.35, tw: 1, invert: false },
+    soft:      { fps: 8, fov_deg: 60, ambient: 0.40, base_grey: 0.92, outline: 0,   gamma: 2.2, smooth: 1.5, fill: 0.60, tw: 1, invert: false },
+    steep:     { fps: 8, fov_deg: 95, ambient: 0.08, base_grey: 0.80, outline: 0.4, gamma: 2.2, smooth: 0.5, fill: 0.30, tw: 1, invert: false },
+    blueprint: { fps: 6, fov_deg: 75, ambient: 0.10, base_grey: 0.70, outline: 0.6, gamma: 1.8, smooth: 1.0, fill: 0.45, tw: 1, invert: true  },
+    nogamma:   { fps: 8, fov_deg: 60, ambient: 0.15, base_grey: 0.90, outline: 0,   gamma: 1.0, smooth: 1.0, fill: 0.45, tw: 1, invert: false },
+    motion:    { fps: 8, fov_deg: 60, ambient: 0.15, base_grey: 0.90, outline: 0,   gamma: 2.2, smooth: 0.5, fill: 0.45, tw: 1, invert: false, backend: "frame" },
+    static:    { fps: 8, fov_deg: 60, ambient: 0.15, base_grey: 0.90, outline: 0,   gamma: 2.2, smooth: 1.0, fill: 0.45, tw: 5, invert: false, backend: "frame" },
+    depthmap:  { fps: 8, fov_deg: 60, ambient: 0.15, base_grey: 0.90, outline: 0,   gamma: 2.2, smooth: 1.0, fill: 0.45, tw: 1, invert: false, backend: "frame", shade: "depth" }
+  };
+
+  var SLIDERS = [
+    ["p-fps", "o-fps", "fps"],
+    ["p-fov", "o-fov", "fov_deg"],
+    ["p-ambient", "o-ambient", "ambient"],
+    ["p-base", "o-base", "base_grey"],
+    ["p-outline", "o-outline", "outline"],
+    ["p-gamma", "o-gamma", "gamma"],
+    ["p-smooth", "o-smooth", "smooth"],
+    ["p-fill", "o-fill", "fill"],
+    ["p-tw", "o-tw", "tw"]
+  ];
+
+  function $(id) { return document.getElementById(id); }
+  function readParams() {
+    return {
+      fps: parseInt($("p-fps").value, 10),
+      fov_deg: parseInt($("p-fov").value, 10),
+      ambient: parseFloat($("p-ambient").value),
+      base_grey: parseFloat($("p-base").value),
+      outline: parseFloat($("p-outline").value),
+      gamma: parseFloat($("p-gamma").value),
+      smooth: parseFloat($("p-smooth").value),
+      fill_strength: parseFloat($("p-fill").value),
+      temporal_window: parseInt($("p-tw").value, 10),
+      invert: $("p-invert").checked,
+      backend: $("p-backend").value,
+      shade: $("p-shade").value
+    };
+  }
+  function writeParams(p) {
+    $("p-fps").value = p.fps; $("o-fps").value = p.fps;
+    $("p-fov").value = p.fov_deg; $("o-fov").value = p.fov_deg;
+    $("p-ambient").value = p.ambient; $("o-ambient").value = p.ambient;
+    $("p-base").value = p.base_grey; $("o-base").value = p.base_grey;
+    $("p-outline").value = p.outline; $("o-outline").value = p.outline;
+    $("p-gamma").value = p.gamma; $("o-gamma").value = p.gamma;
+    $("p-smooth").value = p.smooth; $("o-smooth").value = p.smooth;
+    $("p-fill").value = p.fill; $("o-fill").value = p.fill;
+    $("p-tw").value = p.tw; $("o-tw").value = p.tw;
+    $("p-invert").checked = !!p.invert;
+    if (p.backend) $("p-backend").value = p.backend;
+    if (p.shade) $("p-shade").value = p.shade;
+    if (p.device_name) $("p-device").value = p.device_name;
+  }
+
+  SLIDERS.forEach(function (pair) {
+    $(pair[0]).addEventListener("input", function () {
+      $(pair[1]).value = $(pair[0]).value;
+      refreshJson();
+    });
+  });
+  $("p-invert").addEventListener("change", refreshJson);
+  $("p-backend").addEventListener("change", refreshJson);
+  $("p-shade").addEventListener("change", refreshJson);
+
+  document.querySelectorAll(".presets button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var preset = PRESETS[btn.getAttribute("data-preset")];
+      if (preset) { writeParams(preset); refreshJson(); }
+    });
+  });
+
+  function currentJson() {
+    return JSON.stringify(readParams(), null, 2);
+  }
+  function refreshJson() {
+    $("jsonBox").textContent = currentJson();
+  }
+  refreshJson();
+
+  $("btnCopy").addEventListener("click", function () {
+    var text = currentJson();
+    function done() { $("btnCopy").textContent = "已复制 ✓"; setTimeout(function () { $("btnCopy").textContent = "复制当前参数 JSON"; }, 1500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
+    } else { fallbackCopy(text); done(); }
+  });
+  function fallbackCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* 用户可手动复制 jsonBox */ }
+    document.body.removeChild(ta);
+  }
+
+  function setStatus(text, cls) {
+    var box = $("statusBox");
+    box.textContent = text;
+    box.className = "status" + (cls ? " " + cls : "");
+  }
+
+  // 打开方式自检：本页面必须由调参服务（默认 8790）托管，
+  // 从 vite(5173) 等项目页面打开时 fetch 必然失败，直接说清楚。
+  (function checkOrigin() {
+    if (location.port !== "8790") {
+      setStatus(
+        "打开方式不对：当前页面来自 " + location.origin +
+        "，深度视频服务不在这个端口。\n请访问 http://localhost:8790/ （先运行 ./.venv/bin/python scripts/greybox_tuner.py）。",
+        "err"
+      );
+    }
+  })();
+
+  // ---- 本地视频选择（拖拽 / 点击）-----------------------------------------
+  var currentFile = null;
+
+  var dz = $("dropzone");
+  var fileInput = $("fileInput");
+
+  dz.addEventListener("click", function () { fileInput.click(); });
+  fileInput.addEventListener("change", function () {
+    if (fileInput.files && fileInput.files[0]) {
+      setFile(fileInput.files[0]);
+    }
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) {
+      e.preventDefault();
+      dz.classList.add("dragover");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) {
+      e.preventDefault();
+      dz.classList.remove("dragover");
+    });
+  });
+  dz.addEventListener("drop", function (e) {
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  function setFile(file) {
+    currentFile = file;
+    var mb = (file.size / 1024 / 1024).toFixed(1);
+    $("dzTitle").textContent = "已选择视频";
+    var info = $("dzFile");
+    info.style.display = "block";
+    info.textContent = file.name + "（" + mb + " MB）· 点击可更换";
+    setStatus("视频就绪，调好参数后点「跑一次深度视频」。", null);
+  }
+
+  // ---- 提交：文件 + 参数一个请求打独立服务，同步等结果 ---------------------
+  $("btnRun").addEventListener("click", function () {
+    if (!currentFile) {
+      setStatus("先拖一个本地视频进来。", "err");
+      return;
+    }
+    var params = readParams();
+    params.device_name = $("p-device").value;
+    var fd = new FormData();
+    fd.append("file", currentFile, currentFile.name);
+    fd.append("params", JSON.stringify(params));
+
+    $("btnRun").disabled = true;
+    setStatus("上传并推理中……12s 视频 CPU 约 1-3 分钟，MPS 更快。期间页面无进度属正常。", "running");
+
+    fetch("/api/greybox", { method: "POST", body: fd })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.text().then(function (t) {
+            throw new Error("服务返回 " + r.status + "：" + t.slice(0, 300));
+          });
+        }
+        return r.blob();
+      })
+      .then(function (blob) {
+        $("btnRun").disabled = false;
+        var url = URL.createObjectURL(blob);
+        setStatus("完成。", "ok");
+        renderResult(url);
+        addHistory(params, url);
+      })
+      .catch(function (e) {
+        setStatus("失败：" + e.message + "（页面来自 " + location.origin + "）\n请确认访问的是 http://localhost:8790/ 且 scripts/greybox_tuner.py 在跑。", "err");
+        $("btnRun").disabled = false;
+      });
+  });
+
+  function renderResult(url) {
+    var area = $("resultArea");
+    area.textContent = "";
+    var video = document.createElement("video");
+    video.id = "resultVideo";
+    video.src = url;
+    video.controls = true;
+    video.autoplay = true;
+    video.loop = true;
+    area.appendChild(video);
+    var note = document.createElement("div");
+    note.className = "hint";
+    note.textContent = "本地内存回放（刷新失效）。要保存视频：右键播放器 → 存储视频。";
+    area.appendChild(note);
+  }
+
+  function addHistory(params, url) {
+    var box = $("historyBox");
+    if (box.querySelector(".hint")) box.textContent = "";
+    var item = document.createElement("div");
+    item.className = "item";
+    var time = document.createElement("div");
+    time.className = "t";
+    time.textContent = new Date().toLocaleTimeString();
+    item.appendChild(time);
+    var summary = document.createElement("div");
+    summary.textContent = "fps " + params.fps + " · fov " + params.fov_deg + " · amb " + params.ambient +
+      " · base " + params.base_grey + " · out " + params.outline + (params.invert ? " · invert" : "");
+    item.appendChild(summary);
+    item.addEventListener("click", function () { writeParams(params); refreshJson(); });
+    box.insertBefore(item, box.firstChild);
+  }
+})();
+</script>
+</body>
+</html>

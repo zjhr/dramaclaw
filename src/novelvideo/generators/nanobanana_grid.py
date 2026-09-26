@@ -308,7 +308,12 @@ def _newapi_safe_request_context(
     prompt: str,
 ) -> dict[str, object]:
     reference_images = payload.get("image")
-    reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
+    if isinstance(reference_images, list):
+        reference_image_count = len(reference_images)
+    elif isinstance(reference_images, str) and reference_images:
+        reference_image_count = 1
+    else:
+        reference_image_count = 0
     raw_metadata = payload.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     geometry_metadata = {
@@ -327,6 +332,38 @@ def _newapi_safe_request_context(
         "prompt_chars": len(prompt or ""),
         "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16],
     }
+
+
+def _newapi_single_image_url_retry_payload(
+    payload: dict[str, object],
+    response: object,
+) -> dict[str, object] | None:
+    """Retry shape for edit upstreams that reject a one-item image array.
+
+    qkmss answers ``image: [url]`` with HTTP 400 code 10001 and accepts the
+    same request when ``image`` is that URL string. Callers that already
+    accept the array never see this payload.
+    """
+
+    if getattr(response, "status_code", None) != 400:
+        return None
+    image = payload.get("image")
+    if not isinstance(image, list) or len(image) != 1 or not isinstance(image[0], str):
+        return None
+    try:
+        body = response.json()
+    except Exception:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None
+    if str(error.get("code") or "") != "10001":
+        return None
+    if str(error.get("message") or "") != "invalid request":
+        return None
+    retried = dict(payload)
+    retried["image"] = image[0]
+    return retried
 
 
 def _newapi_context_for_error(context: dict[str, object]) -> str:
@@ -3833,6 +3870,26 @@ async def _call_newapi_image_api(
                 headers=headers,
                 json=payload,
             )
+            if request_path == "/images/edits":
+                scalar_payload = _newapi_single_image_url_retry_payload(payload, response)
+                if scalar_payload is not None:
+                    logger.info(
+                        "DramaClawAPI image edit rejected a one-item image array "
+                        "with code 10001; retrying with a single image url"
+                    )
+                    payload = scalar_payload
+                    request_context = _newapi_safe_request_context(
+                        endpoint=endpoint,
+                        request_path=request_path,
+                        model=model,
+                        payload=payload,
+                        prompt=prompt,
+                    )
+                    response = await client.post(
+                        f"{endpoint}{request_path}",
+                        headers=headers,
+                        json=payload,
+                    )
             logger.info(
                 "DramaClawAPI image POST response: status=%s bytes=%s",
                 getattr(response, "status_code", "?"),
@@ -3919,23 +3976,48 @@ async def _call_newapi_image_api(
                 # "newapi 已生成但任务还在 await" hang 点 —— 用单独的短 timeout
                 # (60s),避免落入外层 client 的 600s global timeout 拖很久。
                 # 加 phase log 让 hang 时能定位卡在哪。
-                logger.info("DramaClawAPI image GET url start: %s", image_url[:120])
-                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as fetch:
-                    image_response = await fetch.get(image_url)
-                logger.info(
-                    "DramaClawAPI image GET url done: status=%d bytes=%d",
-                    image_response.status_code,
-                    len(image_response.content),
-                )
-                image_response.raise_for_status()
-                # CF 挑战页/登录页会以 HTTP 200 返回 HTML，raise_for_status 拦不住；
-                # 直接落盘会产出"名为 .png 实为 HTML"的坏资产，前端只显示破损图标。
-                validate_huimeng_media_download(
-                    image_response.content,
-                    image_response.headers.get("content-type"),
-                    expected_media_type="image",
-                    url=image_url,
-                )
+                #
+                # 上游把成品放在 R2 上,而且**每次生成给一个不同的 bucket** ——
+                # 实测会随机连不上(Connection error)或传到一半断(收到 16KB /
+                # 声明 2.2MB)。图在上游已经生成并计费了,这一步失败等于白花钱,
+                # 所以重试几次再放弃。
+                image_response = None
+                for _attempt in range(1, 4):
+                    logger.info(
+                        "DramaClawAPI image GET url start: attempt=%d/3 %s",
+                        _attempt,
+                        image_url[:120],
+                    )
+                    try:
+                        async with httpx.AsyncClient(
+                            timeout=60.0, follow_redirects=True
+                        ) as fetch:
+                            image_response = await fetch.get(image_url)
+                        logger.info(
+                            "DramaClawAPI image GET url done: status=%d bytes=%d",
+                            image_response.status_code,
+                            len(image_response.content),
+                        )
+                        image_response.raise_for_status()
+                        # CF 挑战页/登录页会以 HTTP 200 返回 HTML，raise_for_status 拦不住；
+                        # 直接落盘会产出"名为 .png 实为 HTML"的坏资产，前端只显示破损图标。
+                        validate_huimeng_media_download(
+                            image_response.content,
+                            image_response.headers.get("content-type"),
+                            expected_media_type="image",
+                            url=image_url,
+                        )
+                        break
+                    except Exception as _exc:  # noqa: BLE001
+                        if _attempt == 3:
+                            raise
+                        logger.warning(
+                            "DramaClawAPI image GET url failed (attempt %d/3): %s; retrying",
+                            _attempt,
+                            _exc,
+                        )
+                        await asyncio.sleep(float(_attempt))
+                assert image_response is not None
                 image_bytes = image_response.content
                 await _confirm(
                     reservation_id,

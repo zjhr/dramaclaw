@@ -84,6 +84,9 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_video_upscale": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
+    "run_freezone_video_greybox": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
     "run_freezone_video_compose": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
@@ -108,6 +111,12 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     ),
     "reverse_prompt_from_image": LeafEgressRule(
         "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
+    ),
+    "suggest_reshoot_prompt_from_keyframes": LeafEgressRule(
+        "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
+    ),
+    "extract_reshoot_keyframes": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
     # EG-18a `freezone.text.generate` / `.structured`（:51，`gateway-routed`）
     "translate_freezone_text": LeafEgressRule(
@@ -869,6 +878,57 @@ async def _run_freezone_video_upscale_async(
     }
 
 
+async def _run_freezone_video_greybox_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_video_greybox,
+    )
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+
+    def on_progress(fraction: float, message: str) -> None:
+        _update(ctx, "freezone_video_greybox", job_id, fraction, message)
+
+    _update(ctx, "freezone_video_greybox", job_id, 0.05, "开始视频转深度视频...")
+    output_path, meta = await _call_freezone_leaf(
+        envelope,
+        run_freezone_video_greybox,
+        "run_freezone_video_greybox",
+        project_dir=project_dir,
+        job_id=job_id,
+        source_path=str(payload["source_path"]),
+        fps=int(payload.get("fps") or 8),
+        fov_deg=float(payload.get("fov_deg") or 60.0),
+        ambient=float(payload.get("ambient") or 0.15),
+        base_grey=float(payload.get("base_grey") or 0.9),
+        outline=float(payload.get("outline") or 0.0),
+        invert=bool(payload.get("invert") or False),
+        gamma=float(payload.get("gamma") or 2.2),
+        smooth=float(payload.get("smooth") if payload.get("smooth") is not None else 1.0),
+        fill_strength=float(payload.get("fill_strength") if payload.get("fill_strength") is not None else 0.45),
+        temporal_window=int(payload.get("temporal_window") or 1),
+        backend=str(payload.get("backend") or "frame"),
+        shade=str(payload.get("shade") or "lambert"),
+        device_name=str(payload.get("device_name") or "auto"),
+        progress_callback=on_progress,
+    )
+    rel = output_path.relative_to(project_dir).as_posix()
+    return {
+        "job_id": job_id,
+        "output_format": "mp4",
+        "output_path": str(output_path),
+        "output_url": make_static_url_for_context(ctx, rel),
+        "meta": meta,
+    }
+
+
 async def _run_freezone_audio_separate_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -944,6 +1004,7 @@ async def _run_freezone_video_compose_async(
         fps=int(payload.get("fps") or 30),
         background_color=str(payload.get("background_color") or "#000000"),
         keep_original_audio=bool(payload.get("keep_original_audio", True)),
+        preserve_source_size=bool(payload.get("preserve_source_size", False)),
         tracks=list(payload.get("tracks") or []),
     )
     rel = output_path.relative_to(project_dir).as_posix()
@@ -965,6 +1026,76 @@ def run_freezone_video_upscale(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_video_upscale_async(envelope, ctx))
+
+
+async def _run_freezone_video_reshoot_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_video_reshoot,
+    )
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+
+    def on_progress(fraction: float, message: str) -> None:
+        _update(ctx, "freezone_video_reshoot", job_id, fraction, message)
+
+    _update(ctx, "freezone_video_reshoot", job_id, 0.05, "开始视频片段重拍...")
+    clip_path, full_path, meta = await _call_freezone_leaf(
+        envelope,
+        run_freezone_video_reshoot,
+        "run_freezone_video_reshoot",
+        project_dir=project_dir,
+        job_id=job_id,
+        source_path=str(payload["source_path"]),
+        start_seconds=float(payload.get("start_seconds") or 0.0),
+        end_seconds=float(payload["end_seconds"]),
+        prompt=str(payload.get("prompt") or ""),
+        model=str(payload.get("model") or ""),
+        backend=str(payload.get("backend") or ""),
+        model_params=payload.get("model_params") or None,
+        request_schema=payload.get("request_schema") or None,
+        duration_seconds=int(payload.get("duration_seconds") or 0),
+        resolution=str(payload.get("resolution") or "720p"),
+        generate_audio=bool(payload.get("generate_audio") or False),
+        camera_template_id=(
+            str(payload["camera_template_id"])
+            if payload.get("camera_template_id")
+            else None
+        ),
+        max_duration_seconds=int(payload.get("max_duration_seconds") or 0),
+        progress_callback=on_progress,
+    )
+    clip_rel = clip_path.relative_to(project_dir).as_posix()
+    full_rel = full_path.relative_to(project_dir).as_posix()
+    # 整片是主产物（下游消费它），片段另给一个键供「先试看」节点用。
+    return {
+        "job_id": job_id,
+        "output_format": "mp4",
+        "output_path": str(full_path),
+        "output_url": make_static_url_for_context(ctx, full_rel),
+        "clip_path": str(clip_path),
+        "clip_url": make_static_url_for_context(ctx, clip_rel),
+        "meta": meta,
+    }
+
+
+def run_freezone_video_greybox(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_video_greybox_async(envelope, ctx))
+
+
+def run_freezone_video_reshoot(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_video_reshoot_async(envelope, ctx))
 
 
 def run_freezone_audio_separate(
@@ -1051,6 +1182,7 @@ async def _run_freezone_text_enhance_async(
     ensure_freezone_dirs(project_dir)
     dialect = str(payload.get("dialect") or "image")
     strength = str(payload.get("strength") or "standard")
+    guidance = str(payload.get("guidance") or "")
     _update(ctx, "freezone_text_enhance", job_id, 0.1, "开始强化提示词...")
     enhanced_text, changes = await _call_freezone_leaf(
         envelope,
@@ -1059,6 +1191,7 @@ async def _run_freezone_text_enhance_async(
         text=str(payload.get("text") or ""),
         dialect=dialect,
         strength=strength,
+        guidance=guidance,
     )
     data = {
         "enhanced_text": enhanced_text,
@@ -1352,6 +1485,89 @@ def run_freezone_image_reverse_prompt(
     )
 
 
+async def _run_freezone_video_reshoot_suggest_prompt_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.image_node import suggest_reshoot_prompt_from_keyframes
+    from novelvideo.freezone.jobs import ensure_freezone_dirs, extract_reshoot_keyframes
+    from novelvideo.freezone.paths import outputs_dir
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    source_path = Path(str(payload["source_path"]))
+    start_seconds = float(payload.get("start_seconds") or 0.0)
+    end_seconds = float(payload.get("end_seconds") or 0.0)
+    span = end_seconds - start_seconds
+    _update(
+        ctx,
+        "freezone_video_reshoot_suggest_prompt",
+        job_id,
+        0.2,
+        "正在抽取区间首尾帧...",
+    )
+    # 抽帧与重拍本体同一个 helper：推荐依据的帧必须和用户看到的锚点预览一致。
+    frames_dir = (
+        outputs_dir(project_dir, "freezone_video_reshoot_suggest_prompt") / job_id
+    )
+    first_png, last_png = await _call_freezone_leaf(
+        envelope,
+        extract_reshoot_keyframes,
+        "extract_reshoot_keyframes",
+        source_path=str(source_path),
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        out_dir=frames_dir,
+    )
+    _update(
+        ctx,
+        "freezone_video_reshoot_suggest_prompt",
+        job_id,
+        0.5,
+        "正在根据首尾帧联想提示词...",
+    )
+    prompt = await _call_freezone_leaf(
+        envelope,
+        suggest_reshoot_prompt_from_keyframes,
+        "suggest_reshoot_prompt_from_keyframes",
+        first_frame_path=first_png,
+        last_frame_path=last_png,
+        span_seconds=span,
+    )
+    out = (
+        outputs_dir(project_dir, "freezone_video_reshoot_suggest_prompt")
+        / f"{job_id}.json"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    import json
+
+    out.write_text(
+        json.dumps({"prompt": prompt}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    rel = out.relative_to(project_dir).as_posix()
+    result = {
+        "job_id": job_id,
+        "output_format": "json",
+        "output_path": str(out),
+        "output_url": make_static_url_for_context(ctx, rel),
+        "prompt": prompt,
+    }
+    _update(ctx, "freezone_video_reshoot_suggest_prompt", job_id, 1.0, "提示词推荐完成")
+    return result
+
+
+def run_freezone_video_reshoot_suggest_prompt(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope, _run_freezone_video_reshoot_suggest_prompt_async(envelope, ctx)
+    )
+
+
 async def _run_freezone_audio_speech_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -1563,6 +1779,12 @@ register_project_task_runner(
     "freezone_video_upscale", run_freezone_video_upscale, requires_home_node=False
 )
 register_project_task_runner(
+    "freezone_video_greybox", run_freezone_video_greybox, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_video_reshoot", run_freezone_video_reshoot, requires_home_node=False
+)
+register_project_task_runner(
     "freezone_audio_separate", run_freezone_audio_separate, requires_home_node=False
 )
 register_project_task_runner(
@@ -1583,6 +1805,11 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_image_reverse_prompt",
     run_freezone_image_reverse_prompt,
+    requires_home_node=False,
+)
+register_project_task_runner(
+    "freezone_video_reshoot_suggest_prompt",
+    run_freezone_video_reshoot_suggest_prompt,
     requires_home_node=False,
 )
 register_project_task_runner(

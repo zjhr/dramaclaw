@@ -496,6 +496,308 @@ async def run_freezone_video_upscale(
     return out, meta
 
 
+def _probe_frame_rate(src: Path) -> float | None:
+    """读源视频的 r_frame_rate（如 30/1 -> 30.0）。读不到返回 None，调用方回退。"""
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=r_frame_rate",
+                "-of",
+                "default=nw=1:nk=1",
+                str(src),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        raw = (proc.stdout or "").strip().splitlines()
+        if not raw:
+            return None
+        num, _, den = raw[0].partition("/")
+        value = float(num) / float(den or 1)
+        return value if 0.1 < value < 1000 else None
+    except (ValueError, ZeroDivisionError, subprocess.SubprocessError):
+        return None
+
+
+async def _probe_aspect_ratio(src: Path) -> str:
+    """读源视频的宽高比，归一成目录认的那几个画幅串。
+
+    取不到就退回 "auto"（让模型/网关自己决定）——猜一个固定比例比不猜更糟：
+    拼接时会拉伸。比例落在两个标准值之间时取更近的那个，避免把 16:9 的视频
+    报成 1.78:1 这种网关不认的写法。
+    """
+    if not shutil.which("ffprobe"):
+        return "auto"
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(src)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return "auto"
+        raw = (proc.stdout or "").strip().splitlines()
+        if not raw:
+            return "auto"
+        width_text, _, height_text = raw[0].partition(",")
+        width, height = float(width_text), float(height_text)
+        if width <= 0 or height <= 0:
+            return "auto"
+        ratio = width / height
+        # 目录里出现过的标准画幅（见 /freezone/video/models 的 ratioOptions）。
+        candidates = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16, "21:9": 21 / 9}
+        nearest = min(candidates, key=lambda key: abs(candidates[key] - ratio))
+        # 偏差超过 5% 就不硬套标准值了，交给 auto。
+        if abs(candidates[nearest] - ratio) / ratio > 0.05:
+            return "auto"
+        return nearest
+    except (ValueError, ZeroDivisionError, subprocess.SubprocessError):
+        return "auto"
+
+
+async def extract_reshoot_keyframes(
+    *,
+    source_path: str,
+    start_seconds: float,
+    end_seconds: float,
+    out_dir: Path,
+) -> tuple[Path, Path]:
+    """抽区间首尾两帧到 out_dir，返回 (first_png, last_png)。
+
+    与 `run_freezone_video_reshoot` 段 1 同一套参数（精确 seek + 单帧 + 不缩放），
+    提出来给「提示词推荐」端点复用：推荐也要看同样的两帧，不能各抽一套——
+    用户看到的锚点预览和推荐所依据的帧必须是同一张。
+    """
+    src = Path(source_path)
+    if not src.exists():
+        raise FileNotFoundError(f"video source not found: {src}")
+    if end_seconds <= start_seconds:
+        raise ValueError("end_seconds must be greater than start_seconds")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    first_png = out_dir / "first.png"
+    last_png = out_dir / "last.png"
+    # 尾帧的 seek 必须落在片内。区间默认就是整条视频（end == 片长），而
+    # `ffmpeg -ss <片长>` 一帧都解不出来 —— 进程退出码是 0、stderr 也是空的，
+    # 只是没写出文件，报错信息因此长得像「抽帧失败但什么都不说」，极难定位。
+    # 探一次真实时长，把尾帧夹到 duration - 0.1。
+    # 0.1 是实测出来的：24fps 的片子在 duration-0.05 处仍然解不出帧，-0.1 稳。
+    probe = await asyncio.to_thread(
+        subprocess.run,
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(src)],
+        capture_output=True, text=True, timeout=30,
+    )
+    try:
+        media_duration = float((probe.stdout or "").strip())
+    except ValueError:
+        media_duration = 0.0
+    last_at = end_seconds
+    if media_duration > 0:
+        last_at = min(end_seconds, max(0.0, media_duration - 0.1))
+        if last_at <= start_seconds:
+            last_at = end_seconds  # 整段都贴尾（极短片）：保住「首尾不同帧」的原意
+    for at, target in ((start_seconds, first_png), (last_at, last_png)):
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", f"{at:.3f}", "-i", str(src),
+            "-frames:v", "1", str(target),
+        ]
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True, timeout=120
+        )
+        if proc.returncode != 0 or not target.exists():
+            raise RuntimeError(f"frame extract failed at {at:.3f}s: {proc.stderr[-300:]}")
+    return first_png, last_png
+
+
+async def run_freezone_video_greybox(
+    *,
+    project_dir: Path,
+    job_id: str,
+    source_path: str,
+    fps: int = 8,
+    fov_deg: float = 60.0,
+    ambient: float = 0.15,
+    base_grey: float = 0.9,
+    outline: float = 0.0,
+    invert: bool = False,
+    gamma: float = 2.2,
+    smooth: float = 1.0,
+    fill_strength: float = 0.45,
+    temporal_window: int = 1,
+    backend: str = "frame",
+    shade: str = "lambert",
+    device_name: str = "auto",
+    progress_callback: Optional[Any] = None,
+) -> tuple[Path, dict]:
+    """视频转深度视频：抽帧 -> 深度推理 -> 灰白渲染 -> 合帧（保留原音轨）。
+
+    四段全部本地完成，零 API 成本：
+    1. ffmpeg 按 fps 抽帧
+    2. transformers DA V2 逐帧推理（模型只加载一次，见 `iter_frame_depths`）
+    3. `depth_to_greybox` 渲染灰白几何帧
+    4. ffmpeg 合帧，`-map 1:a?` 保留原音轨（无音轨也不失败）
+    """
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found on PATH; install via brew/apt")
+
+    src = Path(source_path)
+    if not src.exists():
+        raise FileNotFoundError(f"video source not found: {src}")
+
+    out = outputs_dir(project_dir, "freezone_video_greybox") / f"{job_id}.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    def report(fraction: float, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(fraction, message)
+
+    # 重依赖在函数内导入：没装 world extra 时本模块 import 不受影响，
+    # 只在真正跑任务时才因缺依赖失败（与 pano_sharp 的降级路径一致）。
+    from novelvideo.generators.greybox_depth import iter_frame_depths
+    from novelvideo.generators.greybox_render import depth_to_greybox
+
+    with tempfile.TemporaryDirectory(prefix=f"greybox_{job_id}_") as tmp:
+        tmp_dir = Path(tmp)
+        frames_dir = tmp_dir / "frames"
+        frames_dir.mkdir()
+
+        # 1) 抽帧
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            "-vf",
+            f"fps={fps}",
+            str(frames_dir / "%05d.png"),
+        ]
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True, timeout=600
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg frame extract failed: {proc.stderr[-500:]}")
+        frames = sorted(frames_dir.glob("*.png"))
+        if not frames:
+            raise RuntimeError(f"no frames extracted from source video: {src}")
+        report(0.1, f"已抽帧 {len(frames)} 帧")
+
+        # 2+3) 逐帧深度推理 + 渲染（深度占比最高，进度细分到 0.1-0.8）
+        grey_dir = tmp_dir / "grey"
+        grey_dir.mkdir()
+
+        # 时序平滑：逐帧独立推理的深度有帧间抖动（视频深度估计的核心问题，
+        # DepthCrafter / Video-Depth-Anything 两个 CVPR25 项目即为此而生）。
+        # 这里用滑动窗口均值做低成本等效：无滞后、内存 O(window)。
+        # window<=1 关闭；3 是推荐值。
+        from collections import deque
+
+        window: deque[np.ndarray] = deque(maxlen=max(int(temporal_window), 1))
+        frame_count = 0
+
+        def on_depth(fraction: float, message: str) -> None:
+            report(0.1 + fraction * 0.7, message)
+
+        for i, depth in enumerate(
+            iter_frame_depths(
+                frames,
+                device_name=device_name,
+                progress_callback=on_depth,
+                backend=backend,
+            ), 1
+        ):
+            window.append(depth)
+            if len(window) > 1:
+                depth = np.mean(np.stack(window), axis=0)
+            grey = depth_to_greybox(
+                depth,
+                fov_deg=fov_deg,
+                ambient=ambient,
+                base_grey=base_grey,
+                outline=outline,
+                invert=invert,
+                gamma=gamma,
+                smooth=smooth,
+                fill_strength=fill_strength,
+                shade=shade,
+            )
+            Image.fromarray(grey, mode="L").save(grey_dir / f"{i:05d}.png")
+            frame_count = i
+
+        # 4) 合帧 + 保留音轨。
+        # 输出帧率继承源视频的 r_frame_rate，不用抽帧 fps：抽帧 fps 只决定
+        # 抽多少帧去推理，与源视频原生帧率是两件事；写死的话源视频是 24/30/60fps
+        # 时成品会被降到 8fps（动作顿卡），-shortest 又会把时长裁到和源不一致。
+        # 帧数少于源帧数时用 minterpolate 补帧，避免慢放。
+        source_rate = _probe_frame_rate(src)
+        need_interpolate = frame_count > 0 and source_rate is not None and source_rate > fps + 0.01
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            str(fps),
+            "-i",
+            str(grey_dir / "%05d.png"),
+            "-i",
+            str(src),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a?",  # 音轨可选：源视频无声也能出片
+            "-vf",
+            f"fps={source_rate}" if need_interpolate else "null",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(out),
+        ]
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True, timeout=1800
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg greybox compose failed: {proc.stderr[-500:]}")
+        report(1.0, "白模视频已生成")
+
+    meta = {
+        "backend": "local-depth",
+        "fps": fps,
+        "fov_deg": fov_deg,
+        "ambient": ambient,
+        "base_grey": base_grey,
+        "outline": outline,
+        "invert": invert,
+        "gamma": gamma,
+        "smooth": smooth,
+        "fill_strength": fill_strength,
+        "temporal_window": max(int(temporal_window), 1),
+        "backend": backend,
+        "shade": shade,
+        "frames": frame_count,
+    }
+    return out, meta
+
+
 async def _run_cmd(
     cmd: list[str],
     *,
@@ -838,6 +1140,269 @@ async def _mix_audio_tracks(
     await _run_cmd(cmd)
 
 
+def _probe_duration(src: Path) -> float | None:
+    """读容器时长（format.duration）。读不到返回 None，调用方回退。"""
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(src),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        raw = (proc.stdout or "").strip().splitlines()
+        if not raw:
+            return None
+        value = float(raw[0])
+        return value if value > 0 else None
+    except (ValueError, subprocess.SubprocessError):
+        return None
+
+
+async def run_freezone_video_reshoot(
+    *,
+    project_dir: Path,
+    job_id: str,
+    source_path: str,
+    start_seconds: float,
+    end_seconds: float,
+    prompt: str = "",
+    model: str = "",
+    backend: str = "",
+    model_params: Optional[dict[str, Any]] = None,
+    request_schema: Optional[dict[str, Any]] = None,
+    duration_seconds: int = 0,
+    resolution: str = "720p",
+    generate_audio: bool = False,
+    camera_template_id: Optional[str] = None,
+    max_duration_seconds: int = 0,
+    progress_callback: Optional[Any] = None,
+) -> tuple[Path, Path, dict]:
+    """视频片段重拍：抽区间首尾帧 -> 首尾帧模式重生成 -> 三段拼接回原片。
+
+    产出两个文件：
+    - `{job_id}_clip.mp4`     重拍的那一小段（时长对齐区间长度）
+    - `{job_id}_full.mp4`     前段 + 新段 + 后段拼回的整片（保留原音轨）
+
+    为什么走首尾帧而不是把源视频当参考：实际在用的视频模型
+    （agnes 系）`referenceVideoMax` 为 0，不接受视频参考；把区间两端各抽一帧
+    当锚点图是唯一可行路径，顺带也让模型知道前后画面长什么样。
+
+    拼接自动重试：Level 1 音轨 `-c:a copy`；copy 失败（音轨编码不被 concat
+    demuxer 接受）自动降级 Level 2 音轨 `aac` 重编码，`meta["concat_retry"]`
+    记录走了哪级。
+    """
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found on PATH; install via brew/apt")
+    if not shutil.which("ffprobe"):
+        raise RuntimeError("ffprobe not found on PATH; install via brew/apt")
+
+    src = Path(source_path)
+    if not src.exists():
+        raise FileNotFoundError(f"video source not found: {src}")
+
+    # 段 0 — 校验（任何 IO 之前）。区间超模型上限一律拒绝，不静默截断：
+    # 静默截断会产出用户没要的片段，比报错更难排查。
+    if start_seconds < 0:
+        raise ValueError("start_seconds must be >= 0")
+    if end_seconds <= start_seconds:
+        raise ValueError("end_seconds must be greater than start_seconds")
+    span = end_seconds - start_seconds
+    if max_duration_seconds > 0 and span > max_duration_seconds:
+        raise ValueError(
+            f"segment {span:.1f}s exceeds model max duration {max_duration_seconds}s"
+        )
+
+    def report(fraction: float, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(fraction, message)
+
+    out_dir = outputs_dir(project_dir, "freezone_video_reshoot")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    clip_path = out_dir / f"{job_id}_clip.mp4"
+    full_path = out_dir / f"{job_id}_full.mp4"
+    aligned_path = out_dir / f"{job_id}_clip_aligned.mp4"
+    source_duration = _probe_duration(src)
+    source_rate = _probe_frame_rate(src)
+    source_has_audio = await _probe_has_audio(str(src))
+
+    report(0.05, "参数校验通过")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f"reshoot_{job_id}_"))
+    try:
+        # 段 1 — 精确抽帧（按秒）。不加 -vf scale：保持源分辨率，
+        # 否则画幅变化会在拼接处突兀。抽帧逻辑与「提示词推荐」端点共用
+        # （extract_reshoot_keyframes）——用户看到的锚点预览和推荐所依据的
+        # 帧必须是同一张。
+        first_png, last_png = await extract_reshoot_keyframes(
+            source_path=str(src),
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            out_dir=tmp_dir,
+        )
+        report(0.15, f"已抽取区间首尾帧（{span:.1f}s）")
+
+        # 段 2 — 首尾帧模式生成。reference_items 的 role 约定与
+        # /freezone/video/keyframes 端点一致（"首帧"/"尾帧"）。
+        reference_items = [
+            {"type": "image", "path": str(first_png), "role": "首帧"},
+            {"type": "image", "path": str(last_png), "role": "尾帧"},
+        ]
+        # model 是给用户看的模型名，生成层要的是 backend 串（newapi_<model>）。
+        # 不转这一层的话 run_freezone_video_gen 会退回自己的默认后端——那个后端
+        # 的构造器连 model_params 都不收，请求根本到不了用户在界面上选的那个模型。
+        # 端点层已经按目录解析过，这里只在直接调用（测试/脚本）时兜底。
+        from novelvideo.freezone.video_node import resolve_freezone_video_backend
+
+        gen_backend = backend or resolve_freezone_video_backend(model or None)
+        # 画幅跟随源视频：重拍段要拼回原片，画幅不一致会在拼接处出现黑边或拉伸。
+        # 但不能一律传 "auto"——实测 agnes 的网关适配器把 metadata.ratio=auto
+        # 译成 aspect_ratio=auto 后直接 400（`aspect_ratio 不能为 auto`），
+        # 而它的 ratioOptions 里明明列着 auto。所以按源视频的实际比例算一个
+        # 具体值传下去：既保证拼接一致，又不依赖模型对 auto 的接受程度。
+        source_ratio = await _probe_aspect_ratio(src)
+        await run_freezone_video_gen(
+            project_dir=project_dir,
+            job_id=f"{job_id}_gen",
+            prompt=prompt,
+            reference_items=reference_items,
+            aspect_ratio=source_ratio,
+            resolution=resolution,
+            duration_seconds=max(1, int(round(span))),
+            generate_audio=generate_audio,
+            gen_mode="first_last_frame",
+            last_frame_path=str(last_png),
+            backend=gen_backend,
+            model_params=model_params,
+            request_schema=request_schema,
+        )
+        generated = outputs_dir(project_dir, "freezone_video_gen") / f"{job_id}_gen.mp4"
+        if not generated.exists():
+            raise RuntimeError("video generation returned no output file")
+        report(0.55, "重拍片段已生成")
+
+        # 段 3 — 时长对齐。模型生成时长不完全受控，超出区间裁齐、不足则
+        # 冻结尾帧补足，保证拼接点节奏稳定。
+        clip_dur = _probe_duration(generated)
+        if clip_dur is None:
+            raise RuntimeError("cannot probe generated clip duration")
+        aligned_cmd: list[str]
+        if clip_dur < span - 0.05:
+            aligned_cmd = [
+                "ffmpeg", "-y", "-loglevel", "error", "-i", str(generated),
+                "-vf", f"tpad=stop_mode=clone:stop_duration={span - clip_dur:.3f}",
+                "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(aligned_path),
+            ]
+        elif clip_dur > span + 0.05:
+            aligned_cmd = [
+                "ffmpeg", "-y", "-loglevel", "error", "-i", str(generated),
+                "-t", f"{span:.3f}",
+                "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(aligned_path),
+            ]
+        else:
+            aligned_cmd = []
+        if aligned_cmd:
+            proc = await asyncio.to_thread(
+                subprocess.run, aligned_cmd, capture_output=True, text=True, timeout=600
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(f"clip align failed: {proc.stderr[-300:]}")
+        else:
+            # 时长已够贴近，直接复制复用（跨文件系统 rename 会失败，copy 最稳）。
+            shutil.copyfile(generated, aligned_path)
+        shutil.copyfile(aligned_path, clip_path)
+        # 复测对齐后的真实时长：meta 要报产物事实，不能报生成段的原始时长。
+        clip_dur = _probe_duration(clip_path) or span
+        report(0.75, f"片段时长已对齐到 {clip_dur:.1f}s")
+
+        # 段 4 — 三段拼接。统一重编码到源参数（帧率/分辨率/pix_fmt）后用
+        # concat demuxer 拼；音轨先试 copy，失败自动降级 aac。
+        pre_path = tmp_dir / "pre.mp4"
+        post_path = tmp_dir / "post.mp4"
+        for out_file, seek_args in ((pre_path, ["-to", f"{start_seconds:.3f}"]),
+                                    (post_path, ["-ss", f"{end_seconds:.3f}"])):
+            cmd = ["ffmpeg", "-y", "-loglevel", "error", *seek_args, "-i", str(src),
+                   "-c", "copy", str(out_file)]
+            proc = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True, timeout=300
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(f"segment split failed: {proc.stderr[-300:]}")
+
+        rate = source_rate or 30.0
+        list_path = tmp_dir / "concat.txt"
+        list_path.write_text(
+            "\n".join(
+                f"file '{p.as_posix()}'" for p in (pre_path, aligned_path, post_path)
+            ),
+            encoding="utf-8",
+        )
+        base_concat = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "concat", "-safe", "0", "-i", str(list_path),
+            "-vf", f"fps={rate},scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+        ]
+        attempts: list[tuple[str, list[str]]] = [
+            ("copy", base_concat + ["-c:a", "copy", "-movflags", "+faststart", str(full_path)]),
+            ("audio_reencode", base_concat + [
+                "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(full_path)
+            ]),
+        ]
+        concat_retry: Optional[str] = None
+        last_err = ""
+        for index, (level, cmd) in enumerate(attempts):
+            proc = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True, timeout=900
+            )
+            if proc.returncode == 0 and full_path.exists():
+                concat_retry = level if index > 0 else None
+                break
+            last_err = proc.stderr[-300:]
+        else:
+            raise RuntimeError(f"concat failed on all levels: {last_err}")
+        report(0.9, "已拼回整片")
+
+        full_dur = _probe_duration(full_path)
+        report(1.0, "片段重拍完成")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    meta = {
+        "clip_path": str(clip_path),
+        "full_path": str(full_path),
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds,
+        "span_seconds": span,
+        "source_duration": source_duration,
+        "clip_duration": clip_dur,
+        "full_duration": full_dur,
+        "concat_retry": concat_retry,
+        "frames_extracted": 2,
+        "model": model or None,
+        "camera_template_id": camera_template_id,
+        # 原片有没有音轨：前端据此提示「原片无音轨，整片也不会有」，
+        # 而不是让用户对着一个无声成品猜原因。
+        "source_has_audio": source_has_audio,
+    }
+    return clip_path, full_path, meta
+
+
 async def run_freezone_video_compose(
     *,
     project_dir: Path,
@@ -848,6 +1413,7 @@ async def run_freezone_video_compose(
     fps: int = 30,
     background_color: str = "#000000",
     keep_original_audio: bool = True,
+    preserve_source_size: bool = False,
     tracks: list[dict[str, Any]],
 ) -> Path:
     """Compose a minimal timeline JSON into a final mp4."""
@@ -887,6 +1453,19 @@ async def run_freezone_video_compose(
             str(item.get("item_id") or ""),
         ),
     )
+    if preserve_source_size:
+        source_path = str(sorted_video_items[0].get("source_path") or "")
+        if source_path:
+            try:
+                width, height = await _probe_video_size(source_path)
+                width -= width % 2
+                height -= height % 2
+            except Exception:
+                width, height = 0, 0
+        if width < 2 or height < 2:
+            width, height = FREEZONE_VIDEO_RESOLUTION_MAP.get(
+                resolution, FREEZONE_VIDEO_RESOLUTION_MAP["1080p"]
+            )
 
     with tempfile.TemporaryDirectory(
         prefix=f"freezone_compose_{job_id}_"

@@ -338,7 +338,7 @@ describe("States — 封面图加载失败不留破图", () => {
     });
 
     await waitFor(() => expect(document.querySelectorAll("img")).toHaveLength(0));
-    expect(screen.getByText(/在 3D 里摆位预演|Stage the shot in 3D/)).toBeTruthy();
+    expect(screen.getByText(/在 3D 里摆角色和机位|Block out characters and cameras in 3D/)).toBeTruthy();
   });
 
   it("换成新的可用封面后重新渲染图片（失败标记随 URL 复位）", async () => {

@@ -282,6 +282,75 @@ def test_filters_mode_specific_parameters_and_defaults():
         validate_media_model_params(filtered, {"camera_fixed": True})
 
 
+def test_value_by_mode_overrides_default_for_matching_mode_only():
+    """同一个参数在不同业务模式下取不同值。
+
+    实战场景：agnes 把「调用形状」编进 mode 字段（text / keyframe /
+    reference），首尾帧生成必须发 keyframe。目录只声明了静态 default=text，
+    照发会被上游回 400「text 模式不能包含素材字段」。
+    """
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "mode",
+                "control": "select",
+                "requestPath": "mode",
+                "options": ["text", "keyframe", "reference"],
+                "default": "text",
+                "required": True,
+                "valueByMode": {
+                    "first_frame": "keyframe",
+                    "first_last_frame": "keyframe",
+                    "all_reference": "reference",
+                },
+            }
+        ],
+    }
+
+    # 覆盖命中的模式取 valueByMode 的值，且仍然只有一条定义。
+    keyframe_schema = media_request_schema_for_mode(schema, "firstLastFrame")
+    assert [item["key"] for item in keyframe_schema["parameters"]] == ["mode"]
+    assert validate_media_model_params(keyframe_schema, {}) == {"mode": "keyframe"}
+    assert media_request_schema_for_mode(schema, "firstFrame")["parameters"][0]["default"] == (
+        "keyframe"
+    )
+    assert media_request_schema_for_mode(schema, "allReference")["parameters"][0][
+        "default"
+    ] == "reference"
+
+    # 没被 valueByMode 覆盖的模式保持静态 default。
+    assert media_request_schema_for_mode(schema, "textToVideo")["parameters"][0][
+        "default"
+    ] == "text"
+
+    # 调用方显式给值时仍以显式值为准（覆盖的是默认值，不是硬编码）。
+    assert validate_media_model_params(keyframe_schema, {"mode": "text"}) == {"mode": "text"}
+
+    # 原 schema 不被就地改写（apply 是纯函数，调用方可能复用同一份目录对象）。
+    assert schema["parameters"][0]["default"] == "text"
+
+
+def test_value_by_mode_value_must_pass_parameter_validation():
+    """valueByMode 只是换默认值，取值仍要过选项校验——写错选项要在加载时就炸。"""
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "mode",
+                "control": "select",
+                "requestPath": "mode",
+                "options": ["text"],
+                "default": "text",
+                "valueByMode": {"first_last_frame": "keyframe"},
+            }
+        ],
+    }
+
+    with pytest.raises(MediaModelSchemaError, match="unsupported value"):
+        media_request_schema_for_mode(schema, "firstLastFrame")
+
+
 @pytest.mark.parametrize(
     ("business_mode", "catalog_mode"),
     [

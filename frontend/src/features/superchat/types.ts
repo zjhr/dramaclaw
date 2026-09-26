@@ -11,7 +11,12 @@ export type ClientFrame =
   | { type: "scope.set"; scope: ChatScope };
 
 export type ChatScope = {
-  kind: "home" | "project" | "asset" | "task";
+  /**
+   * `directorDesk` 是导演台**单个节点**自己的对话：存储与「项目助手」物理隔离，
+   * 但仍归属某个项目，所以 agent 的工具照常拿得到项目上下文。
+   * 它的 `id` 是 `<project>/<node>`。
+   */
+  kind: "home" | "project" | "asset" | "task" | "directorDesk";
   id?: string | null;
 };
 

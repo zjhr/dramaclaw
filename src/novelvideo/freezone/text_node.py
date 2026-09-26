@@ -590,6 +590,7 @@ def build_freezone_prompt_enhance_task(
     text: str,
     dialect: str,
     strength: str,
+    guidance: str = "",
 ) -> str:
     """构建提示词强化任务。
 
@@ -600,14 +601,25 @@ def build_freezone_prompt_enhance_task(
     hint = _FREEZONE_PROMPT_STRENGTH_HINTS.get(
         strength, _FREEZONE_PROMPT_STRENGTH_HINTS["standard"]
     )
-    return "\n\n".join(
+    parts = [
+        f"Dialect: {dialect}. Follow that section of your instructions exactly.",
+        hint,
+    ]
+    skill = str(guidance or "").strip()[:4000]
+    if skill:
+        parts.append(
+            "Additional skill. Use it to reshape the creator's idea into the "
+            "dialect. Do not paste the skill text itself, and do not replace "
+            "the idea with an unrelated example.\n"
+            f"{skill}"
+        )
+    parts.extend(
         [
-            f"Dialect: {dialect}. Follow that section of your instructions exactly.",
-            hint,
             "Rewrite the following prompt for that target model.",
             f"Source prompt:\n{text.strip()}",
         ]
     )
+    return "\n\n".join(parts)
 
 
 async def enhance_freezone_prompt(
@@ -615,6 +627,7 @@ async def enhance_freezone_prompt(
     text: str,
     dialect: str = "image",
     strength: str = "standard",
+    guidance: str = "",
     egress_context: TrustedEgressContext | None = None,
 ) -> tuple[str, list[str]]:
     """按目标模型方言强化提示词，返回重写正文与补全项摘要。**会出网**。
@@ -630,6 +643,7 @@ async def enhance_freezone_prompt(
         text=clean_text,
         dialect=dialect,
         strength=strength,
+        guidance=guidance,
     )
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 

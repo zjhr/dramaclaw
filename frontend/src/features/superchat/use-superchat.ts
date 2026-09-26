@@ -80,6 +80,11 @@ function scopeForProject(project?: string): ChatScope {
 
 function scopeSessionKey(scope: ChatScope): string {
   if (scope.kind === "project" && scope.id) return `supertale:project:${scope.id}:main`;
+  // 导演台对话有自己的本地缓存键。漏了这条分支会退到 home 那份缓存 —— 于是
+  // 导演台里的对话会串进首页对话的历史里，正是要避免的「影响其他」。
+  if (scope.kind === "directorDesk" && scope.id) {
+    return `supertale:director-desk:${scope.id}:main`;
+  }
   return "supertale:home:main";
 }
 
@@ -215,6 +220,26 @@ function clearActiveTurn(scopeKey: string, turnId?: string | null) {
   }
 }
 
+/**
+ * 这个回合的助手回复是否已经落进 messages（流式收尾和历史合并两条路都算）。
+ *
+ * 与 `activeTurnIsPending` 的区别：那边在「没有用户消息」时也返回 false（不算待处理），
+ * 那种情况下其实**没有任何证据**表明回合结束了 —— 刚点完发送、用户消息还没落库时
+ * 就会命中。所以看门狗只认这条正面证据，不用 `!pending` 反推。
+ */
+export function turnHasAssistantReply(
+  messages: ChatMessage[],
+  turnId: string | null | undefined,
+): boolean {
+  if (!turnId) return false;
+  return messages.some(
+    (message) =>
+      message.role === "assistant"
+      && message.turnId === turnId
+      && (message.text.trim().length > 0 || hasStructuredContent(message.raw)),
+  );
+}
+
 function activeTurnIsPending(messages: ChatMessage[], turnId: string | null | undefined): boolean {
   if (!turnId) return false;
   const hasUserMessage = messages.some(
@@ -246,6 +271,22 @@ function currentTurnIsLive(
   return activeTurnIsPending(messages, turnId);
 }
 
+/**
+ * 重连后的 scope.changed 怎么处理本地还亮着的「正在生成」。
+ * 服务端没在跑、历史里也没有回复时，不能把转圈留住：那一轮已经随断线停了。
+ */
+export function reconcileScopeTurn(input: {
+  serverBusy: boolean | undefined;
+  activeTurnId: string | null;
+  turnLive: boolean;
+  alreadyDone: boolean;
+}): "keep-busy" | "finish" | "drop" | "idle" {
+  if (input.serverBusy === true && input.turnLive && !input.alreadyDone) return "keep-busy";
+  if (!input.activeTurnId) return "idle";
+  if (input.alreadyDone || !input.turnLive) return "finish";
+  return "drop";
+}
+
 function scopeMatches(a: ChatScope | undefined, b: ChatScope): boolean {
   if (!a) return false;
   if (a.kind !== b.kind) return false;
@@ -253,15 +294,23 @@ function scopeMatches(a: ChatScope | undefined, b: ChatScope): boolean {
   return (a.id ?? null) === (b.id ?? null);
 }
 
-function isChatScope(value: unknown): value is ChatScope {
+/**
+ * `ChatScope["kind"]` 的运行时白名单。漏一个的后果不是报错而是**静默卡住**：
+ * `scope.changed` 帧里的 scope 过不了这层，`historyReady` 就永远不置位，
+ * 面板停在「正在初始化会话」。所以有测试逐个断言每个 kind 都能通过。
+ */
+const CHAT_SCOPE_KINDS: readonly ChatScope["kind"][] = [
+  "home",
+  "project",
+  "asset",
+  "task",
+  "directorDesk",
+];
+
+export function isChatScope(value: unknown): value is ChatScope {
   if (!value || typeof value !== "object") return false;
   const scope = value as Record<string, unknown>;
-  return (
-    scope.kind === "home"
-    || scope.kind === "project"
-    || scope.kind === "asset"
-    || scope.kind === "task"
-  );
+  return CHAT_SCOPE_KINDS.includes(scope.kind as ChatScope["kind"]);
 }
 
 function mergeHistory(messages: unknown[]): ChatMessage[] {
@@ -285,11 +334,33 @@ function assistantTextEquivalent(left: string, right: string): boolean {
   return leftText === rightText || leftText.startsWith(rightText) || rightText.startsWith(leftText);
 }
 
+function userTextsMatch(left: string, right: string): boolean {
+  const a = normalizedText(left);
+  const b = normalizedText(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // 导演台把上下文拼在原话前面存库。回读时文本比本地气泡长，但以原话结尾。
+  const longer = a.length >= b.length ? a : b;
+  const shorter = a.length >= b.length ? b : a;
+  if (!longer.endsWith(shorter)) return false;
+  return longer.includes("[导演台上下文]") || longer.includes("用户：") || longer.includes("用户:");
+}
+
 function hasEquivalentTextMessage(message: ChatMessage, history: ChatMessage[]): boolean {
+  /*
+    user 分支用时间戳兜底：历史里的 user 消息**没有 turn_id**（服务端库无此列），
+    所以「本地新消息 vs 过期快照里更早的同文本消息」只能靠时间戳区分 —— 没有它，
+    用户刚发出的那轮消息会被上一轮的同文本消息吞掉（有回归测试守着）。
+
+    assistant 分支**刻意不这么做**：服务端落库时间必然早于本地流式占位的
+    `Date.now()`，用时间戳判「不算同一条」等于每次刷新都把同一段回复显示两遍
+    （用户实测报的 bug）。turnId 两边都有且不同，才是真的不同一条。
+  */
   if (message.role !== "assistant") {
-    const signature = messageSignature(message);
     return history.some((entry) => {
-      if (messageSignature(entry) !== signature) return false;
+      if (entry.role === "user" ? !userTextsMatch(message.text, entry.text) : messageSignature(entry) !== messageSignature(message)) {
+        return false;
+      }
       if (message.turnId && entry.turnId && message.turnId !== entry.turnId) return false;
       if (message.turnId && !entry.turnId && entry.timestamp < message.timestamp) return false;
       return true;
@@ -299,7 +370,6 @@ function hasEquivalentTextMessage(message: ChatMessage, history: ChatMessage[]):
     (entry) => {
       if (entry.role !== "assistant") return false;
       if (message.turnId && entry.turnId && message.turnId !== entry.turnId) return false;
-      if (message.turnId && !entry.turnId && entry.timestamp < message.timestamp) return false;
       return assistantTextEquivalent(message.text, entry.text);
     },
   );
@@ -345,7 +415,7 @@ function hasCompletedTurnInHistory(
   return turnCompletedInHistory(message.turnId, history, current);
 }
 
-function turnCompletedInHistory(
+export function turnCompletedInHistory(
   turnId: string,
   history: ChatMessage[],
   current: ChatMessage[],
@@ -355,12 +425,14 @@ function turnCompletedInHistory(
   );
   if (!localUser) return false;
 
-  const backendUser = history.find(
-    (entry) =>
-      entry.role === "user"
-      && normalizedText(entry.text) === normalizedText(localUser.text)
-      && entry.timestamp >= localUser.timestamp,
-  );
+  // 导演台（以及任何走 `transportText` 的调用方）把上下文拼在用户原话前面一起发出去，
+  // 服务端**整段存库**，所以历史里的 user 文本远长于本地乐观消息，逐字相等永远不成立。
+  // 于是改用「历史里 localUser 之后最近的那条 user」来定位这一轮 —— 落库时间不会早于
+  // 发送时刻，且一轮只有一条 user，所以它是无歧义的锚点。
+  const localIndex = current.findIndex((entry) => entry.turnId === turnId && entry.role === "user");
+  const backendUser = history
+    .filter((entry) => entry.role === "user" && entry.timestamp >= localUser.timestamp)
+    .sort((left, right) => left.timestamp - right.timestamp)[localIndex < 0 ? 0 : 0];
   if (!backendUser) return false;
 
   return history.some(
@@ -424,16 +496,65 @@ export function mergeHistorySnapshot(
     };
   });
 
-  return sortMessages([...history, ...stablePreserved]);
+  return sortMessages(collapseDuplicateAssistants([...history, ...stablePreserved]));
 }
 
-function upsertAssistantMessage(
+/**
+ * 同一轮回复在界面上只留一条。
+ *
+ * 服务端落库的 assistant **没有 turn_id**，本地流式占位有。历史合并时如果两段文本
+ * 还没形成前缀关系（流式半截 vs 已落库全文、或时间戳对不齐导致占位没被丢掉），
+ * 两条会同时留下来。这里只折叠「中间没有用户消息」的助手重复：同一轮里较长的那份
+ * 留下。隔着用户消息的两条独立回复不动。
+ */
+export function collapseDuplicateAssistants(messages: ChatMessage[]): ChatMessage[] {
+  const kept: ChatMessage[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      kept.push(message);
+      continue;
+    }
+    const duplicateIndex = kept.findIndex((entry, index) => {
+      if (entry.role !== "assistant") return false;
+      const sameTurn = Boolean(message.turnId && entry.turnId && message.turnId === entry.turnId);
+      const equivalent = assistantTextEquivalent(entry.text, message.text);
+      if (!sameTurn && !equivalent) return false;
+      return !kept.slice(index + 1).some((between) => between.role === "user");
+    });
+    if (duplicateIndex < 0) {
+      kept.push(message);
+      continue;
+    }
+    const previous = kept[duplicateIndex];
+    kept[duplicateIndex] = {
+      ...previous,
+      id: previous.id.startsWith("assistant-") ? message.id : previous.id,
+      text: previous.text.length >= message.text.length ? previous.text : message.text,
+      turnId: previous.turnId ?? message.turnId,
+    };
+  }
+  return kept;
+}
+
+export function upsertAssistantMessage(
   messages: ChatMessage[],
   turnId: string,
   text: string,
 ): ChatMessage[] {
   const id = `assistant-${turnId}`;
-  const existingIndex = messages.findIndex((message) => message.id === id);
+  /*
+    先按 id 找，再按 turnId 兜底。
+
+    为什么需要 turnId 兜底：后端 `chat.py` 的 done 分支会在 `assistant.message` **之后**
+    补发一条 `assistant.delta`（`_should_emit_final_text` 命中时）。此时列表里已经是
+    **服务端 id** 的那条了（同一个 turnId），只按 id 找就找不到 → 又建一个本地占位 →
+    同一条回复在界面上出现两遍（用户实测反复报这个）。按 turnId 认到服务端那条后就地
+    更新它，占位根本不会被造出来。
+  */
+  const existingIndex =
+    messages.findIndex((message) => message.id === id) >= 0
+      ? messages.findIndex((message) => message.id === id)
+      : messages.findIndex((message) => message.role === "assistant" && message.turnId === turnId);
   if (existingIndex >= 0) {
     return sortMessages(
       messages.map((message, index) =>
@@ -455,7 +576,44 @@ function upsertAssistantMessage(
   ]);
 }
 
-function upsertServerAssistantMessage(
+/**
+ * 把这条回合的助手回复**定稿**入列。
+ *
+ * 为什么不能直接用 upsertAssistantMessage：流式期间每条 `assistant.delta` 都会把
+ * 累积文本写进 messages（id = `assistant-<turnId>`），随后服务端的 `assistant.message`
+ * 帧又按 turnId 把它换成服务端 id 的那条。等 `chat.done` 走到这里，列表里已经是
+ * **服务端 id** 的那条了 —— 只按 id 找就找不到，于是追加成第二条：同一条回复在界面上
+ * 出现两遍（用户实测反复报这个）。所以按 turnId 认，命中就地更新。
+ *
+ * 文本取**较长**的那份：服务端那条可能是流式中途的快照，比本地累积文本短。
+ */
+export function commitAssistantText(
+  messages: ChatMessage[],
+  turnId: string,
+  text: string,
+): ChatMessage[] {
+  const existingIndex = messages.findIndex(
+    (message) => message.role === "assistant" && message.turnId === turnId,
+  );
+  if (existingIndex < 0) return upsertAssistantMessage(messages, turnId, text);
+  return messages.map((message, index) =>
+    index === existingIndex
+      ? { ...message, text: message.text.length >= text.length ? message.text : text }
+      : message,
+  );
+}
+
+/**
+ * 服务端收尾的 assistant 消息入列。
+ *
+ * 关键：本地**流式占位**（id = `assistant-<客户端 turn id>`，见 upsertAssistantMessage）
+ * 和服务端这条是两个不同 id。当帧里没带上同一个 turn id（实测出现过：整条回复因此
+ * 在界面上**出现两遍**，一份是本地占位、一份是服务端消息）就匹配不上，会追加成第二条。
+ *
+ * 折叠规则：只有当那条占位确实在**列表末尾**、且文本与收尾消息等价时才折叠。
+ * 两条真·相同的独立回复不会以「本地占位」身份停在末尾（中间必有 user 消息），所以不误吞。
+ */
+export function upsertServerAssistantMessage(
   messages: ChatMessage[],
   payload: unknown,
   turnId?: string,
@@ -465,19 +623,30 @@ function upsertServerAssistantMessage(
   const normalizedTurnId = nextMessage.turnId ?? (turnId?.trim() || undefined);
   const mergedMessage = normalizedTurnId ? { ...nextMessage, turnId: normalizedTurnId } : nextMessage;
   const existingIndex = messages.findIndex((message) => message.id === mergedMessage.id);
-  const withoutTransient = normalizedTurnId
-    ? messages.filter(
-        (message, index) =>
-          index === existingIndex ||
-          !(message.role === "assistant" && message.turnId === normalizedTurnId),
-      )
-    : messages;
-  if (existingIndex >= 0) {
-    return sortMessages(
-      withoutTransient.map((message) => (message.id === mergedMessage.id ? mergedMessage : message)),
-    );
-  }
-  return sortMessages([...withoutTransient, mergedMessage]);
+  const tail = messages[messages.length - 1];
+  const foldTailIndex =
+    existingIndex < 0
+    && tail
+    && tail.id !== mergedMessage.id
+    && tail.role === "assistant"
+    && tail.id.startsWith("assistant-")
+    && assistantTextEquivalent(tail.text, mergedMessage.text)
+      ? messages.length - 1
+      : -1;
+  const dropIndex = existingIndex >= 0 ? existingIndex : foldTailIndex;
+  const withoutTransient =
+    dropIndex >= 0 || normalizedTurnId
+      ? messages.filter(
+          (message, index) =>
+            index !== dropIndex
+            && !(
+              normalizedTurnId
+              && message.role === "assistant"
+              && message.turnId === normalizedTurnId
+            ),
+        )
+      : messages;
+  return sortMessages(collapseDuplicateAssistants([...withoutTransient, mergedMessage]));
 }
 
 function resultText(result: unknown): string {
@@ -555,11 +724,14 @@ function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unkno
 export function useSuperChat({
   project,
   displayName,
+  scope,
 }: {
   project?: string;
   displayName: string;
+  /** 显式作用域 —— directorDesk 的对话靠它把自己从项目主对话里隔离出去。 */
+  scope?: ChatScope;
 }) {
-  const desiredScope = useMemo(() => scopeForProject(project), [project]);
+  const desiredScope = useMemo(() => scope ?? scopeForProject(project), [scope, project]);
   const scopeKey = useMemo(() => scopeSessionKey(desiredScope), [desiredScope]);
   const initialScopeSnapshot = useMemo(() => {
     const cachedMessages = loadCachedMessages(scopeKey);
@@ -587,6 +759,7 @@ export function useSuperChat({
   const [busy, setBusy] = useState(() => Boolean(initialScopeSnapshot.activeTurnId));
   const [activeTurnId, setActiveTurnId] = useState<string | null>(initialScopeSnapshot.activeTurnId);
   const streamTextRef = useRef("");
+  const streamFlushRef = useRef<number | null>(null);
   const messagesRef = useRef<ChatMessage[]>(initialScopeSnapshot.cachedMessages);
   const activeTurnIdRef = useRef<string | null>(initialScopeSnapshot.activeTurnId);
   const pendingClientTurnIdRef = useRef<string | null>(null);
@@ -638,6 +811,10 @@ export function useSuperChat({
   }, []);
 
   const finalizeStream = useCallback(() => {
+    if (streamFlushRef.current != null) {
+      window.cancelAnimationFrame(streamFlushRef.current);
+      streamFlushRef.current = null;
+    }
     const turnId = activeTurnIdRef.current ?? `turn-${Date.now()}`;
     if (cancelledTurnIdsRef.current.has(turnId)) {
       markTurnInactive(turnId);
@@ -645,7 +822,8 @@ export function useSuperChat({
     }
     setMessages((current) => {
       if (!streamTextRef.current.trim()) return current;
-      return upsertAssistantMessage(current, turnId, streamTextRef.current);
+      // 按 turnId 定稿：服务端消息可能已经占了这条回合（id 不同），按 id 追加会出两条。
+      return commitAssistantText(current, turnId, streamTextRef.current);
     });
     markTurnInactive(turnId);
     // Post-done history refresh is intentionally disabled; final assistant
@@ -653,6 +831,13 @@ export function useSuperChat({
   }, [markTurnInactive]);
 
   const handleFrame = useCallback((frame: ServerFrame) => {
+    /*
+      服务端的 `busy` 只在 scope.changed 帧上有意义，别处是「这条路径不发射该字段」，
+      不是「不在跑」。JS 的 ?? 对 unknown 帮不上忙，所以在这里显式收敛成布尔，
+      让下游的比较都是 `boolean | undefined` 而不是 `unknown`。
+    */
+    const serverBusy =
+      "busy" in frame && typeof frame.busy === "boolean" ? frame.busy : undefined;
     switch (frame.type) {
       case "scope.changed": {
         setConnected(true);
@@ -669,16 +854,27 @@ export function useSuperChat({
           return mergeHistorySnapshot(current, history, protectedTurnId, preserveRemoteBusy);
         });
         const activeTurnId = activeTurnIdRef.current;
-        if (frame.busy === true && currentTurnIsLive(activeTurnId, currentMessages)) {
+        // 判「回合还活着」不能只看合并前的旧 messages：后端落库的 assistant 消息
+        // **不带 turn_id**（append_message 没传），而 activeTurnIsPending 只认带 turnId
+        // 的回复，于是合并前后都认为还活着。此时后端只要补一帧 busy:true，busy 就被
+        // 永久钉住 —— 而回复其实早就躺在 history 里了。所以先问一句「历史里是否已经
+        // 有这条回合的回复」（那个 helper 用文本+时间戳认，不依赖 turn_id）。
+        const alreadyDoneInHistory = activeTurnId
+          ? turnCompletedInHistory(activeTurnId, history, currentMessages)
+          : false;
+        const turnAction = reconcileScopeTurn({
+          serverBusy,
+          activeTurnId,
+          turnLive: currentTurnIsLive(activeTurnId, currentMessages),
+          alreadyDone: alreadyDoneInHistory,
+        });
+        if (turnAction === "keep-busy") {
           setBusy(true);
-        } else if (activeTurnId) {
-          if (turnCompletedInHistory(activeTurnId, history, currentMessages)) {
-            markTurnInactive(activeTurnId);
-          } else if (!currentTurnIsLive(activeTurnId, currentMessages)) {
-            markTurnInactive(activeTurnId);
-          } else {
-            setBusy(true);
-          }
+        } else if (turnAction === "finish") {
+          markTurnInactive(activeTurnId);
+        } else if (turnAction === "drop") {
+          markTurnInactive(activeTurnId);
+          setError("连接中断了，这条还没有生成，请再发一次。");
         } else if (!activeTurnIdRef.current) {
           streamTextRef.current = "";
           recentlyCompletedTurnIdRef.current = null;
@@ -752,11 +948,17 @@ export function useSuperChat({
           ?? (typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null);
         if (turnId && streamTextRef.current.trim()) {
           markTurnActive(turnId);
-          setMessages((current) => {
-            const displayText = streamTextRef.current;
-            if (!displayText.trim()) return current;
-            return upsertAssistantMessage(current, turnId, displayText);
-          });
+          // 一个动画帧最多刷一次。逐 token setState 会让整段 Markdown 每字重解析，
+          // 看起来就是「一个字一个字卡着出来」。
+          if (streamFlushRef.current == null) {
+            const flushTurnId = turnId;
+            streamFlushRef.current = window.requestAnimationFrame(() => {
+              streamFlushRef.current = null;
+              const displayText = streamTextRef.current;
+              if (!displayText.trim()) return;
+              setMessages((current) => upsertAssistantMessage(current, flushTurnId, displayText));
+            });
+          }
         }
         setStreamText("");
         break;
@@ -769,6 +971,10 @@ export function useSuperChat({
             typeof frame.turn_id === "string" ? frame.turn_id : undefined,
           ),
         );
+        // 注意：这里**不负责收摊**。后端的 assistant_message 是流式事件，一轮里可能
+        // 来好几条（chat.py 的转发分支），在这里关 busy 会让用户在 agent 还在跑时就
+        // 又能发一条（后端会回「已有对话正在处理中」）。收摊交给 chat.done、以及
+        // 下面那个只看「回合回复已落库」的看门狗。
         break;
       case "tool.call":
         if (
@@ -939,13 +1145,18 @@ export function useSuperChat({
 
   useEffect(() => {
     const activeTurnId = activeTurnIdRef.current;
-    if (!activeTurnId || busy || activeTurnIsPending(messages, activeTurnId)) return;
+    // 只认「这个回合的助手回复已经落进 messages」这一条正面证据。
+    // 守卫里原来还带着 `busy` —— busy 为真时这个 effect 永远进不来，于是后端漏发
+    // chat.done、或历史合并已经把回复带回来时，busy 就一直卡在 true：面板上的
+    // 「正在生成…」滚不到头，用户只能点停止；而停止一关 busy，场景落地 effect
+    // 立刻跑起来，看起来就是「点了停止却摆好了」。
+    if (!activeTurnId || !turnHasAssistantReply(messages, activeTurnId)) return;
     clearActiveTurn(scopeKey, activeTurnId);
     activeTurnIdRef.current = null;
     setActiveTurnId(null);
     pendingClientTurnIdRef.current = null;
     setBusy(false);
-  }, [busy, messages, scopeKey]);
+  }, [messages, scopeKey]);
 
   useEffect(() => {
     try {

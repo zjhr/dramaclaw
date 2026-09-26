@@ -101,14 +101,19 @@ export default defineConfig(({ mode }) => {
         // in dev while working fine in prod. The static middleware still serves
         // every file under the subpath, so only this one directory URL needs
         // rewriting.
-        name: "director-desk-dev-subpath-index",
+        // 同理覆盖 /monoform-desk/（并存的 MONOFORM 白模预演台，见其 UPSTREAM.md）。
+        name: "vendored-desk-dev-subpath-index",
         apply: "serve",
         configureServer(server) {
+          const vendoredDesks = ["director-desk", "monoform-desk"];
           server.middlewares.use((req, _res, next) => {
             const url = req.url ?? "";
             const [pathname, query] = url.split("?");
-            if (pathname === "/director-desk/" || pathname === "/director-desk") {
-              req.url = `/director-desk/index.html${query ? `?${query}` : ""}`;
+            for (const desk of vendoredDesks) {
+              if (pathname === `/${desk}/` || pathname === `/${desk}`) {
+                req.url = `/${desk}/index.html${query ? `?${query}` : ""}`;
+                break;
+              }
             }
             next();
           });

@@ -67,6 +67,10 @@ import {
 } from "@/features/canvas/nodes/PromptMentionEditor";
 import { NodeContextPromptPaletteButton } from "@/features/canvas/nodes/ContextPromptPaletteButton";
 import { PromptGalleryChip } from "@/features/canvas/ui/PromptGalleryChip";
+import {
+  PromptSkillChip,
+  PromptSkillGalleryModal,
+} from "@/features/canvas/ui/PromptSkillGalleryModal";
 import { PromptGalleryModal } from "@/features/canvas/ui/PromptGalleryModal";
 import { EnhancePromptDialog } from "@/features/canvas/nodes/EnhancePromptDialog";
 import {
@@ -317,6 +321,7 @@ export function VideoOperationsPanel({
     const [isTranslatingPrompt, setIsTranslatingPrompt] = useState(false);
     const [isCharacterLibraryOpen, setIsCharacterLibraryOpen] = useState(false);
     const [promptGalleryOpen, setPromptGalleryOpen] = useState(false);
+    const [promptSkillOpen, setPromptSkillOpen] = useState(false);
     // Local draft + composition guard so IME (中文输入法) candidates stop being
     // wiped by the store-driven re-render. Same fix pattern as
     // `docs/changes/2026-05-12-image-gen-ime-fix.md`.
@@ -983,8 +988,8 @@ export function VideoOperationsPanel({
                 className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
               />
 
-              <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
-                <div className="flex min-w-0 items-center gap-2">
+              <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 px-3 py-2">
+                <div className="flex min-w-0 flex-nowrap items-center gap-2">
                   <ProviderModelPicker
                     selectedModelId={modelId}
                     onChange={(nextModelId) => {
@@ -1113,6 +1118,10 @@ export function VideoOperationsPanel({
                       <Languages className="h-4 w-4" />
                     )}
                   </button>
+                  <PromptSkillChip
+                    title={data.promptSkill?.title}
+                    onOpen={() => setPromptSkillOpen(true)}
+                  />
                   <button
                     type="button"
                     title={t("node.promptEnhance.button")}
@@ -1191,6 +1200,7 @@ export function VideoOperationsPanel({
             不覆盖用户已经写好的内容。 */}
         {promptGalleryOpen && (
           <PromptGalleryModal
+            mediaKind="video"
             onApply={(item) => {
               promptEditorRef.current?.insertTextAtCursor(item.prompt);
               setPromptGalleryOpen(false);
@@ -1198,14 +1208,36 @@ export function VideoOperationsPanel({
             onClose={() => setPromptGalleryOpen(false)}
           />
         )}
+        <PromptSkillGalleryModal
+          open={promptSkillOpen}
+          selectedId={data.promptSkill?.id}
+          onOpenChange={setPromptSkillOpen}
+          onSelect={(skill) =>
+            updateNodeData(id, {
+              promptSkill: skill
+                ? {
+                    id: skill.id,
+                    title: skill.title,
+                    instruction: skill.instruction,
+                  }
+                : null,
+            })
+          }
+        />
         <EnhancePromptDialog
           open={promptEnhance.open}
           onOpenChange={promptEnhance.setOpen}
           dialects={VIDEO_PROMPT_DIALECTS}
           defaultDialect={defaultPromptDialect}
           busy={promptEnhance.busy}
+          skillTitle={data.promptSkill?.title}
           onConfirm={(dialect, strength) => {
-            void promptEnhance.run(prompt, dialect, strength);
+            void promptEnhance.run(
+              prompt,
+              dialect,
+              strength,
+              data.promptSkill?.instruction,
+            );
           }}
         />
       </>

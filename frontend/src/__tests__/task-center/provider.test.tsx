@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
+import { useContext, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CancelledError } from "@tanstack/query-core";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -26,6 +27,7 @@ import { sampleTask } from "@/__mocks__/msw/handlers/tasks";
 import { queryKeys } from "@/lib/query-keys";
 import { useTasks } from "@/lib/queries/tasks";
 import { TaskCenterProvider } from "@/task-center/provider";
+import { EventBusContext } from "@/task-center/event-bus-context";
 import { useTaskCenterStore } from "@/task-center/store";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -115,6 +117,18 @@ function Harness({
 
 function TasksConsumer() {
   useTasks({ project: "demo", episode: 1 });
+  return null;
+}
+
+/** 把 Provider 内部那条 bus 上广播的事件记录下来，供断言使用。 */
+function BusProbe({ record }: { record: string[] }) {
+  const bus = useContext(EventBusContext);
+  useEffect(() => {
+    if (!bus) return undefined;
+    return bus.on("*", (event) => {
+      record.push(event.type);
+    });
+  }, [bus, record]);
   return null;
 }
 
@@ -349,6 +363,39 @@ describe("TaskCenterProvider", () => {
       );
     });
     expect(useAppStore.getState().taskPanelOpen).toBe(false);
+  });
+
+  it("首次观察即终态也要广播 task_complete（只是不弹 toast）", async () => {
+    // 实测场景：长任务（360 全景要 1-2 分钟）期间事件流重连，前端第一次拿到这条
+    // 任务时它已经是 completed。旧逻辑在 `if (!sawRunning) return` 处直接返回，
+    // 广播永远发不出去 —— 导演台点了「换背景」，图生成好了、任务 completed、
+    // result 里 pano_url 也对，界面上却什么都不动。
+    // toast 继续受 sawRunning 保护（历史回放不该弹提示），广播只受 isFresh 约束。
+    server.use(
+      http.get("*/api/v1/projects/demo/tasks", () =>
+        HttpResponse.json({ ok: true, data: [] }),
+      ),
+    );
+    const { toast } = await import("sonner");
+    const spy = vi.spyOn(toast, "success");
+    const seen: string[] = [];
+    render(
+      <Harness>
+        <BusProbe record={seen} />
+      </Harness>,
+    );
+    await vi.waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+
+    act(() => {
+      MockEventSource.instances[0].dispatch(
+        "task_updated",
+        sampleTask({ task_id: "pano-1", task_key: "k1", status: "completed" }),
+      );
+    });
+
+    expect(seen).toContain("task_complete");
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it("invalidates scene asset queries when an episode scene planner completes", async () => {

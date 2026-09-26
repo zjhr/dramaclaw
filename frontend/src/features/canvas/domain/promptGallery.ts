@@ -82,6 +82,10 @@ export interface PromptSource {
   license: string;
   mediaKind: PromptMediaKind;
   enabled: boolean;
+  /**
+   * 封面要用户点了才加载。上游原图单张接近 1MB 时打开，避免一页卡片把图床打满。
+   */
+  deferImage?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +249,32 @@ export const PROMPT_SOURCES: PromptSource[] = [
     mediaKind: 'image',
     enabled: true,
   },
+  {
+    // 列表接口没有正文，这份文件是详情爬完后写成的 registry JSON。
+    // 生成物在 frontend/public/prompt-gallery/，不进 git。封面是远程 PNG，
+    // 单张大约 1MB，所以 deferImage。站点没有 MIT / CC BY，出处用 sourceUrl。
+    id: 'openzhenzhen-image',
+    name: 'OpenZhenZhen · 图像',
+    kind: 'registry-json',
+    urls: ['/prompt-gallery/openzhenzhen-image.json'],
+    homepage: 'https://openzhenzhen.com/',
+    license: '未标明开源许可，保留原作出处',
+    mediaKind: 'image',
+    enabled: true,
+    deferImage: true,
+  },
+  {
+    // 去重后的视频提示词。JSON 和海报都在 frontend/public/prompt-gallery/，不进 git。
+    // 海报是爬取时留下的单帧，经 media/ 下的目录链接读本地文件。
+    id: 'video-prompt-corpus',
+    name: '视频提示词语料',
+    kind: 'registry-json',
+    urls: ['/prompt-gallery/video-prompts.json'],
+    homepage: 'https://www.topview.ai/',
+    license: '多来源汇总，每条保留原出处',
+    mediaKind: 'video',
+    enabled: true,
+  },
 ];
 
 export function enabledPromptSources(): PromptSource[] {
@@ -365,6 +395,7 @@ export function parseRegistrySource(
       sourceId: source.id,
       sourceName: source.name,
       mediaKind: source.mediaKind,
+      ...(source.deferImage ? { deferImage: true } : {}),
     });
   });
 

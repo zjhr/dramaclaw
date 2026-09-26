@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -120,6 +121,16 @@ class ChatNotificationIn(BaseModel):
     text: str
 
 
+class DirectorDeskRestoreMessage(BaseModel):
+    role: str
+    text: str
+
+
+class DirectorDeskRestoreIn(BaseModel):
+    scope: ChatScopePayload
+    messages: list[DirectorDeskRestoreMessage]
+
+
 @router.post("/chat/notifications")
 async def append_chat_notification(
     payload: ChatNotificationIn,
@@ -133,22 +144,75 @@ async def append_chat_notification(
     if len(text) > 4000:
         raise HTTPException(status_code=400, detail="text is too long")
 
-    if scope.kind == "project":
+    if scope.project_id:
         project_ctx = await _project_context_for_scope(user, scope)
-        if not scope.id:
-            raise HTTPException(status_code=400, detail="project scope id is required")
+        project_dir: str | None = None
+        project_state_dir: str | None = None
+        if project_ctx is not None:
+            project_dir, project_state_dir = _scope_conversation_dirs(scope, project_ctx)
         message = chat_service.add_assistant_message(
             username,
-            str(scope.id),
+            str(scope.project_id),
             text,
-            project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
+            project_dir=project_dir,
+            project_state_dir=project_state_dir,
         )
     else:
         message = chat_store.append_message(username, scope, "assistant", text)
     return {"ok": True, "data": message}
+
+
+@router.post("/chat/director-desk/restore")
+async def restore_director_desk_chat(
+    payload: DirectorDeskRestoreIn,
+    user: dict = Depends(get_api_user),
+) -> dict[str, Any]:
+    """把 IndexedDB 里暂存的导演台对话写回服务端。
+
+    删节点时服务端目录会清掉。撤销把节点加回来之后，如果库已经空了，按暂存顺序重放
+    user/assistant。库里还有内容就不动，避免撤销发生在清理之前时写重一份。
+    """
+    username = str(user["username"])
+    scope = _scope_from_model(payload.scope)
+    if scope.kind != "directorDesk" or not scope.project_id:
+        raise HTTPException(status_code=400, detail="directorDesk scope is required")
+    project_ctx = await _project_context_for_scope(user, scope)
+    if project_ctx is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    project_dir, project_state_dir = _scope_conversation_dirs(scope, project_ctx)
+    existing = chat_service.list_messages(
+        username,
+        str(scope.project_id),
+        project_dir=project_dir,
+        project_state_dir=project_state_dir,
+    )
+    if existing:
+        return {"ok": True, "data": {"restored": 0, "skipped": True}}
+    restored = 0
+    for message in payload.messages[:50]:
+        text = message.text.strip()
+        if not text or message.role not in {"user", "assistant"}:
+            continue
+        if len(text) > 20000:
+            text = text[:20000]
+        if message.role == "user":
+            chat_service.add_user_message(
+                username,
+                str(scope.project_id),
+                text,
+                project_dir=project_dir,
+                project_state_dir=project_state_dir,
+            )
+        else:
+            chat_service.add_assistant_message(
+                username,
+                str(scope.project_id),
+                text,
+                project_dir=project_dir,
+                project_state_dir=project_state_dir,
+            )
+        restored += 1
+    return {"ok": True, "data": {"restored": restored, "skipped": False}}
 
 
 @router.post("/chat/ui-events")
@@ -158,7 +222,7 @@ async def append_chat_ui_event(
 ) -> dict[str, Any]:
     username = str(user["username"])
     scope = _scope_from_model(payload.scope)
-    if scope.kind == "project":
+    if scope.project_id:
         await _project_context_for_scope(user, scope)
     turn_id = payload.turn_id.strip()
     if not turn_id:
@@ -347,17 +411,39 @@ def _tool_display_payload(text: object, name: object = None) -> tuple[str, str]:
 async def _project_context_for_scope(
     user: dict[str, Any], scope: ChatScope
 ) -> ProjectContext | None:
-    if scope.kind != "project" or not scope.id:
+    project_id = scope.project_id
+    if not project_id:
         return None
     return await resolve_project_context(
         user=user,
-        project_id=str(scope.id),
+        project_id=project_id,
         required_role="viewer",
     )
 
 
+def _scope_conversation_dirs(
+    scope: ChatScope, project_ctx: ProjectContext
+) -> tuple[Path, Path]:
+    """把 scope 映射成「写哪本对话库」的 `(project_dir, project_state_dir)`。
+
+    `chat_service` 的对话库落在 `project_state_dir/chat.db`（见 `service.py` 的
+    `_chat_db_path`），所以导演台 scope 只要**换一个 state 子目录**，就得到一本物理
+    隔离的对话库，同时仍然拿着真实项目目录 —— agent 的工具照常能读项目、读上游节点。
+
+    project scope 原样返回，**连类型都别动**：`project_ctx.output_dir/state_dir` 是
+    `Path`，调用方与测试都按 `Path` 断言，顺手 `str()` 会静默改掉这个契约。
+    """
+    conversation_key = scope.conversation_key
+    if not conversation_key:
+        return project_ctx.output_dir, project_ctx.state_dir
+    return (
+        project_ctx.output_dir,
+        Path(project_ctx.state_dir) / "director-desk-chat" / conversation_key,
+    )
+
+
 async def _requester_user_id_for_chat(user: dict[str, Any], scope: ChatScope) -> str:
-    if scope.kind == "project":
+    if scope.project_id:
         project_ctx = await _project_context_for_scope(user, scope)
         if project_ctx is not None and project_ctx.requester_user_id:
             return project_ctx.requester_user_id
@@ -373,7 +459,7 @@ async def _require_ai_assistant_access(
     await get_usage_meter().require_feature_credit_balance(
         user_id=user_id,
         feature_key=AI_ASSISTANT_CHAT_FEATURE_KEY,
-        project_id=str(scope.id or "") if scope.kind == "project" else "",
+        project_id=scope.project_id or "",
         resource_kind="chat",
         metadata={"scope": scope.to_dict()},
     )
@@ -385,14 +471,17 @@ async def _history(
     *,
     project_ctx: ProjectContext | None = None,
 ) -> list[dict[str, Any]]:
-    if scope.kind == "project":
+    if scope.project_id:
+        if project_ctx is None:
+            # 拿不到 registry 校验过的项目上下文时保持原样（传 None 让 chat_service
+            # 走它自己的 state 目录解析），不擅自换库。
+            return chat_service.list_messages(username, str(scope.project_id))
+        project_dir, project_state_dir = _scope_conversation_dirs(scope, project_ctx)
         return chat_service.list_messages(
             username,
-            str(scope.id),
-            project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
+            str(scope.project_id),
+            project_dir=project_dir,
+            project_state_dir=project_state_dir,
         )
     return chat_store.list_messages(username, scope)
 
@@ -406,7 +495,7 @@ async def _send_scope_changed(
     try:
         project_ctx = await _project_context_for_scope(user, scope)
     except HTTPException as exc:
-        if scope.kind != "project" or exc.status_code != 404:
+        if scope.project_id is None or exc.status_code != 404:
             raise
         scope = ChatScope(kind="home")
         project_ctx = None
@@ -421,7 +510,9 @@ async def _send_scope_changed(
             "type": "scope.changed",
             "scope": scope.to_dict(),
             "history": await _history(username, scope, project_ctx=project_ctx),
-            "busy": chat_service.chat_run_lock_is_active(username),
+            "busy": chat_service.chat_run_lock_is_active(
+                username, scope.project_id or ""
+            ),
         },
     ):
         return None
@@ -469,8 +560,8 @@ async def _sync_running_agent_scope(username: str, scope: ChatScope) -> None:
 
         await hermes_pool.set_scope_for_user(
             username,
-            scope_kind=scope.kind,
-            project_id=scope.id if scope.kind == "project" else None,
+            scope_kind="project" if scope.project_id else scope.kind,
+            project_id=scope.project_id,
         )
     except Exception:
         # Scope switching should not spawn or break the UI if Hermes is absent.
@@ -487,7 +578,7 @@ async def _stream_project_turn(
     attachments: list[ChatAttachmentIn],
     turn_id: str,
 ) -> None:
-    project = str(scope.id)
+    project = str(scope.project_id)
     project_ctx = await _project_context_for_scope(user, scope)
     if project_ctx is None:
         # `ChatScope.from_payload`（`chat/store.py:82-83`）保证 project 态的 id 非空，
@@ -495,8 +586,7 @@ async def _stream_project_turn(
         # 身份就没法判定出网身份，绕过绑定直接开聊正是 OI-61 那条漏。
         # 不新造错误码，复用既有词汇。
         raise EgressBoundaryError("ORG_CONTEXT_REQUIRED")
-    project_dir = project_ctx.output_dir
-    project_state_dir = project_ctx.state_dir
+    project_dir, project_state_dir = _scope_conversation_dirs(scope, project_ctx)
     agent_text = _text_with_attachment_context(text, attachments)
     chat_service.add_user_message(
         username,
@@ -610,6 +700,10 @@ async def _stream_project_turn(
                 project_state_dir=project_state_dir,
                 egress_context=egress_context,
                 requester_user_id=project_ctx.requester_user_id,
+                # 对话作用域要一路传到 hermes 子进程的 env：插件据此决定注册哪些
+                # 工具。导演台（`directorDesk`）只拿到一个被路径白名单锁死的写工具，
+                # 「改项目其他部分」的能力在工具层就不存在。
+                chat_scope=scope.kind,
             )
     finally:
         heartbeat_task.cancel()
@@ -881,7 +975,7 @@ async def chat_ws(websocket: WebSocket) -> None:
     if _should_prewarm_on_ws_connect(current_scope):
         await chat_service.prewarm_chat_backend(
             username,
-            project=current_scope.id if current_scope.kind == "project" else None,
+            project=current_scope.project_id,
         )
 
     try:
@@ -916,9 +1010,8 @@ async def chat_ws(websocket: WebSocket) -> None:
                 # the first message in the project doesn't cold-start.
                 await chat_service.prewarm_chat_backend(
                     username,
-                    project=(
-                        current_scope.id if current_scope.kind == "project" else None
-                    ),
+                    project=current_scope.project_id,
+                    chat_scope=current_scope.kind,
                 )
                 continue
 
@@ -953,7 +1046,7 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             try:
                 await _require_ai_assistant_access(user=user, scope=scope)
-                if scope.kind == "project":
+                if scope.project_id:
                     await _stream_project_turn(
                         websocket=websocket,
                         user=user,

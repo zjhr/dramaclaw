@@ -255,6 +255,9 @@ const SHORT_TASK_TYPES = new Set([
   "freezone_text_enhance",
   "freezone_analyze_video_story",
   "freezone_image_reverse_prompt",
+  // 抽两帧 + 一次视觉调用，量级与图反推相同；归短任务让它在更紧的空闲预算下
+  // 被监听（长任务的预算更宽松，短任务等不到那么久）。
+  "freezone_video_reshoot_suggest_prompt",
 ]);
 
 export function pollTimeoutForTaskType(taskType: string | null | undefined): number {

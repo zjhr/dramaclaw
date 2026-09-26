@@ -163,6 +163,7 @@ def build_hermes_child_env(
     egress_project_id: str,
     project_env: dict[str, str] | None,
     authorization: HermesLaunchAuthorization,
+    chat_scope: str | None = None,
 ) -> dict[str, str]:
     """Build a minimal child env without consulting workspace/process credentials.
 
@@ -204,6 +205,9 @@ def build_hermes_child_env(
             if key.startswith("DRAMACLAW_PROJECT_")
         }
     )
+    if chat_scope:
+        # 对话作用域：导演台据此把「能改项目资产」的工具整批挡在注册之外。
+        env["DRAMACLAW_CHAT_SCOPE"] = chat_scope
     return env
 
 

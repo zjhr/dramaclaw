@@ -1189,9 +1189,15 @@ body.canvas-node-drag-focus [role="listbox"] {
   color: var(--foreground);
 }
 
+/*
+  列宽下限取 158px（= 卡片原设计宽度）：窄容器里列数不变、把余量分给卡片
+  （440px 侧栏：2 列 × 199px，比原来的 158px 大 26%），宽容器里仍受 max-width
+  限制最多 4 列。原来是 `repeat(auto-fill, 158px)` —— 固定列宽在窄侧栏里
+  右边空掉一大片，就是「显示不全」的来源。
+*/
 .st-keyframe-video-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 158px);
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
   align-items: start;
   justify-content: start;
   gap: 12px;
@@ -1200,7 +1206,7 @@ body.canvas-node-drag-focus [role="listbox"] {
 
 .st-unified-media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 158px);
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
   align-items: start;
   justify-content: start;
   gap: 12px;
@@ -1208,7 +1214,7 @@ body.canvas-node-drag-focus [role="listbox"] {
 }
 
 .st-unified-media-card {
-  width: 158px;
+  width: 100%;
   height: 211px;
   min-width: 0;
   flex-shrink: 0;

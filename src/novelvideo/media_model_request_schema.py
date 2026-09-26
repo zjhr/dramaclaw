@@ -626,11 +626,24 @@ def media_request_schema_for_mode(schema: object, mode: str | None) -> dict[str,
         return {}
     normalized_mode = normalize_media_model_mode(mode)
     filtered = copy.deepcopy(normalized_schema)
-    filtered["parameters"] = [
-        item
-        for item in normalized_schema.get("parameters") or []
-        if not item.get("modes") or normalized_mode in item["modes"]
-    ]
+    parameters: list[dict[str, Any]] = []
+    for item in normalized_schema.get("parameters") or []:
+        if item.get("modes") and normalized_mode not in item["modes"]:
+            continue
+        # 同一个参数在不同业务模式下要取不同值时用 valueByMode 记账。
+        # 场景：agnes 这类上游把「调用形状」编进 mode 字段（text / keyframe /
+        # reference），首尾帧生成必须发 keyframe，而它的目录条目只声明了静态
+        # default=text，照发就会被上游回 400「text 模式不能包含素材字段」。
+        # 用多写一条同 requestPath 的参数加 modes 也能表达，但那样每个模式都要
+        # 复制一份定义；valueByMode 让一条定义覆盖全部模式。
+        per_mode = item.get("valueByMode")
+        if isinstance(per_mode, dict) and normalized_mode in per_mode:
+            item = {**item, "default": per_mode[normalized_mode]}
+            # 换出来的默认值要立刻过一遍取值校验：写错选项（不在 options 里）
+            # 必须在加载时就炸，而不是等到生成时发一个上游必拒的请求。
+            _validate_parameter_value(item, item["default"], str(item["key"]))
+        parameters.append(item)
+    filtered["parameters"] = parameters
     return filtered
 
 

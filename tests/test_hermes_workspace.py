@@ -512,3 +512,95 @@ def test_chmod_700(isolated_workspace, repo_skills, repo_plugins):
     else:
         # On filesystems that support chmod, should be 0o700
         assert mode in (0o700, 0o755, 0o775), f"unexpected mode {oct(mode)}"
+
+
+# --- session 恢复（2026-09-18 实测 hermes 的 ACP 行为）-----------------------
+#
+# 实测：hermes **不**跨进程恢复 session/load —— 对任何 id（包括它自己从没见过的）
+# 都回 `{"result": {}}`，随后对该 id 的 `session/prompt` 立刻 `stopReason: refusal`，
+# 一次模型调用都不发。真正能恢复的是 `session/resume`，而且它是 fork：必须采用响应里
+# 返回的新 `acpSessionId`，用原来那个 id 去 prompt 同样被 refusal。
+#
+# 线上症状：面板显示 "(hermes returned no content)"，网关日志里一条请求都没有。
+
+
+def test_hermes_resume_adopts_the_forked_session_id():
+    resp = {
+        "result": {
+            "_meta": {
+                "hermes": {
+                    "sessionProvenance": {
+                        "acpSessionId": "forked-session",
+                        "currentHermesSessionId": "forked-session",
+                    }
+                }
+            }
+        }
+    }
+
+    assert hermes_sdk._resumed_session_id(resp) == "forked-session"
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        {"result": {}},  # session/load 的“成功”
+        {"error": {"message": "boom"}},
+        None,
+        {},
+    ],
+)
+def test_hermes_resume_id_absent_when_nothing_was_resumed(resp):
+    """空的 `{"result": {}}` 必须判为“没恢复”，否则线程会钉在死 session 上。"""
+    assert hermes_sdk._resumed_session_id(resp) == ""
+
+
+def _resume_thread(monkeypatch, resume_response):
+    """构造一个只有 `_ensure_session` 需要的字段的线程，并记录发出的 ACP 方法。"""
+    thread = hermes_sdk.HermesSdkThread.__new__(hermes_sdk.HermesSdkThread)
+    thread.id = "dead-session"
+    thread._is_new = False
+    thread._cwd = "/tmp"
+    thread._proc = object()
+    sent: list[str] = []
+
+    async def fake_send(method, params):
+        sent.append(method)
+        return len(sent)
+
+    async def fake_read_until_id(req_id, timeout):
+        if sent[-1] == "session/resume":
+            return resume_response, []
+        return {"result": {"sessionId": "fresh-session"}}, []
+
+    monkeypatch.setattr(thread, "_send", fake_send)
+    monkeypatch.setattr(thread, "_read_until_id", fake_read_until_id)
+    return thread, sent
+
+
+@pytest.mark.asyncio
+async def test_hermes_empty_resume_response_falls_back_to_session_new(monkeypatch):
+    """回归：把空 resume 当成功曾经让每一轮都变成 refusal + 无内容。"""
+    thread, sent = _resume_thread(monkeypatch, {"result": {}})
+
+    await thread._ensure_session()
+
+    assert sent == ["session/resume", "session/new"]
+    assert thread.id == "fresh-session"
+
+
+@pytest.mark.asyncio
+async def test_hermes_successful_resume_keeps_the_returned_id(monkeypatch):
+    thread, sent = _resume_thread(
+        monkeypatch,
+        {
+            "result": {
+                "_meta": {"hermes": {"sessionProvenance": {"acpSessionId": "forked-session"}}}
+            }
+        },
+    )
+
+    await thread._ensure_session()
+
+    assert sent == ["session/resume"]
+    assert thread.id == "forked-session"

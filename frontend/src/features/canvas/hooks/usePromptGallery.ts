@@ -13,6 +13,7 @@ import {
   enabledPromptSources,
   parsePromptSource,
   type PromptItem,
+  type PromptMediaKind,
   type PromptSource,
 } from "@/features/canvas/domain/promptGallery";
 
@@ -162,8 +163,17 @@ async function readCachedGallery(files: SourceFile[]): Promise<PromptItem[]> {
   return out;
 }
 
-export function usePromptGallery(enabled: boolean): UsePromptGalleryResult {
-  const sources = useMemo(() => enabledPromptSources(), []);
+export function usePromptGallery(
+  enabled: boolean,
+  mediaKind?: PromptMediaKind,
+): UsePromptGalleryResult {
+  const sources = useMemo(
+    () =>
+      enabledPromptSources().filter(
+        (source) => !mediaKind || source.mediaKind === mediaKind,
+      ),
+    [mediaKind],
+  );
   const queryClient = useQueryClient();
 
   const files = useMemo(

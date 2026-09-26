@@ -199,6 +199,31 @@ def _format_tool_call_text(update: dict, title: object) -> str:
     return "\n".join(lines)
 
 
+def _resumed_session_id(resp: dict | None) -> str:
+    """ACP session id returned by ``session/resume``.
+
+    hermes resumes by **forking**: the response carries a *new* ``acpSessionId``
+    under ``result._meta.hermes.sessionProvenance``. Prompting with the id we
+    asked to resume is refused — the returned id is the one to keep.
+    """
+    if not isinstance(resp, dict):
+        return ""
+    result = resp.get("result")
+    if not isinstance(result, dict):
+        return ""
+    provenance = (
+        result.get("_meta", {}).get("hermes", {}).get("sessionProvenance", {})
+        if isinstance(result.get("_meta"), dict)
+        else {}
+    )
+    if isinstance(provenance, dict):
+        for key in ("acpSessionId", "currentHermesSessionId"):
+            value = str(provenance.get(key) or "").strip()
+            if value:
+                return value
+    return str(result.get("sessionId") or "").strip()
+
+
 class HermesSdkClient:
     """Holds spawn configuration for a hermes worker subprocess.
 
@@ -280,6 +305,8 @@ class HermesSdkThread:
         # JSON-RPC stdio. Whichever runs first pays the cold start; the other
         # awaits it and then proceeds against the ready session.
         self._setup_lock = asyncio.Lock()
+        # Drains hermes' stderr; see _drain_stderr.
+        self._stderr_task: asyncio.Task[None] | None = None
 
     def _next_id(self) -> int:
         self._req_counter += 1
@@ -304,6 +331,8 @@ class HermesSdkThread:
         sandboxed = wrap_command(base_cmd, SandboxSpec(user=self._username, hermes_home=self._cwd))
         _log.info("spawning hermes acp for user=%s (sandboxed=%s)", self._username,
                   sandboxed[0] != base_cmd[0])
+        # 导演台把整段技能和场景说明放进一条 JSON-RPC。默认 64KiB 的行缓冲
+        # 读不到换行就会报 “Separator is not found, and chunk exceed the limit”。
         self._proc = await asyncio.create_subprocess_exec(
             *sandboxed,
             cwd=str(self._cwd),
@@ -311,7 +340,33 @@ class HermesSdkThread:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=8 * 1024 * 1024,
         )
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
+
+    async def _drain_stderr(self) -> None:
+        """Keep hermes' stderr flowing.
+
+        hermes logs everything (tool-registry warnings, upstream retry notices,
+        auth failures) to stderr. An unread pipe eventually fills and **blocks
+        the child on write**, so the worker goes silent mid-turn — no model
+        call, no error, nothing to see. Drain it, and surface the error lines
+        (the rest is per-turn registry noise).
+        """
+        assert self._proc is not None and self._proc.stderr is not None
+        try:
+            async for raw in self._proc.stderr:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                if "ERROR" in line or "Traceback" in line:
+                    _log.warning("hermes[%s] %s", self._username, line)
+                else:
+                    _log.debug("hermes[%s] %s", self._username, line)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # subprocess died mid-line; nothing left to drain
+            pass
 
     async def _read_until_id(
         self, target_id: int, timeout: float
@@ -329,10 +384,11 @@ class HermesSdkThread:
         while True:
             remaining = max(0.1, deadline - asyncio.get_event_loop().time())
             try:
-                line = await asyncio.wait_for(
-                    self._proc.stdout.readline(), timeout=remaining
-                )
+                line = await self._readline(remaining)
             except asyncio.TimeoutError:
+                # wait_for 取消 readline 后，StreamReader 可能仍占着读锁。
+                # 不丢掉这个进程，下一次 readuntil 会报 already waiting，这轮就再无回复。
+                await self._abandon_proc()
                 return None, notifications
             if not line:
                 return None, notifications
@@ -367,14 +423,24 @@ class HermesSdkThread:
         """Create or resume the ACP session. Updates ``self.id``."""
         if self.id and not self._is_new:
             req_id = await self._send(
-                "session/load",
+                "session/resume",
                 {"sessionId": self.id, "cwd": str(self._cwd), "mcpServers": []},
             )
             resp, _ = await self._read_until_id(req_id, SESSION_NEW_TIMEOUT)
-            if resp and "error" not in resp:
+            resumed = _resumed_session_id(resp)
+            if resumed:
+                self.id = resumed
                 return
-            _log.warning("session/load failed, falling back to session/new: %s",
-                         resp.get("error") if resp else "timeout")
+            # `session/load` is deliberately NOT a fallback: it answers
+            # `{"result": {}}` for any id at all — including ids hermes never
+            # had — and the next `session/prompt` on that id is refused. Reading
+            # that empty success as a resume pins the thread to a dead session,
+            # so every turn comes back `stopReason: refusal` with no model call.
+            _log.warning(
+                "session/resume failed (id=%s), starting a new session: %s",
+                self.id,
+                resp.get("error") if resp else "timeout",
+            )
             self._is_new = True
 
         req_id = await self._send(
@@ -390,6 +456,38 @@ class HermesSdkThread:
         self.id = result.get("sessionId") or f"hermes-{uuid.uuid4().hex}"
         self._is_new = False
 
+    async def _readline(self, timeout: float) -> bytes:
+        assert self._proc is not None and self._proc.stdout is not None
+        try:
+            return await asyncio.wait_for(self._proc.stdout.readline(), timeout=timeout)
+        except asyncio.LimitOverrunError:
+            await self._abandon_proc()
+            raise RuntimeError("hermes 的一行输出超过了读取缓冲，会话已重置") from None
+        except RuntimeError as exc:
+            if "already waiting" not in str(exc):
+                raise
+            await self._abandon_proc()
+            raise RuntimeError("hermes 的输出读取撞在一起，会话已重置") from None
+
+    async def _abandon_proc(self) -> None:
+        """Drop a half-started subprocess so the next turn can spawn a clean one."""
+        proc = self._proc
+        self._proc = None
+        self._initialized = False
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
+            self._stderr_task = None
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        except ProcessLookupError:
+            pass
+
     async def _prepare(self) -> None:
         """Spawn + initialize + create/resume session (the cold-start prologue).
 
@@ -397,11 +495,20 @@ class HermesSdkThread:
         the first real stream() never interleave on the JSON-RPC stdio.
         """
         async with self._setup_lock:
-            await self._spawn()
-            if self._proc is None or self._proc.stdout is None:
-                raise RuntimeError("hermes subprocess failed to start")
-            await self._initialize()
-            await self._ensure_session()
+            last_error: Exception | None = None
+            for _attempt in (1, 2):
+                try:
+                    await self._spawn()
+                    if self._proc is None or self._proc.stdout is None:
+                        raise RuntimeError("hermes subprocess failed to start")
+                    await self._initialize()
+                    await self._ensure_session()
+                    return
+                except Exception as exc:
+                    last_error = exc
+                    await self._abandon_proc()
+            if last_error is not None:
+                raise last_error
 
     async def warm(self) -> None:
         """Pre-pay the cold start (spawn + initialize + session) without a prompt.
@@ -480,9 +587,7 @@ class HermesSdkThread:
                     return
                 remaining = deadline - now
                 try:
-                    line = await asyncio.wait_for(
-                        self._proc.stdout.readline(), timeout=remaining
-                    )
+                    line = await self._readline(remaining)
                 except asyncio.TimeoutError:
                     yield await self._stream_timeout_event(turn_id)
                     return
@@ -642,6 +747,9 @@ class HermesSdkThread:
         if self._closed:
             return
         self._closed = True
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
+            self._stderr_task = None
         if self._proc is None:
             return
         try:

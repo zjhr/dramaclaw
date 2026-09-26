@@ -6,6 +6,7 @@ import { withLodShell } from './LodShellNode';
 import { AudioNode } from './AudioNode';
 import { BeatContextNode } from './BeatContextNode';
 import { DirectorDeskNode } from './DirectorDeskNode';
+import { MonoformDeskNode } from './MonoformDeskNode';
 import { GroupNode } from './GroupNode';
 import { ImageEditNode } from './ImageEditNode';
 import { ImageGenNode } from './ImageGenNode';
@@ -28,7 +29,9 @@ import { VideoStoryNode } from './VideoStoryNode';
 export const nodeTypes: NodeTypes = {
   audioNode: withLodShell('audioNode', AudioNode),
   beatContextNode: withLodShell('beatContextNode', BeatContextNode),
-  directorDeskNode: withLodShell('directorDeskNode', DirectorDeskNode),
+  // 节点级硬替换：directorDesk 节点类型渲染 MONOFORM（MonoformDeskNode）。
+  // 旧 DirectorDeskNode 组件留在文件里但不再挂进 nodeTypes（360 管线代码保留不触发）。
+  directorDeskNode: withLodShell('directorDeskNode', MonoformDeskNode),
   exportImageNode: withLodShell('exportImageNode', ImageNode),
   groupNode: withLodShell('groupNode', GroupNode),
   imageGenNode: withLodShell('imageGenNode', ImageGenNode),
@@ -47,4 +50,4 @@ export const nodeTypes: NodeTypes = {
   videoStoryNode: withLodShell('videoStoryNode', VideoStoryNode),
 };
 
-export { AudioNode, BeatContextNode, DirectorDeskNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };
+export { AudioNode, BeatContextNode, DirectorDeskNode, MonoformDeskNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };

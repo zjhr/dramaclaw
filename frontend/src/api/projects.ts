@@ -55,6 +55,92 @@ export interface SupertaleCharacter {
   [key: string]: unknown;
 }
 
+function isAlreadyExists(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /already exists/i.test(message) || message.includes("已存在");
+}
+
+/** 在角色库建一个角色，并带上名为「默认」的身份。脸写在角色卡和身份上，这一镜读的是身份。 */
+export async function createCharacterWithDefaultIdentity(
+  projectId: string,
+  name: string,
+  facePrompt: string,
+): Promise<{ identityId: string; characterName: string }> {
+  const trimmed = name.trim();
+  const face = facePrompt.trim();
+  const project = encodeURIComponent(projectId);
+  const character = encodeURIComponent(trimmed);
+  try {
+    await apiCall(`projects/${project}/characters`, {
+      method: "POST",
+      json: face ? { name: trimmed, face_prompt: face } : { name: trimmed },
+    });
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err;
+  }
+  let identityId = `${trimmed}_默认`;
+  try {
+    const identity = await apiCall<{ identity_id?: string; id?: string }>(
+      `projects/${project}/characters/${character}/identities`,
+      { method: "POST", json: { identity_name: "默认" } },
+    );
+    identityId = identity.identity_id || identity.id || identityId;
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err;
+  }
+  if (face) {
+    await updateCharacterIdentityFace(projectId, trimmed, identityId, face);
+  }
+  return { identityId, characterName: trimmed };
+}
+
+/** 把这一镜要锁的脸写到身份上。角色页改身份脸用的是同一个接口。 */
+export async function deleteCharacterIdentity(
+  projectId: string,
+  characterName: string,
+  identityId: string,
+): Promise<void> {
+  await apiCall(
+    `projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(characterName)}/identities/${encodeURIComponent(identityId)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** 角色页删除角色用的是 POST /delete，不是 DELETE。 */
+export async function deleteCharacter(projectId: string, characterName: string): Promise<void> {
+  await apiCall(
+    `projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(characterName)}/delete`,
+    { method: "POST" },
+  );
+}
+
+/** 身份图片上传走身份名，不走 identity_id。 */
+export async function uploadCharacterIdentityImage(
+  projectId: string,
+  characterName: string,
+  identityName: string,
+  file: File,
+): Promise<void> {
+  const body = new FormData();
+  body.append("file", file);
+  await apiCall(
+    `projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(characterName)}/identities/${encodeURIComponent(identityName)}/upload`,
+    { method: "POST", body, timeout: false },
+  );
+}
+
+export async function updateCharacterIdentityFace(
+  projectId: string,
+  characterName: string,
+  identityId: string,
+  facePrompt: string,
+): Promise<void> {
+  await apiCall(
+    `projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(characterName)}/identities/${encodeURIComponent(identityId)}`,
+    { method: "PATCH", json: { face_prompt: facePrompt.trim() } },
+  );
+}
+
 export async function listCharacters(projectId: string): Promise<SupertaleCharacter[]> {
   return await apiCall<SupertaleCharacter[]>(
     `projects/${encodeURIComponent(projectId)}/characters`,

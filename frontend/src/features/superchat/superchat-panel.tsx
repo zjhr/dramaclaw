@@ -84,18 +84,18 @@ import {
   type UiSpec,
 } from "@/features/superchat/spec-extract";
 import type { ChatMessage } from "@/features/superchat/types";
-import type { ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
+import type { ApprovalRequest, ChatAttachment, ChatScope } from "@/features/superchat/types";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 
-type SpecMediaDetailSection = {
+export type SpecMediaDetailSection = {
   title: string;
   body?: string;
   items?: string[];
 };
 
-type SpecMediaDetail = {
+export type SpecMediaDetail = {
   kind: "image" | "video";
   src: string;
   poster?: string;
@@ -203,7 +203,7 @@ function PlainMessageText({ text }: { text: string }) {
   return (
     <div className="space-y-2 break-words leading-relaxed">
       {paragraphs.map((paragraph, index) => (
-        <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap">
+        <p key={index} className="whitespace-pre-wrap">
           {paragraph}
         </p>
       ))}
@@ -264,9 +264,19 @@ function MessageText({
   text: string;
   markdown?: boolean;
 }) {
-  return markdown
-    ? <MarkdownMessageText text={text} />
-    : <PlainMessageText text={text} />;
+  /*
+    markdown 分支必须在**外层**包一层宽度约束：ReactMarkdown 的根节点不接受
+    className（v9 起移除），而它作为 flex item 时宽度取 fit-content ——
+    实测一段长 URL 能把整段撑到 645px，多出来的部分被父级裁掉，用户看到的就是
+    「文字显示不全」。纯文本分支本来就有 break-words，这里补齐同一口径。
+  */
+  return markdown ? (
+    <div className="min-w-0 max-w-full break-words">
+      <MarkdownMessageText text={text} />
+    </div>
+  ) : (
+    <PlainMessageText text={text} />
+  );
 }
 
 // 这一组匹配的是模型/后端返回的正文，不是界面文案，因此不进词条。中英两侧
@@ -981,7 +991,7 @@ function StructuredRenderer({
   );
 }
 
-function SpecMediaDetailModal({
+export function SpecMediaDetailModal({
   detail,
   onClose,
   onOpenMedia,
@@ -1349,7 +1359,7 @@ export const MessageBubble = memo(function MessageBubble({
                 ? "max-w-[86%] rounded-[12px] border border-border/70 bg-muted/25 px-3 py-2 text-muted-foreground"
                 : presentation.surface === "error"
                   ? "max-w-full rounded-[12px] border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-foreground"
-                  : "max-w-full text-foreground",
+                  : cn("max-w-full text-foreground", streaming && "w-full"),
           )}
         >
           {(isTool || (message.displayName && !isUser)) && (
@@ -1378,7 +1388,7 @@ export const MessageBubble = memo(function MessageBubble({
                   ? <HighlightedErrorText text={displayText} />
                   : isCompletionNotice && !isUser && !isTool
                     ? <HighlightedCompletionText text={displayText} />
-                    : <MessageText text={displayText} markdown={!isUser && !isTool} />
+                    : <MessageText text={displayText} markdown={!streaming && !isUser && !isTool} />
               )}
               <StructuredRenderer blocks={blocks} onOpenMedia={onOpenMedia} />
             </>
@@ -1998,21 +2008,32 @@ function PinnedPanel({
   );
 }
 
-function MessageDetailPanel({
+export function MessageDetailPanel({
   message,
   onClose,
   onOpenMedia,
+  alwaysVisible = false,
 }: {
   message: ChatMessage | null;
   onClose: () => void;
   onOpenMedia: (detail: SpecMediaDetail) => void;
+  /**
+   * 导演台助手面板在窄栏里用**覆盖式**展示详情（没有 xl 断点可用），传 true 常显。
+   * 默认 false = 保留项目助手原来的 `hidden xl:flex` 行为，逐字节不变。
+   */
+  alwaysVisible?: boolean;
 }) {
   const { t } = useTranslation();
   if (!message) return null;
   const { displayText, blocks } = extractStructuredBlocks(message);
 
   return (
-    <aside className="hidden h-full w-72 shrink-0 flex-col border-l border-border/65 bg-background xl:flex">
+    <aside
+      className={cn(
+        "h-full w-72 shrink-0 flex-col border-l border-border/65 bg-background",
+        alwaysVisible ? "flex" : "hidden xl:flex",
+      )}
+    >
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/65 px-3">
         <div className="text-sm font-medium">{t("aiAssistant.messageDetail")}</div>
         <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t("aiAssistant.closeDetail")}>
@@ -2491,11 +2512,17 @@ type SuperChatPanelVariant = "default" | "freezone";
 interface SuperChatPanelProps {
   variant?: SuperChatPanelVariant;
   onRequestClose?: () => void;
+  /**
+   * 显式作用域。不传则从路由推导（项目页 = 项目对话）。
+   * 导演台传 `directorDesk`，于是它的对话与项目助手**互不可见**。
+   */
+  scope?: ChatScope;
 }
 
 export function SuperChatPanel({
   variant = "default",
   onRequestClose,
+  scope,
 }: SuperChatPanelProps = {}) {
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
@@ -2539,6 +2566,7 @@ export function SuperChatPanel({
   const chat = useSuperChat({
     project: params.project,
     displayName: displayName || "SuperTale",
+    scope,
   });
   const isChatInitializing = !chat.historyReady && chat.messages.length === 0 && (chat.connecting || chat.connected);
 

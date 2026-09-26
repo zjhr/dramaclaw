@@ -29,6 +29,7 @@ import {
   filterPromptItems,
   findPromptSource,
   type PromptItem,
+  type PromptMediaKind,
 } from '@/features/canvas/domain/promptGallery';
 
 /**
@@ -65,9 +66,11 @@ export interface PromptGalleryModalProps {
   /** 套用：把正文填进调用方的输入框。 */
   onApply: (item: PromptItem) => void;
   onClose: () => void;
+  /** 图像节点只看图像，视频节点只看视频。不传则两种都显示。 */
+  mediaKind?: PromptMediaKind;
 }
 
-export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps) {
+export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGalleryModalProps) {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
   const [keyword, setKeyword] = useState('');
@@ -80,9 +83,13 @@ export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps
 
   // 打开即拉取。此前节点渲染时不会碰这些源（约 3.5MB）。
   const { items, isLoading, isRefreshing, failures, hasAnySuccess, offlineCount, refetch } =
-    usePromptGallery(true);
+    usePromptGallery(true, mediaKind);
 
-  const detail = detailId ? items.find((item) => item.id === detailId) ?? null : null;
+  const pool = useMemo(
+    () => (mediaKind ? items.filter((item) => item.mediaKind === mediaKind) : items),
+    [items, mediaKind],
+  );
+  const detail = detailId ? pool.find((item) => item.id === detailId) ?? null : null;
 
   // 从最上面那层开始吃 Esc：标签弹层 → 详情 → 整个弹窗。反过来会让用户
   // 只是想把弹层收起来，结果整个画廊关了。
@@ -92,9 +99,9 @@ export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps
     else onClose();
   });
 
-  const availableSources = useMemo(() => collectPromptSources(items), [items]);
+  const availableSources = useMemo(() => collectPromptSources(pool), [pool]);
   // 全量标签（按频次降序）。内联只摊开前几个当快捷入口，其余都在弹层里。
-  const tagStats = useMemo(() => collectPromptTags(items), [items]);
+  const tagStats = useMemo(() => collectPromptTags(pool), [pool]);
   const toggleTag = useCallback((tag: string) => {
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((entry) => entry !== tag) : [...prev, tag],
@@ -110,8 +117,8 @@ export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps
     [tagStats, selectedTags],
   );
   const filtered = useMemo(
-    () => filterPromptItems(items, { keyword, sourceId, tags: selectedTags }),
-    [items, keyword, sourceId, selectedTags],
+    () => filterPromptItems(pool, { keyword, sourceId, tags: selectedTags }),
+    [pool, keyword, sourceId, selectedTags],
   );
   const visible = useMemo(
     () => filtered.slice(0, visibleCount),
@@ -209,8 +216,8 @@ export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps
             />
 
             {tagStats.length > 0 ? (
-              <div className="flex items-center gap-2">
-                <span className="shrink-0 text-[11px] font-medium uppercase tracking-widest text-text-muted">
+              <div className="flex shrink-0 items-center gap-2 px-4 pt-2">
+                <span className="w-10 shrink-0 text-left text-[11px] font-medium uppercase tracking-widest text-text-muted">
                   {t('canvas.promptGallery.tagLabel')}
                 </span>
 
@@ -324,9 +331,7 @@ export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps
 
             <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4 [scrollbar-gutter:stable]">
               {isLoading ? (
-                <div className="flex h-40 items-center justify-center text-xs text-text-muted">
-                  {t('canvas.promptGallery.loading')}
-                </div>
+                <WaterfallSkeleton label={t('canvas.promptGallery.loading')} />
               ) : filtered.length === 0 ? (
                 <div className="flex h-40 items-center justify-center text-xs text-text-muted">
                   {hasAnySuccess
@@ -338,6 +343,11 @@ export function PromptGalleryModal({ onApply, onClose }: PromptGalleryModalProps
                   {/* 瀑布流用 CSS columns。上游图片比例不一（GitHub/Twitter 附件），
                       固定比例的网格会把它们统一裁掉一截；columns 让每张按原比例站位。
                       代价是阅读顺序变成纵向的（先填满第一列），对画廊可以接受。 */}
+                  {isRefreshing ? (
+                    <div className="mb-3 h-0.5 overflow-hidden rounded-full bg-white/[0.08]">
+                      <div className="h-full w-1/3 animate-pulse bg-white/50" />
+                    </div>
+                  ) : null}
                   <div className="columns-2 gap-3 sm:columns-3 xl:columns-4">
                     {visible.map((item) => (
                       <div key={item.id} className="mb-3 break-inside-avoid">
@@ -392,7 +402,7 @@ function FilterRow({
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2 px-4 pt-2">
-      <span className="shrink-0 text-[11px] font-medium uppercase tracking-widest text-text-muted">
+      <span className="w-10 shrink-0 text-left text-[11px] font-medium uppercase tracking-widest text-text-muted">
         {label}
       </span>
       <div className="ui-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5">
@@ -424,6 +434,26 @@ function FilterRow({
  * 交互留给调用方 —— 卡片那里封面正好包在一颗 button 里（点开详情），而 button
  * 里再放一颗「取图」按钮是非法结构。所以这里只按状态选外观，点谁由外层决定。
  */
+function WaterfallSkeleton({ label }: { label: string }) {
+  return (
+    <div className="columns-2 gap-3 sm:columns-3 xl:columns-4" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      {Array.from({ length: 9 }, (_, index) => (
+        <div
+          key={index}
+          className="mb-3 break-inside-avoid overflow-hidden rounded-[12px] border border-white/[0.10] bg-white/[0.04]"
+        >
+          <div className="aspect-video animate-pulse bg-white/[0.07]" />
+          <div className="space-y-2 px-2.5 py-2.5">
+            <div className="h-3 w-2/3 animate-pulse rounded bg-white/[0.08]" />
+            <div className="h-3 w-1/3 animate-pulse rounded bg-white/[0.05]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RemoteCover({
   src,
   alt,
@@ -442,6 +472,8 @@ function RemoteCover({
   pendingLabel?: string;
 }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const loaded = loadedSrc === src;
 
   if (pending || !src || failedSrc === src) {
     // 占位块不跟随传入的 className：瀑布流下传进来的是 h-auto，没图撑高度
@@ -463,15 +495,31 @@ function RemoteCover({
   }
 
   return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      // 不让第三方 CDN 拿到用户当前地址与来源页。
-      referrerPolicy="no-referrer"
-      onError={() => setFailedSrc(src)}
-      className={className}
-    />
+    <div
+      className={
+        loaded
+          ? 'relative w-full'
+          : 'relative aspect-video w-full overflow-hidden bg-white/[0.06]'
+      }
+    >
+      {loaded ? null : (
+        <div className="absolute inset-0 animate-pulse bg-white/[0.07]" aria-hidden="true" />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        // 不让第三方 CDN 拿到用户当前地址与来源页。
+        referrerPolicy="no-referrer"
+        onLoad={() => setLoadedSrc(src)}
+        onError={() => setFailedSrc(src)}
+        className={
+          loaded
+            ? className
+            : 'absolute inset-0 h-full w-full object-cover opacity-0'
+        }
+      />
+    </div>
   );
 }
 

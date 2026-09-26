@@ -3,6 +3,10 @@
 Lovart-style split:
     * home scope: user-level conversation before a project exists.
     * project scope: project/canvas conversation and iteration history.
+    * directorDesk scope: one director-desk **node**'s own conversation. It lives
+      under a project (so the agent keeps project context) but stores its history
+      apart from that project's conversation, so chatting inside a director desk
+      never shows up in — or reads from — the project assistant.
 
 The project chat DB path intentionally matches ``chat_service.py`` so existing
 NiceGUI history remains readable by the future React UI.
@@ -12,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,6 +24,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+
+DIRECTOR_DESK_SCOPE_KIND = "directorDesk"
+_SCOPE_KINDS = {"home", "project", "asset", "task", DIRECTOR_DESK_SCOPE_KIND}
+# scope id 会直接当路径分量（见 `ChatStore.db_for`），所以只放行不会构成路径的字面量。
+_SAFE_SCOPE_PART = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _assistant_prefix_candidates(previous_assistant: object) -> list[str]:
@@ -66,14 +76,14 @@ def _state_root() -> Path:
 
 @dataclass(frozen=True)
 class ChatScope:
-    kind: Literal["home", "project", "asset", "task"]
+    kind: Literal["home", "project", "asset", "task", "directorDesk"]
     id: str | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "ChatScope":
         payload = payload or {"kind": "home"}
         kind = str(payload.get("kind") or "home")
-        if kind not in {"home", "project", "asset", "task"}:
+        if kind not in _SCOPE_KINDS:
             raise ValueError(f"unsupported chat scope: {kind}")
         raw_id = payload.get("id")
         scope_id = str(raw_id).strip() if raw_id is not None else None
@@ -81,10 +91,39 @@ class ChatScope:
             scope_id = None
         if kind != "home" and not scope_id:
             raise ValueError(f"scope id is required for {kind}")
+        if kind == DIRECTOR_DESK_SCOPE_KIND:
+            # id 是 `<project>/<node>`，两段都会被当**路径分量**用（`db_for`），
+            # 所以必须逐段卡死字符集 —— 否则 `..` 这类 id 能写到 state 目录外面去。
+            parts = str(scope_id).split("/")
+            if len(parts) != 2 or not all(_SAFE_SCOPE_PART.match(part) for part in parts):
+                raise ValueError(
+                    "directorDesk scope id must be '<project>/<node>'"
+                )
         return cls(kind=kind, id=scope_id)
 
     def to_dict(self) -> dict[str, str | None]:
         return {"kind": self.kind, "id": self.id}
+
+    @property
+    def project_id(self) -> str | None:
+        """这段对话归属哪个项目；不属于任何项目时为 None。
+
+        导演台对话虽然单独存，但它仍然是**某个项目里**发生的事 —— agent 的工具
+        要靠它才拿得到项目上下文（读上游节点、读剧集资产）。所以这里把项目 id
+        从复合 id 里解出来，而不是让调用方各自 split。
+        """
+        if self.kind == "project":
+            return self.id
+        if self.kind == DIRECTOR_DESK_SCOPE_KIND and self.id:
+            return self.id.split("/", 1)[0]
+        return None
+
+    @property
+    def conversation_key(self) -> str | None:
+        """隔离存储用的键：导演台 = 节点 id，于是**每个节点一段自己的对话**。"""
+        if self.kind == DIRECTOR_DESK_SCOPE_KIND and self.id:
+            return self.id.split("/", 1)[1]
+        return None
 
 
 class ChatStore:

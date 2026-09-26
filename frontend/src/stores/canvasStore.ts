@@ -3,6 +3,10 @@
 // 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
 // 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
 // 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import {
+  restoreDirectorDeskChats,
+  stashDirectorDeskChats,
+} from '@/features/canvas/directorDeskChatArchive';
 import i18n from 'i18next';
 import { create } from 'zustand';
 import {
@@ -841,6 +845,28 @@ function normalizeHistory(history?: CanvasHistoryState): CanvasHistoryState {
 
 function createSnapshot(nodes: CanvasNode[], edges: CanvasEdge[]): CanvasHistorySnapshot {
   return { nodes, edges };
+}
+
+function directorDeskIds(nodes: CanvasNode[]): Set<string> {
+  return new Set(
+    nodes
+      .filter((node) => node.type === CANVAS_NODE_TYPES.directorDesk)
+      .map((node) => node.id),
+  );
+}
+
+function stashRemovedDirectorDeskChats(before: CanvasNode[], after: CanvasNode[]): void {
+  const nextIds = directorDeskIds(after);
+  const removed = [...directorDeskIds(before)].filter((nodeId) => !nextIds.has(nodeId));
+  if (removed.length === 0) return;
+  stashDirectorDeskChats(removed);
+}
+
+function restoreReturnedDirectorDeskChats(before: CanvasNode[], after: CanvasNode[]): void {
+  const previousIds = directorDeskIds(before);
+  const returned = [...directorDeskIds(after)].filter((nodeId) => !previousIds.has(nodeId));
+  if (returned.length === 0) return;
+  restoreDirectorDeskChats(returned);
 }
 
 function collectNodeIdsWithDescendants(nodes: CanvasNode[], seedIds: string[]): Set<string> {
@@ -2830,6 +2856,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nextEdges = state.edges.filter(
         (edge) => !deleteSet.has(edge.source) && !deleteSet.has(edge.target)
       );
+      stashRemovedDirectorDeskChats(state.nodes, nextNodes);
 
       const editSource: CanvasMutationSource = isDeleteToEmpty(
         state.nodes.length,
@@ -3916,6 +3943,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ? "delete_to_empty"
       : "user_edit";
 
+    restoreReturnedDirectorDeskChats(state.nodes, target.nodes);
     set({
       nodes: target.nodes,
       edges: target.edges,
@@ -3948,6 +3976,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ? "delete_to_empty"
       : "user_edit";
 
+    stashRemovedDirectorDeskChats(state.nodes, target.nodes);
     set({
       nodes: target.nodes,
       edges: target.edges,

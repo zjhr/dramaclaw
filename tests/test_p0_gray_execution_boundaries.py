@@ -264,6 +264,46 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
     }
 
 
+def test_chat_scope_reaches_the_child_env_only_when_asked(tmp_path, monkeypatch):
+    """对话作用域要落到子进程 env 里 —— 插件靠它决定注册哪些工具。
+
+    导演台（`directorDesk`）据此把「能改项目资产」的工具整批挡在注册之外。
+    不传时必须一个字节都不多（上面那条精确白名单就是靠这个成立）。
+    """
+    from novelvideo.chat.hermes_egress import (
+        HermesLaunchAuthorization,
+        build_hermes_child_env,
+    )
+
+    authorization = HermesLaunchAuthorization.for_test(
+        context=_context(),
+        credential=RequestCredential(
+            reference=_context().credential,
+            api_key="gw-request-secret",
+            base_url="https://gateway.example/v1",
+        ),
+    )
+    common = dict(
+        home=tmp_path,
+        username="user-1",
+        requester_user_id="user-id-1",
+        api_url="http://127.0.0.1:8780",
+        agent_token_env={"DRAMACLAW_AGENT_TOKEN": "agent-token"},
+        project_id="project-1",
+        egress_project_id="project-1",
+        project_env=None,
+        authorization=authorization,
+    )
+
+    assert "DRAMACLAW_CHAT_SCOPE" not in build_hermes_child_env(**common)
+    assert (
+        build_hermes_child_env(**common, chat_scope="directorDesk")[
+            "DRAMACLAW_CHAT_SCOPE"
+        ]
+        == "directorDesk"
+    )
+
+
 def test_c1_eg17_platform_and_director_org_deny_before_network_or_process():
     from novelvideo.task_backend.subprocesses import require_direct_model_egress_allowed
 

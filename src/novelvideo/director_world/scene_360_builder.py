@@ -110,6 +110,84 @@ def font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _build_pure_text_prompt_zh(
+    *,
+    scene_name: str,
+    scene_description: str,
+    style_instructions: str,
+    avoid_instructions: str,
+    layer_mode: str,
+) -> str:
+    """纯文本 360 全景的**中文**提示词（英文版的逐条对应翻译）。
+
+    为什么单独一条中文路径：实测英文版在上游跑 2 分钟以上必超时，中文版能出图。
+    只用于没有任何参考图的场合 —— 有参考图时走英文原版，那条路径不受影响。
+    """
+    if layer_mode == "shell_only":
+        layer_contract = """图层模式：仅场景外壳
+- 只生成空的环境外壳：墙体、地面、天花、门窗、灯光、招牌、墙面材质，
+  以及固定在墙上的台面与层板。
+- 移除可以独立移动、之后会挡住相机视线的前景物件：独立餐桌、凳子、椅子、
+  可搬动的箱子、垃圾桶、台面上散落的小物、以及任何剧情道具。
+- 移除物件的位置不要留下残影或模糊涂抹，用连续的地面/墙面/台面补齐。
+- 结果会作为空场景外壳用于机位与走位测试，不要暗示之后会重建物体层。"""
+    else:
+        layer_contract = """图层模式：完整环境
+- 生成完整的环境，只包含场景描述所表达的建筑本体、固定装置、家具/物件组，
+  以及可复用的动作区域。
+- 不要因为「这类场景通常有什么」就自行添加额外的家具、台面、装置、门窗、
+  道具或陈设。
+- 画面里不要有人物、角色，也不要有剧情动作。"""
+
+    return f"""生成一张精确 2:1 比例的 360 度等距圆柱全景图，场景为「{scene_name}」。
+
+参考图说明：
+- 本次没有附带任何参考图。
+- 场景完全依据下面的场景描述与项目风格预设来构建。
+
+{layer_contract}
+
+场景：
+{scene_description}
+
+方位契约：
+- 360 查看器默认偏航角 0°（正面）对应画面正面中心。
+- 全景必须表现一个以固定相机为中心的完整 360 度空间，不能是一张宽幅平面图，
+  也不能是三角形的房间。
+
+投影要求：
+- 正确的等距圆柱球面全景投影。
+- 输出必须是一张连续的 2:1 全景图，适配 VR/360 全景查看器。
+- 相机固定在房间中心、正常人眼高度。
+- 完整 360 度环绕环境。
+- 左右两端必须无缝衔接，看不出接缝。
+- 地平线必须水平且居中。
+- 使用正常的 VR 全景投影：不要单张宽幅图、不要四格拼贴、不要立方体贴图、不要边框。
+- 在 360 查看器里，墙面、门、窗、台面、家具/装置组、天花元素与地面材质应当连贯一致。
+- 球面贴合后几何必须稳定：直墙保持笔直，门窗矩形不得融化、拉伸或重复。
+- 避免大的近景物体横跨左右接缝。
+- 尽量让重要物体避开顶部与底部的极端极点畸变。
+- 天花与地面的极点必须是干净的连续表面，不能有黑洞、文字、镜像、被切开的物体或严重拉伸。
+
+风格契约：
+- 不要滑向照片写实、实拍、干净的 3D 渲染、游戏资产或高光建筑效果图。
+- 画面里不要有人物、角色，也不要有剧情动作。
+- 不要凭空生成可读文字，保留既有标识的抽象形态即可。
+
+项目风格预设：
+{style_instructions}
+
+风格规避：
+{avoid_instructions}
+
+负面要求：
+不是普通广角插画，不是单房间绘画，不是平面单点透视，不是多格拼版，不是鱼眼镜头，
+不是立方体贴图的面，不是 VR 头显截图，不要文字标签，不要 UI，不要水印，
+不要断开的接缝，接缝处不要重复的门洞，不要歪斜的地平线，VR 查看器里墙面不要弯曲，
+天地极点不要拉伸，左右不要镜像对称，接缝处不要有被切开的物体，
+不要巨大的贴脸前景物体，不要照片写实。"""
+
+
 def build_prompt(
     *,
     scene_name: str,
@@ -132,6 +210,10 @@ def build_prompt(
     avoid_instructions = (
         style_preset.get("gemini_avoid_instructions") or style_preset.get("negative_prompt") or ""
     )
+    # 纯文本生成（没有任何参考图）—— 这条路径走中文提示词（见文件末尾的说明）。
+    # 只要有 master / reverse / spatial_layout，就完全走原来的英文提示词。
+    pure_text = not has_master and not has_reverse and not has_spatial_layout
+
     reference_lines = ["INPUT IMAGE ROLES:"]
     if has_master:
         reference_lines.extend(
@@ -383,6 +465,22 @@ by master.png and reverse_master.png."""
   master image is attached.
 - The panorama must still represent a full 360-degree space around one fixed camera,
   not a flat wide shot or triangular room."""
+    if pure_text:
+        # 纯文本（无 master / reverse / spatial_layout）时走**中文**提示词。
+        #
+        # 实测：同一套条件下英文提示词在上游稳定跑 2 分钟以上并超时，中文版能出图。
+        # 这是纯文本路径专属的分支，**有参考图的路径一个字都没动**（那段是主线
+        # 「生成 360 全景」在用的，见下面的英文 return）。
+        #
+        # 语义与英文版逐条对应，只是换了语言，没有增删要求。
+        return _build_pure_text_prompt_zh(
+            scene_name=scene_name,
+            scene_description=scene_description,
+            style_instructions=str(style_instructions or ""),
+            avoid_instructions=str(avoid_instructions or ""),
+            layer_mode=layer_mode,
+        )
+
     return f"""Generate a 360-degree equirectangular panorama image in exact 2:1
 aspect ratio for scene `{scene_name}`.
 

@@ -101,12 +101,14 @@ const SORT_OPTIONS: { value: SortKey; labelKey: string }[] = [
   { value: "name-desc", labelKey: "project.sort.nameDesc" },
 ];
 
-const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
+// 与后端 validate_project_name 一致：Unicode 字母（含中文）、ASCII 数字、下划线。
+const PROJECT_NAME_PATTERN = /^[\p{L}0-9_]+$/u;
 export const PROJECT_NAME_MAX_LENGTH = 64;
 
 export function getProjectNameValidationKey(name: string): string | null {
-  if (name.length > PROJECT_NAME_MAX_LENGTH) return "project.nameTooLong";
-  return !PROJECT_NAME_PATTERN.test(name) ? "project.nameInvalid" : null;
+  const normalized = name.normalize("NFC");
+  if (normalized.length > PROJECT_NAME_MAX_LENGTH) return "project.nameTooLong";
+  return !PROJECT_NAME_PATTERN.test(normalized) ? "project.nameInvalid" : null;
 }
 
 const PROJECT_CARD_MIN_HEIGHT_CLASS = "min-h-[12.75rem]";
@@ -1169,7 +1171,7 @@ function ProjectDashboard() {
       ),
     [all, matchesSearch, sort],
   );
-  const trimmedNewName = newName.trim();
+  const trimmedNewName = newName.trim().normalize("NFC");
   const existingProject = useMemo(
     () => (trimmedNewName ? all.find((p) => p.name === trimmedNewName) : null),
     [all, trimmedNewName],

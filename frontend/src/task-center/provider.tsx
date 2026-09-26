@@ -362,28 +362,36 @@ export function TaskCenterProvider({
           if (!useTaskCenterStore.getState().isHydrated) return;
           if (!isFresh) return;
 
-          // Only toast on a *real* transition that happened in this session:
-          //   prev must exist AND have been non-terminal.
-          // Previous guard (`!wasTerminal` with prev=null → false) fired
-          // toasts for any first-time-seen terminal task, which is exactly
-          // what shows up after reconnect-replay or post-idle hydration.
-          if (!sawRunning) return;
-
+          // 广播和 toast 的准入门槛不同，别共用一个 return：
+          //
+          // - toast 只能来自**本会话内真实发生的状态跃迁**（prev 存在且非终态）。
+          //   早先那版用 `prev === null → false` 的判断，会让重连回放 / 空闲后补水化
+          //   送来的历史终态任务也弹「已完成」，所以加了 sawRunning。
+          // - bus.emit 只需要「这条完成是新鲜的」—— 上面那行 `if (!isFresh) return`
+          //   已经用 2 分钟窗口挡住了历史回放。再叠一道 sawRunning 会漏掉整整一类
+          //   真实完成：**如果前端第一次拿到这条任务时它已经是终态**（长任务期间事件流
+          //   重连、或首次观察落在 hydrate 之后），sawRunning 为 false，事件永远发不出去。
+          //   实测症状：导演台点了「换背景」，图生成好了、任务 completed、result 里
+          //   pano_url 也对，但界面上什么都不动 —— 因为那个完成事件从未广播。
           if (task.status === "completed") {
             bus.emit({ type: "task_complete", task, previous: prev });
-            toast.success(
-              tRef.current("taskCenter.toast.completed", {
-                label: displayLabel(task, tRef.current),
-              }),
-            );
+            if (sawRunning) {
+              toast.success(
+                tRef.current("taskCenter.toast.completed", {
+                  label: displayLabel(task, tRef.current),
+                }),
+              );
+            }
           } else if (task.status === "failed") {
             bus.emit({ type: "task_failed", task, previous: prev });
-            toast.error(
-              tRef.current("taskCenter.toast.failed", {
-                label: displayLabel(task, tRef.current),
-                error: taskErrorMessage(task, tRef.current),
-              }),
-            );
+            if (sawRunning) {
+              toast.error(
+                tRef.current("taskCenter.toast.failed", {
+                  label: displayLabel(task, tRef.current),
+                  error: taskErrorMessage(task, tRef.current),
+                }),
+              );
+            }
           }
         },
         onDelete: (key) => {

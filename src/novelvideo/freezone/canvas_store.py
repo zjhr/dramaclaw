@@ -26,6 +26,52 @@ IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 # 持有租约期间他的 `updated_at` 一定落在这个窗口里,所以窗口口径 ≈「他还持着」,
 # 而窗口过后提示自然消失,不需要任何一次额外查询(§3.9 O2 要求零额外往返)。
 CANVAS_EDITING_HINT_WINDOW_SECONDS = 60
+_DIRECTOR_DESK_NODE_TYPE = "directorDeskNode"
+_DIRECTOR_DESK_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+
+
+def _director_desk_node_ids(payload: dict | None) -> set[str]:
+    if not isinstance(payload, dict):
+        return set()
+    nodes = payload.get("nodes")
+    if not isinstance(nodes, list):
+        return set()
+    ids: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != _DIRECTOR_DESK_NODE_TYPE:
+            continue
+        node_id = str(node.get("id") or "").strip()
+        if _DIRECTOR_DESK_NODE_ID_RE.fullmatch(node_id):
+            ids.add(node_id)
+    return ids
+
+
+def _purge_removed_director_desk_chats(
+    project_dir: Path,
+    existing: dict | None,
+    payload: dict | None,
+) -> None:
+    """导演台节点从画布上消失后，删掉它独占的对话目录。
+
+    对话库在 ``<state>/director-desk-chat/<node_id>/``（见 chat 路由的
+    ``_scope_conversation_dirs``）。画布保存用的 ``project_dir`` 就是这块 state。
+    只删「旧画布有、新画布没有」的节点；撤销把节点加回来时目录已经没了，对话不恢复。
+    """
+    removed = _director_desk_node_ids(existing) - _director_desk_node_ids(payload)
+    if not removed:
+        return
+    root = project_dir / "director-desk-chat"
+    for node_id in removed:
+        target = root / node_id
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "failed to purge director desk chat for %s", node_id, exc_info=True
+            )
+
+
 CANVAS_PAYLOAD_SIZE_LIMIT_BYTES = int(
     os.environ.get("FREEZONE_CANVAS_PAYLOAD_LIMIT_BYTES") or 5 * 1024 * 1024
 )
@@ -763,6 +809,7 @@ def save_canvas(
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
+        _purge_removed_director_desk_chats(project_dir, existing, payload)
         response_cache = {
             "saved": True,
             "revision": payload.get("revision"),
@@ -821,6 +868,7 @@ def restore_canvas_version(
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
+        _purge_removed_director_desk_chats(project_dir, existing, payload)
         return CanvasRestoreResult(
             payload=payload,
             existing=existing,

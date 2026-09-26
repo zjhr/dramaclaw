@@ -131,6 +131,10 @@ class _WorkerSlot:
     egress_project_id: str | None = None
     requester_user_id: str | None = None
     authorization: HermesLaunchAuthorization | None = None
+    # 对话作用域（`project` / `home` / `directorDesk`）。它进的是子进程 env，
+    # 决定插件注册哪些工具 —— env 建好就改不动，所以作用域变了必须重建 worker，
+    # 不能让项目助手的 worker 被导演台复用（否则工具集是错的）。
+    chat_scope: str | None = None
 
 
 class _ManagedHermesThread:
@@ -214,6 +218,7 @@ class HermesPool:
         egress_project_id: str | None = None,
         requester_user_id: str | None = None,
         authorization: HermesLaunchAuthorization | None = None,
+        chat_scope: str | None = None,
     ) -> HermesSdkThread:
         """Lazily create / return the per-user hermes thread.
 
@@ -253,6 +258,7 @@ class HermesPool:
                         model=model,
                         scope_kind=scope_kind,
                         project_id=project_id,
+                        chat_scope=chat_scope,
                         reason="thread-closed",
                     )
                 elif slot.gateway_fingerprint != effective_gateway_fingerprint():
@@ -261,6 +267,7 @@ class HermesPool:
                         model=model,
                         scope_kind=scope_kind,
                         project_id=project_id,
+                        chat_scope=chat_scope,
                         reason="model-gateway-change",
                     )
                 elif self._token_needs_renewal(slot):
@@ -269,14 +276,20 @@ class HermesPool:
                         model=model,
                         scope_kind=scope_kind,
                         project_id=project_id,
+                        chat_scope=chat_scope,
                         reason="agent-session-renewal",
                     )
-                elif slot.scope_kind != scope_kind or slot.project_id != project_id:
+                elif (
+                    slot.scope_kind != scope_kind
+                    or slot.project_id != project_id
+                    or slot.chat_scope != chat_scope
+                ):
                     slot = await self._rotate_slot_locked(
                         slot,
                         model=model,
                         scope_kind=scope_kind,
                         project_id=project_id,
+                        chat_scope=chat_scope,
                         reason="scope-env-change",
                     )
                 else:
@@ -293,6 +306,7 @@ class HermesPool:
                 egress_project_id=egress_project_id,
                 requester_user_id=requester_user_id,
                 authorization=authorization,
+                chat_scope=chat_scope,
             )
             slot.authz_generation = authz_generation
             self._slots[username] = slot
@@ -338,6 +352,7 @@ class HermesPool:
         requester_user_id: str | None = None,
         resume_session_id: str | None = None,
         authorization: HermesLaunchAuthorization | None = None,
+        chat_scope: str | None = None,
     ) -> _WorkerSlot:
         """Spawn a worker slot.
 
@@ -375,6 +390,7 @@ class HermesPool:
             requester_user_id=requester_user_id,
             project_env=project_env,
             authorization=authorization,
+            chat_scope=chat_scope,
         )
         client = HermesSdkClient(
             cli_path=cli_path,
@@ -413,6 +429,7 @@ class HermesPool:
             egress_project_id=egress_project_id,
             requester_user_id=requester_user_id,
             authorization=authorization,
+            chat_scope=chat_scope,
         )
 
     def _token_needs_renewal(self, slot: _WorkerSlot) -> bool:
@@ -449,6 +466,7 @@ class HermesPool:
         model: str | None,
         scope_kind: str,
         project_id: str | None,
+        chat_scope: str | None = None,
         reason: str,
     ) -> _WorkerSlot:
         """Replace a running worker with a fresh token/session.
@@ -486,6 +504,7 @@ class HermesPool:
             requester_user_id=slot.requester_user_id,
             resume_session_id=resume_session_id,
             authorization=slot.authorization,
+            chat_scope=chat_scope,
         )
         _log.info(
             "rotating hermes worker for user=%s old_agent_session=%s new_agent_session=%s reason=%s",
@@ -559,6 +578,7 @@ class HermesPool:
         requester_user_id: str | None = None,
         project_env: dict[str, str] | None = None,
         authorization: HermesLaunchAuthorization | None = None,
+        chat_scope: str | None = None,
     ) -> dict[str, str]:
         """Build the strict environment passed only to this Hermes worker.
 
@@ -595,6 +615,7 @@ class HermesPool:
                 egress_project_id=egress_project_id,
                 project_env=project_env,
                 authorization=authorization,
+                chat_scope=chat_scope,
             )
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -624,6 +645,10 @@ class HermesPool:
             env["SUPERTALE_PROJECT"] = project_id
         if project_env:
             env.update(project_env)
+        if chat_scope:
+            # 让插件知道这段对话属于哪个作用域：导演台据此**只注册**一个受路径白名单
+            # 锁死的写工具，其余能改项目资产的工具根本不注册（不是「劝它别调」）。
+            env["DRAMACLAW_CHAT_SCOPE"] = chat_scope
         api_key, _base_url = effective_gateway_credentials()
         if api_key:
             env["NEWAPI_API_KEY"] = api_key
@@ -717,6 +742,7 @@ class HermesPool:
         *,
         scope_kind: str = "home",
         project_id: str | None = None,
+        chat_scope: str | None = None,
     ) -> None:
         """Proactively spawn + warm the user's worker for the given scope.
 
@@ -728,7 +754,10 @@ class HermesPool:
         """
         try:
             thread = await self.get_for_user(
-                username, scope_kind=scope_kind, project_id=project_id
+                username,
+                scope_kind=scope_kind,
+                project_id=project_id,
+                chat_scope=chat_scope,
             )
         except Exception as e:  # noqa: BLE001 - prewarm must never break chat
             _log.debug("prewarm get_for_user failed for user=%s: %s", username, e)

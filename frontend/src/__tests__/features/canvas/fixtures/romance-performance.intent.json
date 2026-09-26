@@ -1,0 +1,112 @@
+{
+  "type": "director-desk-scene",
+  "characters": [
+    {
+      "target": "aigen_char_1",
+      "name": "林晚",
+      "start": 0,
+      "performance": [
+        {
+          "t": 0,
+          "pose": "stand_relaxed",
+          "controls": {
+            "head.pitch": 14
+          }
+        },
+        {
+          "t": 2,
+          "pose": "stand_relaxed",
+          "controls": {
+            "head.pitch": 0
+          }
+        },
+        {
+          "t": 3.5,
+          "pose": "idle",
+          "controls": {
+            "rightArm.pitch": -28,
+            "rightElbow.bend": 8
+          }
+        },
+        {
+          "t": 6.5,
+          "pose": "idle",
+          "controls": {
+            "rightArm.pitch": 0,
+            "rightElbow.bend": 0,
+            "head.pitch": 0
+          }
+        }
+      ]
+    },
+    {
+      "target": "aigen_char_2",
+      "name": "沈青",
+      "start": 0,
+      "performance": [
+        {
+          "t": 0,
+          "pose": "stand_relaxed"
+        },
+        {
+          "t": 1.5,
+          "pose": "idle",
+          "controls": {
+            "rightArm.pitch": -30,
+            "rightElbow.bend": 6
+          }
+        },
+        {
+          "t": 5,
+          "pose": "idle",
+          "controls": {
+            "rightArm.pitch": -30,
+            "rightElbow.bend": 6
+          }
+        },
+        {
+          "t": 6.5,
+          "pose": "idle",
+          "controls": {
+            "rightArm.pitch": 0,
+            "rightElbow.bend": 0
+          }
+        }
+      ]
+    }
+  ],
+  "shots": [
+    {
+      "name": "全景",
+      "camera": {
+        "move": "static",
+        "size": "wide",
+        "height": "eye",
+        "duration": 8,
+        "start": 0
+      }
+    },
+    {
+      "name": "沈青越肩",
+      "camera": {
+        "move": "over-shoulder",
+        "subject": "沈青",
+        "size": "medium",
+        "height": "eye",
+        "duration": 4,
+        "start": 2
+      }
+    },
+    {
+      "name": "林晚反打",
+      "camera": {
+        "move": "over-shoulder",
+        "subject": "林晚",
+        "size": "medium",
+        "height": "eye",
+        "duration": 4,
+        "start": 6.5
+      }
+    }
+  ]
+}

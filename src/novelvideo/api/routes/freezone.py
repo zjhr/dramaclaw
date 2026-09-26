@@ -68,6 +68,8 @@ from novelvideo.api.schemas import (
     FreezonePromptStrength,
     FreezoneRedrawRequest,
     FreezoneRelightRequest,
+    FreezoneDirectorDeskPanoramaRequest,
+    FreezoneVideoReshootSuggestPromptRequest,
     FreezoneScene360Request,
     FreezoneSketchFromContextRequest,
     FreezoneStageAssetAcceptedResponse,
@@ -84,6 +86,8 @@ from novelvideo.api.schemas import (
     FreezoneVideoEditRequest,
     FreezoneVideoEraseRequest,
     FreezoneVideoGenRequest,
+    FreezoneVideoGreyboxRequest,
+    FreezoneVideoReshootRequest,
     FreezoneVideoOmniGenRequest,
     FreezoneVideoUpscaleRequest,
     ImpactRequest,
@@ -2756,6 +2760,7 @@ async def _enqueue_or_start_freezone_media_job(
         "freezone_video_upscale",
         "freezone_audio_separate",
         "freezone_video_compose",
+        "freezone_video_greybox",
         "freezone_audio_eleven_music",
         "freezone_audio_sfx",
     ],
@@ -5159,6 +5164,95 @@ async def freezone_scene_360(
     return await _start_or_enqueue_mainline_scene_360_candidate_job(**kwargs)
 
 
+@router.post(
+    "/projects/{project}/freezone/director-desk-panorama",
+    tags=[TAG_FREEZONE_IMAGE],
+)
+async def freezone_director_desk_panorama(
+    project: str,
+    body: FreezoneDirectorDeskPanoramaRequest,
+    user: dict = Depends(get_api_user),
+):
+    """导演台背景：按**纯文本描述**生成 2:1 全景图（文生全景）。
+
+    与 `/freezone/scene-360` 的区别有两点，都是刻意的：
+
+    1. **不需要 scene master**。那条是图生图；导演台经常是从零开摆，没有源图。
+    2. **不碰项目场景资产**。产物落在 `director_desk_panorama/<node_id>/`，
+       并且 `update_manifest=False` —— 项目的场景 manifest 一个字节都不动。
+       这是「修改生成只作用于当前节点」这条产品边界的落点：一个节点一份背景，
+       换背景不会影响别的节点、也不进主线资产。
+    """
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="editor"
+    )
+    description = body.description.strip()
+    if not description:
+        raise HTTPException(400, "description is required")
+    node_id = body.node_id.strip()
+    if not CANVAS_ID_RE.match(node_id):
+        # node_id 直接当路径分量用（产物目录按它分），所以卡死字符集。
+        raise HTTPException(400, "invalid node_id")
+
+    job_id = _new_job_id()
+    artifact_dir = outputs_dir(project_dir, "director_desk_panorama") / node_id / job_id
+    params: dict[str, Any] = {
+        "project_dir": str(project_dir),
+        "description": description,
+        # provider 留空：runner 走 `resolve_scene_360_image_provider/model`，
+        # 也就是项目配置里那条 360 链路（默认回落 gpt-image-2）。
+        "provider": "",
+        "model": body.model,
+        "style": body.style,
+        "image_size": _cap_mainline_scene_360_image_size(body.image_size),
+        "quality": body.quality,
+        "artifact_dir": str(artifact_dir),
+        # 关键：不把这次生成写进场景 manifest。
+        "update_manifest": False,
+        "timeout_seconds": body.timeout_seconds,
+    }
+    # scope 里带 node_id 与 job_id，且**不用哈希**：前端要靠它认出「这条失败的任务
+    # 是哪个节点的」，好把错误显示在对应节点的对话里，而不是让用户自己去任务中心翻。
+    # 带 job_id 是为了同一个节点反复生成时各自成任务，不被 config scope 合并掉。
+    scope = f"director_desk_panorama:{node_id}:{job_id}"
+
+    from novelvideo.api.routes.scenes import _scene_pano_billing_metadata
+
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        product_surface="freezone",
+        task_type="scene_pano_generation",
+        # 走 `default` 而不是 `world`：`world` 车道每项目 2 / **每用户 1**
+        # （`task_backend/limits.py`），是给 3GS / 体素重建那种重活留的。导演台背景
+        # 只是一次普通图片生成，挤那条道会变成「世界里跑着一个任务时就再也生成不了
+        # 背景」，还会反过来占住 world 的槽位。
+        queue_kind="default",
+        episode=0,
+        scope=scope,
+        payload={
+            # scene_name 只进提示词抬头与日志。用它当「场景名」是刻意的：
+            # 导演台没有场景实体，不该假装有。
+            "scene_name": "导演台背景",
+            "step": "pano_from_text",
+            "params": params,
+            "project_dir": str(project_dir),
+            "billing": _scene_pano_billing_metadata(params),
+        },
+    )
+    return {
+        "ok": True,
+        "data": {
+            "task_id": queued.task_state.task_id,
+            "task_key": project_task_state_key(
+                "scene_pano_generation", ctx.project_id, 0, scope=scope
+            ),
+            "backend": queued.backend,
+            "queue": queued.queue,
+            "node_id": node_id,
+        },
+    }
+
+
 async def _run_ai_staging_prop(request: dict[str, object]) -> dict[str, object]:
     return await asyncio.to_thread(generate_ai_staging_prop, request)
 
@@ -6404,6 +6498,7 @@ def _start_freezone_prompt_enhance_task(
     text: str,
     dialect: FreezonePromptDialect,
     strength: FreezonePromptStrength,
+    guidance: str = "",
     canvas_id: str | None = None,
     node_id: str | None = None,
 ) -> None:
@@ -6441,6 +6536,7 @@ def _start_freezone_prompt_enhance_task(
             )
             enhanced_text, changes = await enhance_freezone_prompt(
                 text=text,
+                guidance=guidance,
                 dialect=dialect,
                 strength=strength,
             )
@@ -6767,6 +6863,7 @@ async def freezone_text_enhance(
                     "text": text,
                     "dialect": body.dialect,
                     "strength": body.strength,
+                    "guidance": body.guidance,
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
                     "billing": {
@@ -6782,6 +6879,7 @@ async def freezone_text_enhance(
             text=text,
             dialect=body.dialect,
             strength=body.strength,
+            guidance=body.guidance,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
         )
@@ -6813,6 +6911,10 @@ def _story_script_output_path(project_dir: Path, job_id: str) -> Path:
 
 def _image_reverse_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_image_reverse_prompt") / f"{job_id}.json"
+
+
+def _reshoot_suggest_prompt_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_video_reshoot_suggest_prompt") / f"{job_id}.json"
 
 
 def _video_compose_output_path(project_dir: Path, job_id: str) -> Path:
@@ -6947,6 +7049,7 @@ def _start_freezone_video_compose_task(
                 fps=body.fps,
                 background_color=body.background_color,
                 keep_original_audio=body.keep_original_audio,
+                preserve_source_size=body.preserve_source_size,
                 tracks=resolved_tracks,
             )
             task_manager.complete_task(
@@ -9909,6 +10012,236 @@ async def freezone_video_upscale(
 
 
 @router.post(
+    "/projects/{project}/freezone/video/greybox",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_greybox(
+    project: str,
+    body: FreezoneVideoGreyboxRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：转深度视频（本地深度几何渲染）。
+
+    四段全部本地完成，零 API 成本：
+    - ffmpeg 按 `fps` 抽帧
+    - 深度推理：`backend="frame"`（默认）DA V2 逐帧；`backend="vda"`
+      Video-Depth-Anything 整段（32 帧窗口时序一致，不闪烁，更慢）
+    - 按 `fov_deg` 反投影渲染灰白几何帧
+    - ffmpeg 合帧，保留原音轨
+    """
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"video source not found: {source_path}")
+
+    job_id = _new_job_id()
+    return await _enqueue_or_start_freezone_media_job(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        task_type="freezone_video_greybox",
+        job_id=job_id,
+        payload={
+            "source_path": source_path.as_posix(),
+            "fps": body.fps,
+            "fov_deg": body.fov_deg,
+            "ambient": body.ambient,
+            "base_grey": body.base_grey,
+            "outline": body.outline,
+            "invert": body.invert,
+            "gamma": body.gamma,
+            "smooth": body.smooth,
+            "fill_strength": body.fill_strength,
+            "temporal_window": body.temporal_window,
+            "backend": body.backend,
+            "shade": body.shade,
+            "device_name": body.device_name,
+        },
+        queue_kind="video",
+    )
+
+
+@router.post(
+    "/projects/{project}/freezone/video/reshoot",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_reshoot(
+    project: str,
+    body: FreezoneVideoReshootRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：片段重拍（按秒区间 + 首尾帧锚定重生成，拼回原片）。
+
+    产出两个文件：
+    - `clip_url` 重拍的那一小段（时长对齐区间，供先试看）
+    - `output_url` 前段 + 新段 + 后段拼回的整片（保留原音轨，主产物）
+
+    区间超过模型 `maxDuration` 时拒绝（不静默截断）。
+    """
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    if body.end_seconds <= body.start_seconds:
+        raise HTTPException(400, "end_seconds must be greater than start_seconds")
+
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"video source not found: {source_path}")
+
+    # 模型时长上下限：查得到才限制，查不到不拦（runner 侧传 0 表示不校验）。
+    max_duration_seconds = 0
+    min_duration_seconds = 0
+    request_schema: dict | None = None
+    model_params: dict | None = None
+    capabilities: dict | None = None
+    if body.model:
+        try:
+            request_schema, model_params, capabilities = await _resolve_catalog_request(
+                "video",
+                body.model,
+                {},
+                mode="firstLastFrame",
+                requester_user_id=ctx.requester_user_id,
+            )
+            # 首尾帧锚定是片段重拍的唯一生成路径：模型没声明这个模式就没得可跑，
+            # 必须在入队前拒掉。放过的话任务会一路打到上游才失败，用户白等一场，
+            # 而这个问题在目录里是现成的。
+            _require_catalog_video_mode(capabilities, "firstLastFrame")
+            min_duration, max_duration = _catalog_duration_bounds(capabilities)
+            max_duration_seconds = int(max_duration or 0)
+            min_duration_seconds = int(min_duration or 0)
+        except ValueError:
+            # 模型名不认识就不预拦——runner/生成层会给出更具体的错误。
+            max_duration_seconds = 0
+            min_duration_seconds = 0
+
+    # 区间下限：多数模型的 seconds 有硬下限（agnes/seedance/MiniMax 都是 4s），
+    # 短于下限的区间会在生成层被上游 400 拒掉。生成段的时长不可能小于该下限，
+    # 所以这里必须提前拦——不拦的话用户等半天拿到一句上游报错。
+    if min_duration_seconds > 0:
+        span = body.end_seconds - body.start_seconds
+        if span < min_duration_seconds:
+            raise HTTPException(
+                400,
+                f"segment {span:.1f}s is shorter than model min duration "
+                f"{min_duration_seconds}s",
+            )
+
+    # 模型名 → 生成层 backend 串必须在这里解析：目录才是用户在界面上看到的那份
+    # （含 agnes 等），而 leaf 里的 resolve_freezone_video_backend 只认一份更窄的
+    # 白名单，拿目录外的模型名会直接 ValueError。
+    try:
+        backend = await _resolve_catalog_video_backend(
+            body.model, requester_user_id=ctx.requester_user_id
+        )
+    except ValueError:
+        backend = ""
+
+    job_id = _new_job_id()
+    return await _enqueue_or_start_freezone_media_job(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        task_type="freezone_video_reshoot",
+        job_id=job_id,
+        payload={
+            "source_path": source_path.as_posix(),
+            "start_seconds": body.start_seconds,
+            "end_seconds": body.end_seconds,
+            "prompt": body.prompt,
+            "model": body.model,
+            "backend": backend,
+            "model_params": model_params,
+            "request_schema": request_schema,
+            "duration_seconds": body.duration_seconds,
+            "resolution": body.resolution,
+            "generate_audio": body.generate_audio,
+            "camera_template_id": body.camera_template_id,
+            "max_duration_seconds": max_duration_seconds,
+        },
+        queue_kind="video",
+    )
+
+
+@router.post(
+    "/projects/{project}/freezone/video/reshoot/suggest-prompt",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_reshoot_suggest_prompt(
+    project: str,
+    body: FreezoneVideoReshootSuggestPromptRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：片段重拍的提示词推荐。
+
+    抽区间首尾两帧交给视觉模型，让它联想一段"这段该怎么演"的提示词。
+    与 /freezone/image/reverse-prompt 共用同一条视觉网关，只是任务描述换成
+    双帧 + 时长；抽帧与重拍本体共用 `extract_reshoot_keyframes`，保证推荐
+    依据的帧和用户看到的锚点预览是同一张。
+    """
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_reverse_prompt_task_billing,
+    )
+
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    if body.end_seconds <= body.start_seconds:
+        raise HTTPException(400, "end_seconds must be greater than start_seconds")
+
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"video source not found: {source_path}")
+
+    # 与图反推同一计费口径：按一次视觉调用计，不因为多喂一张图就翻倍。
+    billable_chars = count_billable_text_chars("reshoot_suggest_prompt")
+
+    job_id = _new_job_id()
+    return await _enqueue_or_start_freezone_media_job(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        task_type="freezone_video_reshoot_suggest_prompt",
+        job_id=job_id,
+        payload={
+            "source_path": source_path.as_posix(),
+            "start_seconds": body.start_seconds,
+            "end_seconds": body.end_seconds,
+            "canvas_id": body.canvas_id,
+            "node_id": body.node_id,
+            "billing": freezone_image_reverse_prompt_task_billing(
+                {
+                    "operation": "image_reverse_prompt",
+                    "billable_chars": billable_chars,
+                    "pricing_quantity": billable_chars,
+                }
+            ),
+        },
+        queue_kind="default",
+    )
+
+
+@router.post(
     "/projects/{project}/freezone/video/audio-separate",
     response_model=FreezoneJobAcceptedResponse,
     tags=[TAG_FREEZONE_VIDEO],
@@ -10340,6 +10673,7 @@ async def freezone_video_compose(
                     "fps": body.fps,
                     "background_color": body.background_color,
                     "keep_original_audio": body.keep_original_audio,
+                    "preserve_source_size": body.preserve_source_size,
                     "tracks": resolved_tracks,
                 },
             )
@@ -10444,6 +10778,8 @@ async def freezone_job_result(
         "freezone_text_translate",
         "freezone_text_enhance",
         "freezone_story_script",
+        "freezone_video_reshoot",
+        "freezone_video_reshoot_suggest_prompt",
     ],
     job_id: str,
     user: dict = Depends(get_api_user),
@@ -10548,6 +10884,8 @@ async def freezone_job_result(
     out = output_path_for_job(project_dir, task_type, job_id)
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
+    if task_type in ("freezone_video_reshoot_suggest_prompt",):
+        out = _reshoot_suggest_prompt_output_path(project_dir, job_id)
     if task_type == "freezone_video_erase":
         out = _video_erase_output_path(project_dir, job_id)
     if task_type == "freezone_video_upscale":
@@ -10663,6 +11001,7 @@ async def freezone_job_result(
         "freezone_text_translate",
         "freezone_text_enhance",
         "freezone_story_script",
+        "freezone_video_reshoot_suggest_prompt",
     }:
         return {"ok": True, "data": json.loads(out.read_text(encoding="utf-8"))}
     rel = out.relative_to(project_dir).as_posix()
