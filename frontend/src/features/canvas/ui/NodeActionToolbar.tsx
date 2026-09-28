@@ -2637,7 +2637,11 @@ export const NodeActionToolbar = memo(
                       isUpscaleNode: true,
                       upscaleSourceUrl: videoUrl,
                       upscaleResolution: "1080p",
-                      upscaleDenoise: "1x",
+                      upscaleTargetFps: "auto",
+                      upscaleSlowdown: "auto",
+                      upscaleSmartInterpolation: true,
+                      upscaleScene: "realistic",
+                      upscaleFaceEnhance: false,
                       isGenerating: false,
                     } as unknown as Parameters<typeof addNode>[2],
                   );

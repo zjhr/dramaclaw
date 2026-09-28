@@ -31,6 +31,9 @@ MODE_ALIASES = {
     "imageReference": "image_reference",
     "allReference": "all_reference",
     "videoEdit": "video_edit",
+    "videoExtend": "video_extend",
+    "videoUpscale": "video_upscale",
+    "videoFrameRate": "video_frame_rate",
 }
 MEDIA_MODEL_MODES = {
     "text_to_video",
@@ -40,6 +43,9 @@ MEDIA_MODEL_MODES = {
     "image_reference",
     "all_reference",
     "video_edit",
+    "video_extend",
+    "video_upscale",
+    "video_frame_rate",
 }
 PARAMETER_MODES = MEDIA_MODEL_MODES | {
     "text_to_image",
@@ -542,12 +548,36 @@ def validate_media_model_catalog_config(
         video_limit = config.get("referenceVideoMax")
         configured_modes = set(modes or [])
         if (
-            type(video_limit) is int
-            and video_limit > 0
-            and not configured_modes.intersection({"all_reference", "video_edit"})
+            "video_extend" in configured_modes
+            and type(video_limit) is int
+            and video_limit == 0
         ):
             raise MediaModelSchemaError(
-                "referenceVideoMax requires all_reference or video_edit mode"
+                "video_extend requires referenceVideoMax to be omitted or at least 1"
+            )
+        if (
+            configured_modes.intersection({"video_upscale", "video_frame_rate"})
+            and type(video_limit) is int
+            and video_limit == 0
+        ):
+            raise MediaModelSchemaError(
+                "video processing modes require referenceVideoMax to be omitted or at least 1"
+            )
+        if (
+            type(video_limit) is int
+            and video_limit > 0
+            and not configured_modes.intersection(
+                {
+                    "all_reference",
+                    "video_edit",
+                    "video_extend",
+                    "video_upscale",
+                    "video_frame_rate",
+                }
+            )
+        ):
+            raise MediaModelSchemaError(
+                "referenceVideoMax requires a video input mode"
             )
         for field in ("referenceFileMax", "referenceLinkMax"):
             limit = config.get(field)

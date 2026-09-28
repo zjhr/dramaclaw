@@ -267,7 +267,9 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
     # 83 → 87：片段重拍那条链带进来的 4 条（video/reshoot、reshoot/suggest-prompt
     # 等）都走守卫，但计数一直没人跟着加，棘轮因此早就对不上了。
     # 87 → 88：画布视频节点「向后延长」的提示词推荐，同样走守卫。
-    assert router_decorators == 88
+    # 88 → 90：视频增强的报价与源探测两条路由（video/upscale/quote、
+    # video/upscale/probe）同样走守卫。它们不是画布路由，画布侧仍是 14 条。
+    assert router_decorators == 90
     assert len(canvas_routes) == 14
 
     # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。

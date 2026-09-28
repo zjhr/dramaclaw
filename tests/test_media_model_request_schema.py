@@ -540,6 +540,41 @@ def test_validates_media_catalog_capabilities():
         )
 
 
+def test_video_extend_requires_a_usable_source_video_limit():
+    base = {
+        "supportedModes": ["video_extend"],
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+
+    assert validate_media_model_catalog_config(base, "video") is base
+    positive = {**base, "referenceVideoMax": 1}
+    assert validate_media_model_catalog_config(positive, "video") is positive
+    with pytest.raises(
+        MediaModelSchemaError,
+        match="video_extend requires referenceVideoMax to be omitted or at least 1",
+    ):
+        validate_media_model_catalog_config(
+            {**base, "referenceVideoMax": 0},
+            "video",
+        )
+
+
+@pytest.mark.parametrize("mode", ["video_upscale", "video_frame_rate"])
+def test_video_processing_modes_require_a_usable_source_video_limit(mode):
+    base = {
+        "supportedModes": [mode],
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+
+    assert validate_media_model_catalog_config(base, "video") is base
+    assert validate_media_model_catalog_config({**base, "referenceVideoMax": 1}, "video")
+    with pytest.raises(MediaModelSchemaError, match="video processing modes require"):
+        validate_media_model_catalog_config(
+            {**base, "referenceVideoMax": 0},
+            "video",
+        )
+
+
 def test_validates_file_and_link_reference_capabilities():
     base = {
         "supportedModes": ["all_reference"],
