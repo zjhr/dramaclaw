@@ -1,0 +1,67 @@
+.ask-ui {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ask-ui button:not(:disabled) {
+  cursor: pointer;
+}
+
+.ask-ui button:disabled {
+  cursor: not-allowed;
+}
+
+.ask-ui button {
+  transition: transform 160ms var(--ease-out);
+}
+
+.ask-ui button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.ask-ui .xialiao-rise {
+  animation: none;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+
+.ask-ui .xialiao-rise {
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.ask-pop {
+  transform-origin: top center;
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity 150ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ask-pop {
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-ui button,
+  .ask-ui .xialiao-rise,
+  .ask-pop {
+    transition: none;
+  }
+
+  .ask-ui .xialiao-rise,
+  .ask-pop {
+    @starting-style {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}

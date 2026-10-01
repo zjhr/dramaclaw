@@ -28,8 +28,9 @@
     "title": "SuperTale",
     "subtitle": "SuperTale 候选图生成与资产提交工作台",
     "updateRequired": {
-      "title": "应用已更新",
-      "description": "当前页面引用的应用文件已经失效。请刷新页面以加载最新版本。",
+      "title": "页面无法完整加载",
+      "description": "某个页面功能模块没有加载成功。应用会尝试刷新一次；如果仍失败，会返回项目列表。",
+      "projects": "返回项目列表",
       "refresh": "刷新页面"
     },
     "updateAvailable": {
@@ -2762,6 +2763,209 @@
     },
     "pastePlaceholder": "在这里粘贴小说文本，最多 1000 字",
     "startIngest": "开始导入",
+    "askFirst": {
+      "title": "虾导",
+      "editing": "处理《{{name}}》",
+      "writingNew": "另写一篇",
+      "question": "你想先处理这篇，还是另写一篇？",
+      "zeroOpen": "这篇不读取已上传的文件。先选一种：小说，还是短剧？",
+      "handleThis": "先处理这篇",
+      "handleBlocked": "先收成能导入的稿，原文留下。",
+      "handleReady": "继续改这份稿，原文留下。",
+      "handleNeedFile": "先上传或粘贴一篇，再处理。",
+      "newPiece": "另写一篇",
+      "newPieceDetail": "不读已上传的文件。",
+      "switchToNew": "改选另写一篇",
+      "switchToNewDetail": "不读已上传的文件，刚才的对话还留着",
+      "backToEdit": "回到处理这篇",
+      "backToEditDetail": "回到《{{name}}》，另写的内容还留着",
+      "handled": "好。原文留着。需要的话我可以收成能导入的稿，大纲会在有章节之后列在右边。",
+      "novel": "小说",
+      "novelDetail": "分章叙述，按解说剧导入。",
+      "drama": "短剧",
+      "dramaDetail": "一场一场写，按精品剧导入。",
+      "askPremiseNovel": "用一句话说说这篇小说讲什么。不用写完整开头。",
+      "askPremiseDrama": "用一句话说说这部短剧讲什么。不用写成分场。",
+      "askLead": "主角怎么称呼？一个名字就行。",
+      "askCountNovel": "大约写几章？选一个就行，之后还能改。",
+      "askCountDrama": "大约写几集？选一个就行，之后还能改。",
+      "countNovel": "{{count}} 章",
+      "countDrama": "{{count}} 集",
+      "afterCount": "可以选写法，也可以先不选。选好后点下面写第 1 章或第 1 集。",
+      "writeFirst": "写第 1 {{unit}}",
+      "writeFirstUser": "就按这些写第 1 {{unit}}",
+      "writeNext": "写第 {{next}} {{unit}}",
+      "writeNextUser": "就按这些写第 {{next}} {{unit}}",
+      "writeNextRunning": "正在写第 {{next}} {{unit}}，写完续在同一份稿里。",
+      "writeNextDone": "第 {{next}} {{unit}}写好了，已续在《{{filename}}》。检查后可以开始导入。",
+      "viewResultShow": "查看正文",
+      "viewResultHide": "收起正文",
+      "qualityNotes": "质量提示",
+      "unitChapter": "章",
+      "unitEpisode": "集",
+      "writeRunning": "正在写第 1 {{unit}}。写完自动存成新文件，已上传的稿不动。",
+      "writeDone": "第 1 {{unit}}写好了，已存成《{{filename}}》。检查后可以开始导入。",
+      "editTools": "改这篇",
+      "skillsLabel": "写法，可多选",
+      "repair": "一键修复",
+      "repairHint": "收成能导入的稿，原文不覆盖。",
+      "repairRecheckHint": "再次检查已保存的工作稿；原文不覆盖，只重做未通过检查的章节。",
+      "repairPending": "一键修复还没接到生成接口，正文还没改。原文仍在。",
+      "repairWorkingStart": "正在分章调用模型。每章单独请求，避免超过 120 秒被网关掐断。原文不动。",
+      "repairing": "正在调用模型，请稍等。",
+      "repairProgress": "正在收第 {{chapter}} 章（{{chunk}}/{{chunks}}），共 {{total}} 章。原文不动。",
+      "repairDone": "收好了。工作稿是《{{filename}}》，原文还在。可以开始导入。",
+      "downloadWorkingCopy": "下载这份稿",
+      "repairStillBlocked": "各章都收过了，格式门还没过：{{summary}}",
+      "repairNeedFile": "先上传或粘贴一篇，再修复。",
+      "repairNeedHeader": "第 {{chapter}} 章还没有能导入的场景头。可以点一个选项，也可以先提问，或自己发一行。",
+      "headerChoices": "场景头选项",
+      "headerChoiceHint": "用这一行作为这一章的场景头，然后继续后面的章。",
+      "repairHeaderAdvice": "场景头要单独一行，例如「办公室 日 内」。可以点下面的选项，也可以直接发你要的那一行。",
+      "repairApplyingHeader": "按你选的场景头继续。原文不动。",
+      "thinkingLabel": "思考度",
+      "callDetails": "调用明细",
+      "thinking": {
+        "none": "关闭",
+        "low": "低",
+        "medium": "中",
+        "high": "高"
+      },
+      "repairStalled": "修复没有往下走，已停住。",
+      "repairFailed": "这一章没写成。",
+      "hook": "爆款开头",
+      "hookHint": "只改第一场怎么开头，后面的场不动。",
+      "wash": "洗稿",
+      "washHint": "对白换一种说法，人名和场景头不动。",
+      "cast": "换角色",
+      "castHint": "先出对照表。空着的名字不换。",
+      "gender": "改性格",
+      "genderHint": "性别对调。先勾要转的人，没勾的不动。",
+      "imitate": "深挖仿写",
+      "imitateHint": "另写一个故事，点了才存成新文件。",
+      "actionsNeedWorkingCopy": "先完成一键修复并通过格式检查，才能对工作稿使用这些改稿动作。",
+      "chooseHookStyle": "选择开头结构",
+      "hookStyles": {
+        "default": "默认通用",
+        "reversal": "剧情反转",
+        "contrast": "勾人反差",
+        "emotion": "情绪牵引",
+        "burst": "爆点澎湃",
+        "setting": "设定结构",
+        "rebirth": "穿越重生"
+      },
+      "hookStyleHints": {
+        "default": "用悬念提出本章冲突。",
+        "reversal": "先给反常结果，再揭示冲突起点。",
+        "contrast": "用身份、处境或认知反差开场。",
+        "emotion": "用具体情绪冲突建立关系张力。",
+        "burst": "从高压危机或行动切入。",
+        "setting": "先亮出设定，再展示它带来的代价。",
+        "rebirth": "原稿有重生或穿越设定时，从命运重启处切入。"
+      },
+      "castWorking": "正在分析人物并生成换名对照表。",
+      "genderWorking": "正在分析人物并生成性别转换对照表。",
+      "hookWorking": "正在重写第一场或第一章开头。",
+      "washWorking": "正在改写工作稿中的动作和对白。",
+      "imitateWorking": "正在生成一篇新的仿写稿。",
+      "mappingReady": "已生成 {{count}} 行对照，请检查后确认。",
+      "castMappingTitle": "换角色对照表",
+      "genderMappingTitle": "性别转换对照表",
+      "noAliases": "没有识别到别称",
+      "suggestedName": "替换名",
+      "suggestedAliases": "替换别称，用逗号分隔",
+      "convertCharacter": "转换 {{gender}} 角色",
+      "genders": {
+        "male": "男性",
+        "female": "女性",
+        "animal": "动物",
+        "unknown": "性别不明"
+      },
+      "applyCast": "确认并替换",
+      "applyGender": "确认并转换",
+      "imitatePreviewTitle": "仿写结果",
+      "imitatePreviewHint": "结果暂存在这里，不会覆盖当前工作稿。保存后会作为新文件出现，不会自动导入。",
+      "imitateReady": "已生成仿写预览：",
+      "adapt": "改编短剧",
+      "adaptHint": "把这一章收成第 1 集场次稿，删弱支线。",
+      "adaptReady": "已生成改编预览：",
+      "adaptPreviewTitle": "改编结果",
+      "adaptPreviewHint": "场次稿暂存在这里，不会覆盖当前工作稿。保存后会作为新文件出现，不会自动导入。",
+      "saveImitation": "存成新文件",
+      "imitateSaved": "已保存《{{filename}}》，没有开始导入。",
+      "actionDone": "已更新工作稿《{{filename}}》。原上传文件仍保留。",
+      "actionDoneGeneric": "处理完成。",
+      "actionFailed": "这项改稿没有完成，工作稿未覆盖。",
+      "rejectEdit": "这句改不了当前稿。可以改说法，不能删章、加情节，也不能出分镜。",
+      "ackZero": "已写的章节留着。后面按你刚说的来。",
+      "ackEdit": "改的是工作稿，原文件不动。",
+      "placeholderPremise": "例如：雨夜回到旧茶馆，把没问完的话问完",
+      "placeholderLead": "例如：林晚",
+      "placeholderChat": "接着说，或让某一句再短一点",
+      "send": "发送",
+      "outline": "大纲",
+      "outlineNote": "只列章节，正文还在对话里。",
+      "pastedName": "粘贴稿",
+      "untitled": "未命名",
+      "skills": {
+        "default": {
+          "title": "默认通用",
+          "detail": "开头同时用几种抓人结构，适合还没想好用哪一种。"
+        },
+        "reversal": {
+          "title": "剧情反转",
+          "detail": "先给一个结果，马上翻过来。"
+        },
+        "contrast": {
+          "title": "勾人反差",
+          "detail": "用前后不一样的地方把人勾住。"
+        },
+        "emotion": {
+          "title": "情绪牵引",
+          "detail": "先把情绪铺开，再进入故事。"
+        },
+        "burst": {
+          "title": "爆点澎湃",
+          "detail": "开头就上最猛的冲突。"
+        },
+        "setting": {
+          "title": "设定结构",
+          "detail": "先讲清这个世界的规则，再写人。"
+        },
+        "rebirth": {
+          "title": "穿越重生",
+          "detail": "用穿越或重生带来的身份差来写。"
+        },
+        "sweet": {
+          "title": "甜宠",
+          "detail": "甜为主微虐辅助，宠爱用细节说话。"
+        },
+        "revenge": {
+          "title": "复仇打脸",
+          "detail": "先压后爆，用打脸链条收爽感。"
+        },
+        "warlord": {
+          "title": "战神赘婿",
+          "detail": "隐藏身份受辱，亮身份打脸。"
+        },
+        "imitate": {
+          "title": "深挖仿写",
+          "detail": "学这篇的写法，但写成另一个故事。"
+        },
+        "wash": {
+          "title": "洗稿",
+          "detail": "意思不变，换成另一种说法。"
+        },
+        "gender": {
+          "title": "改性格",
+          "detail": "把选中的人做性别对调。"
+        },
+        "rename": {
+          "title": "换角色",
+          "detail": "只换人名，情节不动。"
+        }
+      }
+    },
     "saveSettings": "保存设置",
     "settingsSaved": "项目设置已保存",
     "settingsSaveFailed": "项目设置保存失败",
@@ -2855,21 +3059,19 @@
       "ruleClockTime": "不要把具体钟点写进地点名。英文格式需要精确钟点时，在场景头下另起一行“Time: 11:47 PM”，地点仍解析为 Seoul Subway Station，时间归一化为“夜晚”。"
     },
     "sceneHeaders": {
-      "missing": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
-      "missingFix": "请按上方示例编写：每集先写“第N集”，每个场景再单独写“场号 地点 时间 内/外”，然后依次填写人物、动作和对白。",
-      "repairable": "场景边界已识别，但有些场景头缺少时间、地点或内外景。仍可导入，系统会在场景规划时补齐。",
-      "repairableFix": "请对照上方示例补齐场景头中的地点、时间或内外景；如果暂不修改，也可以继续导入。",
-      "open": "查看 {{chapter}} 的分场正文",
-      "rowCount_one": "{{count}} 场",
-      "rowCount_other": "{{count}} 场",
-      "count_one": "共 {{count}} 场",
-      "count_other": "共 {{count}} 场",
-      "scene": "场景 {{number}}",
-      "characters": "出场人物",
+      "open": "查看 {{chapter}} 的正文",
+      "scene": "第 {{number}} 场",
+      "unknownLocation": "地点未标注",
+      "characters": "角色",
       "characterSeparator": "、",
-      "unknownLocation": "未识别场景地点",
-      "empty": "该章节暂无可显示的分场正文",
-      "unparsedBody": "未归入场景的原文"
+      "empty": "这一章还没有解析出场景",
+      "unparsedBody": "未解析的正文",
+      "missing": "没有识别到场景头",
+      "missingFix": "在每个场景开头补上场景头，如「第1场 咖啡厅 日 内」",
+      "repairable": "场景头格式不规范",
+      "repairableFix": "把场景头改成「场次 地点 时间 内/外」的标准写法",
+      "count": "{{count}} 个场景块",
+      "rowCount": "{{count}} 块"
     },
     "chapterDetails": {
       "open": "查看 {{chapter}} 的正文",
@@ -2977,21 +3179,6 @@
           "fix": "如果这是小说原文，请把项目类型切换为“旁白解说”；如果是剧本，请补齐分场头。"
         }
       }
-    },
-    "sceneHeaders": {
-      "open": "查看 {{chapter}} 的正文",
-      "scene": "第 {{number}} 场",
-      "unknownLocation": "地点未标注",
-      "characters": "角色",
-      "characterSeparator": "、",
-      "empty": "这一章还没有解析出场景",
-      "unparsedBody": "未解析的正文",
-      "missing": "没有识别到场景头",
-      "missingFix": "在每个场景开头补上场景头，如「第1场 咖啡厅 日 内」",
-      "repairable": "场景头格式不规范",
-      "repairableFix": "把场景头改成「场次 地点 时间 内/外」的标准写法",
-      "count": "{{count}} 个场景块",
-      "rowCount": "{{count}} 块"
     }
   },
   "video": {
@@ -3054,6 +3241,7 @@
     "types": {
       "build_characters": "构建角色",
       "ingest_fast": "快速导入",
+      "manuscript_repair": "一键修复",
       "build_episodes": "规划剧集",
       "character_portrait": "角色肖像",
       "identity_image": "身份图",
@@ -5667,6 +5855,25 @@
       "continueHint": "从片尾往后接上，得到整段成片",
       "continueDurationLabel": "生成时长",
       "continueSeconds": "{{count}} 秒",
+      "continueSecondsUnit": "秒",
+      "continueDurationInput": "自定义生成时长（秒）",
+      "continueDurationOutOfRange": "该模型单段时长 {{min}}–{{max}} 秒",
+      "continueDirectionLabel": "发展方向",
+      "continueDirection": {
+        "auto": "智能续写",
+        "plot": "剧情推进",
+        "emotion": "情绪递进",
+        "action": "动作爆发",
+        "camera": "镜头运动",
+        "environment": "环境变化",
+        "dialogue": "对白推进",
+        "ending": "收尾定格"
+      },
+      "continueSuggest": "按设定推荐",
+      "continuePromptStale": "时长或方向已改，点「按设定推荐」重写这段",
+      "continuePromptEnhance": "优化提示词",
+      "continuePromptEnhanceRunning": "优化中…",
+      "continueEnhanceGuidance": "把这句话扩写成可直接用于视频生成的详细提示词：目标时长约 {{seconds}} 秒，发展方向是{{direction}}；承接上一段结尾画面继续演，只写接下来发生什么。",
       "continuePromptPlaceholder": "描述接下来要发生什么",
       "continueCancel": "取消",
       "continueSubmit": "生成",
@@ -5882,6 +6089,7 @@
   },
   "node": {
     "identityCall": {
+      "characterList": "角色列表",
       "toggle": "角色",
       "title": "这一镜的角色",
       "hint": "按点选顺序记住。生成时先送每个人当前这张脸，还有空位再送三视图和表情九宫格。声线只在这种生成能附音频时送出。",
@@ -5900,6 +6108,58 @@
       "missingVoice": "{{name}} 还没有声线。",
       "droppedVoice": "{{name}} 的声线这次没送上。",
       "reshootKeepsFrames": "重拍只用这段视频自己的首尾帧，身份图和声线这次不送。"
+    },
+    "performance": {
+      "title": "本镜表演",
+      "disclaimer": "文字描述用于引导生成，不能保证模型精确执行。",
+      "empty": "先在这一镜里选定身份，再编辑表演状态。",
+      "identityTabs": "选择要编辑的角色",
+      "editorSections": {
+        "label": "表演参数分区",
+        "face": "面部",
+        "emotion": "情绪",
+        "timeline": "时间轴"
+      },
+      "preview": {
+        "canvasLabel": "通用面部控制预览",
+        "label": "通用模型",
+        "disclaimer": "通用面部控制预览，不代表最终生成角色。"
+      },
+      "matrix": {
+        "label": "情绪矩阵",
+        "energy": "强度",
+        "lowValence": "负面",
+        "highValence": "正面",
+        "cell": "情绪倾向 {{valence}}，强度 {{arousal}}"
+      },
+      "timeline": {
+        "time": "时间 {{seconds}} 秒",
+        "timeControl": "{{character}} 的表演时间",
+        "keyframeAt": "{{character}} {{seconds}} 秒关键帧"
+      },
+      "addKeyframe": "添加关键帧",
+      "removeKeyframe": "移除此帧",
+      "imageBindingTitle": "从视频镜头带入角色表情",
+      "optional": "可选",
+      "imageBindingDescription": "从按镜头分组的列表里选择角色。该角色的情绪和面部状态会写入这张静帧的生成提示词；视频画面不会自动作为参考图。表情请在视频节点的“角色 → 本镜表演”中编辑。",
+      "imageBindingCharacter": "角色",
+      "videoShotNumber": "视频镜头 {{number}}",
+      "noVideoShots": "画布还没有视频镜头。先添加视频节点，再回来选择镜头。",
+      "noShotIdentities": "这些视频镜头还没有可选角色。先到视频节点的“角色”面板添加角色；如果角色还没创建，请先到虾塘创建。",
+      "noCharactersInShot": "此镜头未添加角色",
+      "chooseReferencedCharacter": "选择要引用表情的角色",
+      "chooseCharacterHelp": "选择一个角色，将其本镜表情用于这张静帧。",
+      "imageBindingSelected": "已带入：镜头“{{shot}}”中的 {{character}} 的情绪和面部状态。",
+      "imageBindingEditElsewhere": "要调整表情，请选中该视频节点，打开“角色 → 本镜表演”。视频画面不会自动作为参考图。",
+      "clearImageBinding": "取消引用",
+      "controls": {
+        "valence": "情绪倾向",
+        "arousal": "情绪强度",
+        "brows": "眉毛",
+        "eyes": "眼睛",
+        "mouth": "嘴部",
+        "jaw": "下颌"
+      }
     },
     "shotRecipe": {
       "title": "造型",
@@ -7037,26 +7297,26 @@
           "name": "电影级运镜与动作编排",
           "desc": "设计打斗、追逐等动作段落的镜头"
         },
-      "modelMaker": {
-        "name": "导演台模型创建",
-        "desc": "用参数化几何在导演台里搭出模型"
-      },
-      "staging": {
-        "name": "场景与道具",
-        "desc": "布置场景与道具，安排空间关系"
-      },
-      "method": {
-        "name": "导演方法论",
-        "desc": "只讲解，不改画面"
-      },
-      "script": {
-        "name": "剧本拆解成分镜表",
-        "desc": "只出清单，不改画面"
-      },
-      "review": {
-        "name": "审片建议",
-        "desc": "只给意见，不改画面"
-      }
+        "modelMaker": {
+          "name": "导演台模型创建",
+          "desc": "用参数化几何在导演台里搭出模型"
+        },
+        "staging": {
+          "name": "场景与道具",
+          "desc": "布置场景与道具，安排空间关系"
+        },
+        "method": {
+          "name": "导演方法论",
+          "desc": "只讲解，不改画面"
+        },
+        "script": {
+          "name": "剧本拆解成分镜表",
+          "desc": "只出清单，不改画面"
+        },
+        "review": {
+          "name": "审片建议",
+          "desc": "只给意见，不改画面"
+        }
       },
       "move": {
         "orbitLeft": "向左环绕",
@@ -7094,13 +7354,35 @@
         "depthMesh": "高度地形",
         "model": "外部模型"
       },
-    "example1": "把镜头缓缓推近主角",
-    "example2": "两个人面对面站着说话",
-    "example3": "加一张桌子，让角色坐在后面"
+      "example1": "把镜头缓缓推近主角",
+      "example2": "两个人面对面站着说话",
+      "example3": "加一张桌子，让角色坐在后面"
     },
-    "reshoot": { "clipTitle": "重拍片段",  "fullTitle": "重拍整条视频",  "generating": "重拍中…",  "noResult": "重拍任务没有返回结果",  "suggestDetached": "节点已不在画布上，推荐结果已丢弃",  "suggestEmpty": "推荐服务没有返回提示词" },
-    "videoGreybox": { "nodeTitle": "深度视频",  "generating": "生成深度视频中…",  "noResult": "深度视频任务没有返回结果" },
-    "reshootTimeline": { "unknownDuration": "读不到源视频时长",  "startFrame": "起始帧",  "endFrame": "结束帧",  "startHandle": "起始时间手柄",  "endHandle": "结束时间手柄",  "startLabel": "{{value}}s",  "endLabel": "{{value}}s",  "spanLabel": "选区 {{value}}s" , "playPreview": "播放片段", "pausePreview": "暂停"}
+    "reshoot": {
+      "clipTitle": "重拍片段",
+      "fullTitle": "重拍整条视频",
+      "generating": "重拍中…",
+      "noResult": "重拍任务没有返回结果",
+      "suggestDetached": "节点已不在画布上，推荐结果已丢弃",
+      "suggestEmpty": "推荐服务没有返回提示词"
+    },
+    "videoGreybox": {
+      "nodeTitle": "深度视频",
+      "generating": "生成深度视频中…",
+      "noResult": "深度视频任务没有返回结果"
+    },
+    "reshootTimeline": {
+      "unknownDuration": "读不到源视频时长",
+      "startFrame": "起始帧",
+      "endFrame": "结束帧",
+      "startHandle": "起始时间手柄",
+      "endHandle": "结束时间手柄",
+      "startLabel": "{{value}}s",
+      "endLabel": "{{value}}s",
+      "spanLabel": "选区 {{value}}s",
+      "playPreview": "播放片段",
+      "pausePreview": "暂停"
+    }
   },
   "viewer": {
     "imageAlt": "图片",

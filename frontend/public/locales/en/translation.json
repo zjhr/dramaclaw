@@ -28,8 +28,9 @@
     "title": "SuperTale",
     "subtitle": "SuperTale candidate generation and asset commit workbench",
     "updateRequired": {
-      "title": "App updated",
-      "description": "This page is referencing an expired app file. Refresh to load the latest version.",
+      "title": "Page could not fully load",
+      "description": "A page module failed to load. The app will retry once, then return to the project list if it still fails.",
+      "projects": "Back to projects",
       "refresh": "Refresh page"
     },
     "updateAvailable": {
@@ -2762,6 +2763,209 @@
     },
     "pastePlaceholder": "Paste novel text here, up to 1000 characters",
     "startIngest": "Start Import",
+    "askFirst": {
+      "title": "虾导",
+      "editing": "Editing {{name}}",
+      "writingNew": "New piece",
+      "question": "Work on this piece first, or write a new one?",
+      "zeroOpen": "This conversation does not read the uploaded file. Pick one: a novel, or a short drama?",
+      "handleThis": "Work on this piece",
+      "handleBlocked": "Turn it into a draft that can be imported. The original stays.",
+      "handleReady": "Keep editing this draft. The original stays.",
+      "handleNeedFile": "Upload or paste a piece before editing it.",
+      "newPiece": "Write a new one",
+      "newPieceDetail": "Does not read the uploaded file.",
+      "switchToNew": "Switch to a new piece",
+      "switchToNewDetail": "Does not read the uploaded file. This chat stays.",
+      "backToEdit": "Back to this piece",
+      "backToEditDetail": "Back to {{name}}. The new piece stays.",
+      "handled": "The original stays. I can turn it into an importable draft. The outline appears on the right after a chapter exists.",
+      "novel": "Novel",
+      "novelDetail": "Chapter prose, imported as a narrated drama.",
+      "drama": "Short drama",
+      "dramaDetail": "Scene by scene, imported as a premium drama.",
+      "askPremiseNovel": "Say what this novel is about in one sentence. A full opening is not needed.",
+      "askPremiseDrama": "Say what this short drama is about in one sentence. Scene headings are not needed.",
+      "askLead": "What should the lead be called? One name is enough.",
+      "askCountNovel": "About how many chapters? Pick one. You can change it later.",
+      "askCountDrama": "About how many episodes? Pick one. You can change it later.",
+      "countNovel": "{{count}} chapters",
+      "countDrama": "{{count}} episodes",
+      "afterCount": "You can pick writing approaches, or skip them. Then write chapter or episode 1.",
+      "writeFirst": "Write 1 {{unit}}",
+      "writeFirstUser": "Write 1 {{unit}} with these",
+      "writeNext": "Write unit {{next}}",
+      "writeNextUser": "Write unit {{next}} with these",
+      "writeNextRunning": "Writing unit {{next}} now; it continues in the same file.",
+      "writeNextDone": "Unit {{next}} is written and continues in {{filename}}. Review it, then start the import.",
+      "viewResultShow": "View the text",
+      "viewResultHide": "Hide the text",
+      "qualityNotes": "Quality notes",
+      "unitChapter": "chapter",
+      "unitEpisode": "episode",
+      "writeRunning": "Writing unit 1 now. It will be saved as a new file; the uploaded piece stays untouched.",
+      "writeDone": "Unit 1 is written and saved as {{filename}}. Review it, then start the import.",
+      "editTools": "Edit this piece",
+      "skillsLabel": "Writing approaches, pick any",
+      "repair": "Repair format",
+      "repairHint": "Make an importable draft without replacing the original.",
+      "repairRecheckHint": "Check the saved working copy again. The original stays, and only chapters that fail validation are regenerated.",
+      "repairPending": "Format repair is not connected to the generation API yet, so the text is unchanged. The original is still there.",
+      "repairWorkingStart": "Calling the model per chapter, several at once, so a request stays inside the 120-second gateway limit. The original stays.",
+      "repairing": "Calling the model. Please wait.",
+      "repairProgress": "Repairing chapter {{chapter}} ({{chunk}}/{{chunks}}) of {{total}}. The original stays.",
+      "repairDone": "Done. The working copy is {{filename}}. The original is still there, and import can start.",
+      "downloadWorkingCopy": "Download this draft",
+      "repairStillBlocked": "Every chapter was repaired, and the format gate still failed: {{summary}}",
+      "repairNeedFile": "Upload or paste a piece before repairing it.",
+      "repairNeedHeader": "Chapter {{chapter}} has no importable scene header. Pick an option, ask a question, or send your own line.",
+      "headerChoices": "Scene header options",
+      "headerChoiceHint": "Use this line as the chapter's scene header, then continue.",
+      "repairHeaderAdvice": "A scene header is its own line, for example “办公室 日 内”. Pick an option below, or send the line you want.",
+      "repairApplyingHeader": "Continuing with the scene header you chose. The original stays.",
+      "thinkingLabel": "Thinking",
+      "callDetails": "Call details",
+      "thinking": {
+        "none": "Off",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      },
+      "repairStalled": "Repair stopped because it did not advance.",
+      "repairFailed": "This chapter was not rewritten.",
+      "hook": "Opening hook",
+      "hookHint": "Change only how the first scene opens. Later scenes stay.",
+      "wash": "Paraphrase",
+      "washHint": "Reword the dialogue. Names and scene headings stay.",
+      "cast": "Rename cast",
+      "castHint": "Start with a mapping table. Blank names stay.",
+      "gender": "Swap traits",
+      "genderHint": "Swap gender for the people you check. Unchecked people stay.",
+      "imitate": "Write in this vein",
+      "imitateHint": "A different story in this style, saved only when you ask for a new file.",
+      "actionsNeedWorkingCopy": "Complete format repair and pass validation before editing the working copy.",
+      "chooseHookStyle": "Choose an opening structure",
+      "hookStyles": {
+        "default": "General",
+        "reversal": "Reversal",
+        "contrast": "Contrast",
+        "emotion": "Emotional pull",
+        "burst": "Immediate clash",
+        "setting": "World rules",
+        "rebirth": "Rebirth or crossing"
+      },
+      "hookStyleHints": {
+        "default": "Open with suspense that raises the chapter conflict.",
+        "reversal": "Show an unexpected result, then reveal its cause.",
+        "contrast": "Open with a contrast in status, situation, or belief.",
+        "emotion": "Use a concrete emotional conflict to establish tension.",
+        "burst": "Begin with a high pressure crisis or action.",
+        "setting": "Introduce a setting, then show its cost.",
+        "rebirth": "Use a reset in fate only when the source already has it."
+      },
+      "castWorking": "Analyzing characters and preparing a rename table.",
+      "genderWorking": "Analyzing characters and preparing a gender conversion table.",
+      "hookWorking": "Rewriting the opening of the first scene or chapter.",
+      "washWorking": "Rewording action and dialogue in the working copy.",
+      "imitateWorking": "Generating a separate imitation draft.",
+      "mappingReady": "{{count}} mapping rows are ready. Review them before applying.",
+      "castMappingTitle": "Character rename table",
+      "genderMappingTitle": "Gender conversion table",
+      "noAliases": "No aliases found",
+      "suggestedName": "Replacement name",
+      "suggestedAliases": "Replacement aliases, comma separated",
+      "convertCharacter": "Convert {{gender}} character",
+      "genders": {
+        "male": "male",
+        "female": "female",
+        "animal": "animal",
+        "unknown": "unknown gender"
+      },
+      "applyCast": "Confirm and replace",
+      "applyGender": "Confirm and convert",
+      "imitatePreviewTitle": "Imitation result",
+      "imitatePreviewHint": "This preview is separate and does not replace the working copy. Saving creates a new file and does not start import.",
+      "imitateReady": "Imitation preview generated:",
+      "adapt": "Adapt to short drama",
+      "adaptHint": "Turn this chapter into episode 1 scene script; weak subplots get cut.",
+      "adaptReady": "Adaptation preview generated:",
+      "adaptPreviewTitle": "Adaptation result",
+      "adaptPreviewHint": "The scene script is staged here and does not replace the working copy. Saving creates a new file and does not start import.",
+      "saveImitation": "Save as new file",
+      "imitateSaved": "Saved {{filename}}. Import has not started.",
+      "actionDone": "Updated {{filename}}. The uploaded original is still kept.",
+      "actionDoneGeneric": "Done.",
+      "actionFailed": "This edit did not finish. The working copy was not replaced.",
+      "rejectEdit": "That cannot be done to the current draft. Wording can change. Chapters cannot be deleted, plot cannot be added, and a storyboard cannot be produced.",
+      "ackZero": "Chapters already written stay. What you just said applies after that.",
+      "ackEdit": "This changes the working draft. The original file stays.",
+      "placeholderPremise": "For example: back to the old teahouse in the rain, to ask the question left unfinished",
+      "placeholderLead": "For example: Lin Wan",
+      "placeholderChat": "Continue, or ask for one line to be shorter",
+      "send": "Send",
+      "outline": "Outline",
+      "outlineNote": "Chapters only. The prose stays in the conversation.",
+      "pastedName": "Pasted text",
+      "untitled": "Untitled",
+      "skills": {
+        "default": {
+          "title": "General opening",
+          "detail": "Use several hook shapes together when you have not picked one."
+        },
+        "reversal": {
+          "title": "Reversal",
+          "detail": "Give a result, then turn it over at once."
+        },
+        "contrast": {
+          "title": "Contrast",
+          "detail": "Hold attention with a before-and-after difference."
+        },
+        "emotion": {
+          "title": "Emotional pull",
+          "detail": "Open the feeling first, then enter the story."
+        },
+        "burst": {
+          "title": "Immediate clash",
+          "detail": "Start on the sharpest conflict."
+        },
+        "setting": {
+          "title": "World rules",
+          "detail": "Explain how the world works, then write the people."
+        },
+        "rebirth": {
+          "title": "Rebirth",
+          "detail": "Write from the gap a rebirth or a crossing creates."
+        },
+        "sweet": {
+          "title": "Sweet romance",
+          "detail": "Sweet first, light angst; love shown through details."
+        },
+        "revenge": {
+          "title": "Revenge face-slap",
+          "detail": "Suppress then burst; the face-slap chain pays off."
+        },
+        "warlord": {
+          "title": "Hidden warlord",
+          "detail": "Humiliated in hiding, revealed in triumph."
+        },
+        "imitate": {
+          "title": "Same craft, new story",
+          "detail": "Learn the craft of this piece and write a different story."
+        },
+        "wash": {
+          "title": "Paraphrase",
+          "detail": "Keep the meaning and change the wording."
+        },
+        "gender": {
+          "title": "Gender swap",
+          "detail": "Swap gender for the people you select."
+        },
+        "rename": {
+          "title": "Rename",
+          "detail": "Change names only. The plot stays."
+        }
+      }
+    },
     "saveSettings": "Save Settings",
     "settingsSaved": "Project settings saved",
     "settingsSaveFailed": "Failed to save project settings",
@@ -2855,21 +3059,19 @@
       "ruleClockTime": "Never put a clock time inside the location name. When you need one, add a separate “Time: 11:47 PM” line under the heading — the location stays “Seoul Subway Station” and the time normalizes to night."
     },
     "sceneHeaders": {
-      "missing": "No scene headings were recognized, so the system cannot tell where each scene begins.",
-      "missingFix": "Follow the example above: start with “Episode N”, then give every scene a separate “scene number, location, time, INT/EXT” heading before its characters, actions, and dialogue.",
-      "repairable": "Scene boundaries were recognized, but some headings are missing a time, location, or INT/EXT value. Import is still allowed and the missing metadata will be completed during scene planning.",
-      "repairableFix": "Use the example above to add the missing location, time, or INT/EXT value. You can also continue importing without editing the source.",
-      "open": "View scenes for {{chapter}}",
-      "rowCount_one": "{{count}} scene",
-      "rowCount_other": "{{count}} scenes",
-      "count_one": "{{count}} scene",
-      "count_other": "{{count}} scenes",
+      "open": "View the script of {{chapter}}",
       "scene": "Scene {{number}}",
+      "unknownLocation": "Location not specified",
       "characters": "Characters",
       "characterSeparator": ", ",
-      "unknownLocation": "Scene location not detected",
-      "empty": "No scene text is available in this chapter",
-      "unparsedBody": "Text outside recognized scenes"
+      "empty": "No scenes parsed from this chapter yet",
+      "unparsedBody": "Unparsed script body",
+      "missing": "No scene headers detected",
+      "missingFix": "Add a scene header at the start of every scene, e.g. \"Scene 1 Cafe Day INT\"",
+      "repairable": "Scene headers are non-standard",
+      "repairableFix": "Rewrite scene headers as \"scene location time INT/EXT\"",
+      "count": "{{count}} scene blocks",
+      "rowCount": "{{count}} blocks"
     },
     "chapterDetails": {
       "open": "View the text of {{chapter}}",
@@ -2977,21 +3179,6 @@
           "fix": "If this is novel prose, switch the project type to Narrated. If it is a script, add the scene headings."
         }
       }
-    },
-    "sceneHeaders": {
-      "open": "View the script of {{chapter}}",
-      "scene": "Scene {{number}}",
-      "unknownLocation": "Location not specified",
-      "characters": "Characters",
-      "characterSeparator": ", ",
-      "empty": "No scenes parsed from this chapter yet",
-      "unparsedBody": "Unparsed script body",
-      "missing": "No scene headers detected",
-      "missingFix": "Add a scene header at the start of every scene, e.g. \"Scene 1 Cafe Day INT\"",
-      "repairable": "Scene headers are non-standard",
-      "repairableFix": "Rewrite scene headers as \"scene location time INT/EXT\"",
-      "count": "{{count}} scene blocks",
-      "rowCount": "{{count}} blocks"
     }
   },
   "video": {
@@ -3054,6 +3241,7 @@
     "types": {
       "build_characters": "Build characters",
       "ingest_fast": "Quick ingest",
+      "manuscript_repair": "Repair manuscript",
       "build_episodes": "Plan episodes",
       "character_portrait": "Character portrait",
       "identity_image": "Identity image",
@@ -5667,6 +5855,25 @@
       "continueHint": "Adds time after the ending and returns the whole cut",
       "continueDurationLabel": "Duration",
       "continueSeconds": "{{count}}s",
+      "continueSecondsUnit": "s",
+      "continueDurationInput": "Custom clip length in seconds",
+      "continueDurationOutOfRange": "This model generates {{min}}–{{max}} s per clip",
+      "continueDirectionLabel": "Direction",
+      "continueDirection": {
+        "auto": "Auto",
+        "plot": "Plot",
+        "emotion": "Emotion",
+        "action": "Action",
+        "camera": "Camera",
+        "environment": "Environment",
+        "dialogue": "Dialogue",
+        "ending": "Ending"
+      },
+      "continueSuggest": "Suggest",
+      "continuePromptStale": "Length or direction changed — press Suggest to rewrite",
+      "continuePromptEnhance": "Expand prompt",
+      "continuePromptEnhanceRunning": "Expanding…",
+      "continueEnhanceGuidance": "Expand this into a detailed video prompt: about {{seconds}} s long, heading toward {{direction}}. Continue from the previous clip's final frame and describe only what happens next.",
       "continuePromptPlaceholder": "Describe what happens next",
       "continueCancel": "Cancel",
       "continueSubmit": "Generate",
@@ -5882,6 +6089,7 @@
   },
   "node": {
     "identityCall": {
+      "characterList": "Character list",
       "toggle": "Characters",
       "title": "Characters in this shot",
       "hint": "Selection order is kept. Generation sends each current face first, then the turnaround and expression sheet if slots remain. Voice is sent only when this generation accepts audio.",
@@ -5900,6 +6108,58 @@
       "missingVoice": "{{name}} has no voice yet.",
       "droppedVoice": "{{name}}'s voice did not fit this time.",
       "reshootKeepsFrames": "Reshoot keeps this clip's first and last frames. Identity images and voice are not sent."
+    },
+    "performance": {
+      "title": "Shot performance",
+      "disclaimer": "These text descriptions guide generation but cannot guarantee that the model follows them precisely.",
+      "empty": "Select an identity in this shot to edit its performance.",
+      "identityTabs": "Choose a character to edit",
+      "editorSections": {
+        "label": "Performance sections",
+        "face": "Face",
+        "emotion": "Emotion",
+        "timeline": "Timeline"
+      },
+      "preview": {
+        "canvasLabel": "Generic facial control preview",
+        "label": "Generic model",
+        "disclaimer": "Generic facial control preview. It does not represent the final generated character."
+      },
+      "matrix": {
+        "label": "Emotion matrix",
+        "energy": "Energy",
+        "lowValence": "Negative",
+        "highValence": "Positive",
+        "cell": "Valence {{valence}}, energy {{arousal}}"
+      },
+      "timeline": {
+        "time": "Time {{seconds}} s",
+        "timeControl": "{{character}} performance time",
+        "keyframeAt": "{{character}} keyframe at {{seconds}} s"
+      },
+      "addKeyframe": "Add keyframe",
+      "removeKeyframe": "Remove this frame",
+      "imageBindingTitle": "Bring a character's expression from a video shot",
+      "optional": "Optional",
+      "imageBindingDescription": "Choose a character from the list grouped by video shot. Their emotion and facial state are written into this still image's generation prompt. The video itself is not added as a reference image. Edit expressions on the video node under Characters → Shot performance.",
+      "imageBindingCharacter": "Character",
+      "videoShotNumber": "Video shot {{number}}",
+      "noVideoShots": "There are no video shots on this canvas. Add a video node, then return to choose it.",
+      "noShotIdentities": "There are no selectable characters in these video shots. Add a character from a video node's Characters panel. Create the character in Character assets first if needed.",
+      "noCharactersInShot": "No characters added to this shot",
+      "chooseReferencedCharacter": "Choose a character whose expression to use",
+      "chooseCharacterHelp": "Choose a character to use their shot expression in this still image.",
+      "imageBindingSelected": "Added: {{character}}'s emotion and facial state from “{{shot}}”.",
+      "imageBindingEditElsewhere": "To change the expression, select that video node and open Characters → Shot performance. The video itself is not added as a reference image.",
+      "clearImageBinding": "Remove reference",
+      "controls": {
+        "valence": "Affect",
+        "arousal": "Energy",
+        "brows": "Brows",
+        "eyes": "Eyes",
+        "mouth": "Mouth",
+        "jaw": "Jaw"
+      }
     },
     "shotRecipe": {
       "title": "Look",
@@ -7037,26 +7297,26 @@
           "name": "Cinematic camera & action staging",
           "desc": "Designs shots for fights, chases and other action beats"
         },
-      "modelMaker": {
-        "name": "Create desk models",
-        "desc": "Builds models from parametric primitives"
-      },
-      "staging": {
-        "name": "Scenes and props",
-        "desc": "Places scenes and props, arranges spatial relations"
-      },
-      "method": {
-        "name": "Directing method",
-        "desc": "Explains only — never changes the scene"
-      },
-      "script": {
-        "name": "Script to shot list",
-        "desc": "Produces a list only — never changes the scene"
-      },
-      "review": {
-        "name": "Review notes",
-        "desc": "Gives notes only — never changes the scene"
-      }
+        "modelMaker": {
+          "name": "Create desk models",
+          "desc": "Builds models from parametric primitives"
+        },
+        "staging": {
+          "name": "Scenes and props",
+          "desc": "Places scenes and props, arranges spatial relations"
+        },
+        "method": {
+          "name": "Directing method",
+          "desc": "Explains only — never changes the scene"
+        },
+        "script": {
+          "name": "Script to shot list",
+          "desc": "Produces a list only — never changes the scene"
+        },
+        "review": {
+          "name": "Review notes",
+          "desc": "Gives notes only — never changes the scene"
+        }
       },
       "move": {
         "orbitLeft": "Orbit left",
@@ -7094,13 +7354,35 @@
         "depthMesh": "Depth mesh",
         "model": "External model"
       },
-    "example1": "Slowly push the camera toward the lead",
-    "example2": "Two people standing face to face, talking",
-    "example3": "Add a table and seat a character behind it"
+      "example1": "Slowly push the camera toward the lead",
+      "example2": "Two people standing face to face, talking",
+      "example3": "Add a table and seat a character behind it"
     },
-    "reshoot": { "clipTitle": "Reshoot clip",  "fullTitle": "Reshoot whole video",  "generating": "Reshooting…",  "noResult": "The reshoot task returned no result",  "suggestDetached": "The node is no longer on the canvas; the suggestion was discarded",  "suggestEmpty": "The suggestion service returned no prompt" },
-    "videoGreybox": { "nodeTitle": "Depth video",  "generating": "Generating depth video…",  "noResult": "The depth video task returned no result" },
-    "reshootTimeline": { "unknownDuration": "Source duration is unavailable",  "startFrame": "Start frame",  "endFrame": "End frame",  "startHandle": "Start time handle",  "endHandle": "End time handle",  "startLabel": "{{value}}s",  "endLabel": "{{value}}s",  "spanLabel": "Selection {{value}}s" , "playPreview": "Play segment", "pausePreview": "Pause"}
+    "reshoot": {
+      "clipTitle": "Reshoot clip",
+      "fullTitle": "Reshoot whole video",
+      "generating": "Reshooting…",
+      "noResult": "The reshoot task returned no result",
+      "suggestDetached": "The node is no longer on the canvas; the suggestion was discarded",
+      "suggestEmpty": "The suggestion service returned no prompt"
+    },
+    "videoGreybox": {
+      "nodeTitle": "Depth video",
+      "generating": "Generating depth video…",
+      "noResult": "The depth video task returned no result"
+    },
+    "reshootTimeline": {
+      "unknownDuration": "Source duration is unavailable",
+      "startFrame": "Start frame",
+      "endFrame": "End frame",
+      "startHandle": "Start time handle",
+      "endHandle": "End time handle",
+      "startLabel": "{{value}}s",
+      "endLabel": "{{value}}s",
+      "spanLabel": "Selection {{value}}s",
+      "playPreview": "Play segment",
+      "pausePreview": "Pause"
+    }
   },
   "viewer": {
     "imageAlt": "Image",

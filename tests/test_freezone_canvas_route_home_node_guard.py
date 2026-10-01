@@ -264,7 +264,10 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
     # 再新增提示词强化路由（text/enhance）同样走守卫，计 81；
     # 音效路由（audio/sound-effect）同样走守卫，计 82；
     # 音频模型列表路由（audio/models）同样走守卫，计 83。
-    assert router_decorators == 83
+    # 83 → 87：片段重拍那条链带进来的 4 条（video/reshoot、reshoot/suggest-prompt
+    # 等）都走守卫，但计数一直没人跟着加，棘轮因此早就对不上了。
+    # 87 → 88：画布视频节点「向后延长」的提示词推荐，同样走守卫。
+    assert router_decorators == 88
     assert len(canvas_routes) == 14
 
     # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。

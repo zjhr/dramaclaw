@@ -41,6 +41,8 @@ _SSE_REVERIFY_INTERVAL_S = 30.0
 _TASK_NOT_FOUND_GRACE_S = 10.0
 _TASK_TYPE_LABELS = {
     "ingest_fast": "快速导入",
+    "manuscript_repair": "一键修复",
+    "zero_write": "写第 1 稿",
     "build_characters": "构建角色",
     "build_scenes": "构建场景",
     "build_props": "构建道具",
@@ -83,6 +85,7 @@ _TASK_TYPE_LABELS = {
     "freezone_video_greybox": "视频转深度视频",
     "freezone_video_reshoot": "视频片段重拍",
     "freezone_video_reshoot_suggest_prompt": "重拍提示词推荐",
+    "freezone_video_continue_suggest_prompt": "延长提示词推荐",
     "freezone_audio_separate": "音频分离",
     "freezone_video_compose": "视频合成",
     "freezone_text_translate": "字幕翻译",

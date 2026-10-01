@@ -42,12 +42,19 @@ from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 
 # `egress-inventory.md:54` EG-20a `service/local`——ffmpeg/subprocess，无凭证。
 # 与 EE `feature_billing.py:389-399` 的计费豁免集逐条对应（同一批本地任务）。
+#
+# 三个本地 leaf 是纯 ffmpeg 批处理——抽帧与视频转深度视频，只跑子进程、不出网、
+# 不取凭证，与上面四个同属 EG-20a。它们此前只挂在运行时的分类表里、没进这份已
+# 审计清单，于是「本地桶恰好等于已审计集」这条断言一直对不上；一并补齐。
 AUDITED_LOCAL_LEAVES = frozenset(
     {
+        "extract_continue_anchor_frames",
+        "extract_reshoot_keyframes",
         "run_freezone_audio_separate",
         "run_freezone_extract_frames",
         "run_freezone_video_compose",
         "run_freezone_video_erase",
+        "run_freezone_video_greybox",
         "run_freezone_video_upscale",
     }
 )
@@ -473,7 +480,11 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
     # 同走 EG-18a 的网关文本调用。
     # 21 → 22：音效 `generate_freezone_audio_sound_effect`，直连 ElevenLabs，
     # 登记 EG-15a（与 speech / music 同一个出网口径）。
-    assert len(named) == 22
+    # 22 → 26：片段重拍带进来的 4 个调用点（抽区间首尾帧 + 双帧提示词推荐，
+    # 以及重拍/推荐各自在 runner 内的分发）。
+    # 26 → 28：画布视频节点「向后延长」的提示词推荐——抽整片采样帧与片尾锚点帧
+    # （本地 ffmpeg，EG-20a）+ 写续写提示词（网关视觉调用，EG-18b）。
+    assert len(named) == 28
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

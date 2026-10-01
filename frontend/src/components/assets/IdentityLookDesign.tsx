@@ -141,14 +141,10 @@ export function IdentityLookDesign({
 
   const save = async () => {
     try {
-      const res = await updateIdentity.mutateAsync({
+      await updateIdentity.mutateAsync({
         identityId: identity.identity_id,
         data: lookPayload,
       });
-      if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
-        return;
-      }
       toast.success(t("characters.lookDesign.saved"));
       setDesignOpen(false);
     } catch (err) {
@@ -158,14 +154,10 @@ export function IdentityLookDesign({
 
   const generateSheets = async () => {
     try {
-      const saved = await updateIdentity.mutateAsync({
+      await updateIdentity.mutateAsync({
         identityId: identity.identity_id,
         data: lookPayload,
       });
-      if (saved.ok === false) {
-        toast.error(saved.error || t("common.error"));
-        return;
-      }
       const res = await generate.mutateAsync({
         identityId: identity.identity_id,
         model: imageModel || undefined,
@@ -200,10 +192,7 @@ export function IdentityLookDesign({
           .then((dataUrl) =>
             recordVoice.mutateAsync({ identityId: identity.identity_id, dataUrl }),
           )
-          .then((res) => {
-            if (res.ok === false) toast.error(res.error || t("common.error"));
-            else toast.success(t("characters.lookDesign.voiceSaved"));
-          })
+          .then(() => toast.success(t("characters.lookDesign.voiceSaved")))
           .catch((err) => toast.error(backendErrorToastMessage(err, t)));
       };
       recorderRef.current = recorder;
@@ -296,10 +285,7 @@ export function IdentityLookDesign({
             if (!file) return;
             void uploadVoice
               .mutateAsync({ identityId: identity.identity_id, file })
-              .then((res) => {
-                if (res.ok === false) toast.error(res.error || t("common.error"));
-                else toast.success(t("characters.lookDesign.voiceSaved"));
-              })
+              .then(() => toast.success(t("characters.lookDesign.voiceSaved")))
               .catch((err) => toast.error(backendErrorToastMessage(err, t)));
           }}
         />

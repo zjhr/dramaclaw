@@ -248,8 +248,8 @@ describe("submitFreezoneVideoReshoot payload", () => {
     expect(start.parentElement?.className).toContain("h-64");
     expect(end.parentElement?.className).toContain("h-64");
     expect(start.parentElement?.className).toContain("w-full");
-    expect(start.currentTime).toBe(2);
-    expect(end.currentTime).toBe(8);
+    expect((start as HTMLVideoElement).currentTime).toBe(2);
+    expect((end as HTMLVideoElement).currentTime).toBe(8);
   });
 
   it("有视频时播放片段按钮可用；没视频时禁用", () => {

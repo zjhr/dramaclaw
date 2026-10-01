@@ -83,6 +83,7 @@ from novelvideo.api.schemas import (
     FreezoneUpscaleRequest,
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
+    FreezoneVideoContinueSuggestPromptRequest,
     FreezoneVideoEditRequest,
     FreezoneVideoEraseRequest,
     FreezoneVideoGenRequest,
@@ -6917,6 +6918,10 @@ def _reshoot_suggest_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_reshoot_suggest_prompt") / f"{job_id}.json"
 
 
+def _continue_suggest_prompt_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_video_continue_suggest_prompt") / f"{job_id}.json"
+
+
 def _video_compose_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_compose") / f"{job_id}.mp4"
 
@@ -10242,6 +10247,66 @@ async def freezone_video_reshoot_suggest_prompt(
 
 
 @router.post(
+    "/projects/{project}/freezone/video/continue/suggest-prompt",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_continue_suggest_prompt(
+    project: str,
+    body: FreezoneVideoContinueSuggestPromptRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：画布视频节点「向后延长」的提示词推荐。
+
+    抽**整片采样帧 + 片尾锚点帧**（不是重拍那种 0.2 秒区间的首尾两帧）交给视觉
+    模型，再叠上用户设定的生成段时长与选中的发展方向，让它按「这段戏接下来怎么
+    演」写一段可直接投喂的续写提示词。计费口径与图反推一致：一次视觉调用算一次。
+    """
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_reverse_prompt_task_billing,
+    )
+
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"video source not found: {source_path}")
+
+    billable_chars = count_billable_text_chars("continue_suggest_prompt")
+
+    job_id = _new_job_id()
+    return await _enqueue_or_start_freezone_media_job(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        task_type="freezone_video_continue_suggest_prompt",
+        job_id=job_id,
+        payload={
+            "source_path": source_path.as_posix(),
+            "end_seconds": body.end_seconds,
+            "duration_seconds": body.duration_seconds,
+            "direction": body.direction,
+            "canvas_id": body.canvas_id,
+            "node_id": body.node_id,
+            "billing": freezone_image_reverse_prompt_task_billing(
+                {
+                    "operation": "image_reverse_prompt",
+                    "billable_chars": billable_chars,
+                    "pricing_quantity": billable_chars,
+                }
+            ),
+        },
+        queue_kind="default",
+    )
+
+
+@router.post(
     "/projects/{project}/freezone/video/audio-separate",
     response_model=FreezoneJobAcceptedResponse,
     tags=[TAG_FREEZONE_VIDEO],
@@ -10780,6 +10845,7 @@ async def freezone_job_result(
         "freezone_story_script",
         "freezone_video_reshoot",
         "freezone_video_reshoot_suggest_prompt",
+        "freezone_video_continue_suggest_prompt",
     ],
     job_id: str,
     user: dict = Depends(get_api_user),
@@ -10886,6 +10952,8 @@ async def freezone_job_result(
         out = _image_reverse_prompt_output_path(project_dir, job_id)
     if task_type in ("freezone_video_reshoot_suggest_prompt",):
         out = _reshoot_suggest_prompt_output_path(project_dir, job_id)
+    if task_type in ("freezone_video_continue_suggest_prompt",):
+        out = _continue_suggest_prompt_output_path(project_dir, job_id)
     if task_type == "freezone_video_erase":
         out = _video_erase_output_path(project_dir, job_id)
     if task_type == "freezone_video_upscale":
@@ -11002,6 +11070,7 @@ async def freezone_job_result(
         "freezone_text_enhance",
         "freezone_story_script",
         "freezone_video_reshoot_suggest_prompt",
+        "freezone_video_continue_suggest_prompt",
     }:
         return {"ok": True, "data": json.loads(out.read_text(encoding="utf-8"))}
     rel = out.relative_to(project_dir).as_posix()

@@ -9,14 +9,22 @@
  * 断言落在视频 chip 的真实 DOM 上：只有 `kind === "video"` 的分支会渲染 <video>，
  * 也只有它会用上游节点的 `previewImageUrl` 当 chip 缩略图。
  */
-import { render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactFlowProvider } from "@xyflow/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { VideoNode } from "@/features/canvas/nodes/VideoNode";
+import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { useCanvasStore } from "@/stores/canvasStore";
+
+vi.mock("@/features/canvas/ui/IdentityCallPanel", () => ({
+  IdentityCallPanel: () => <div data-testid="identity-call-panel">角色选择区</div>,
+}));
+vi.mock("@/features/canvas/components/CharacterPerformanceEditor", () => ({
+  CharacterPerformanceEditor: () => <div data-testid="long-performance-content">超长表演控件</div>,
+}));
 
 vi.mock("@xyflow/react", async () => {
   const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
@@ -93,6 +101,27 @@ beforeEach(() => {
 });
 
 describe("导演台节点作为视频节点的参考素材", () => {
+  it("角色表演 portal 有视口高度上限并允许内部纵向滚动", async () => {
+    window.history.replaceState({}, "", "/projects/demo/freezone");
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 700 });
+    seedCanvas({});
+    renderVideoNode();
+
+    act(() => canvasEventBus.publish("video-node/identity-call", { nodeId: VIDEO_ID }));
+
+    const longContent = await waitFor(() => screen.getByTestId("long-performance-content"));
+    const shell = longContent.parentElement;
+    expect(shell).toHaveStyle({ maxHeight: "676px", overflow: "hidden" });
+
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
+    const canvasWheel = vi.fn();
+    document.addEventListener("wheel", canvasWheel);
+    longContent.dispatchEvent(wheel);
+    document.removeEventListener("wheel", canvasWheel);
+    expect(wheel.defaultPrevented).toBe(false);
+    expect(canvasWheel).not.toHaveBeenCalled();
+  });
+
   it("videoUrl 被识别为 kind:'video'：chip 用 <video> 承载上游视频地址", async () => {
     seedCanvas({ videoUrl: VIDEO_URL, previewImageUrl: null });
     renderVideoNode();

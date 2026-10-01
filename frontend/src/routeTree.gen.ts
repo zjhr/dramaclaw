@@ -17,6 +17,7 @@ import { Route as CheckoutRouteImport } from './routes/checkout'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as WatchWorkRouteImport } from './routes/watch.$work'
+import { Route as PrototypesXialiaoDeskRouteImport } from './routes/prototypes.xialiao-desk'
 import { Route as AppPaymentReturnRouteImport } from './routes/_app/payment-return'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
 import { Route as AppAccessUnavailableRouteImport } from './routes/_app/access-unavailable'
@@ -88,6 +89,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const WatchWorkRoute = WatchWorkRouteImport.update({
   id: '/watch/$work',
   path: '/watch/$work',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrototypesXialiaoDeskRoute = PrototypesXialiaoDeskRouteImport.update({
+  id: '/prototypes/xialiao-desk',
+  path: '/prototypes/xialiao-desk',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppPaymentReturnRoute = AppPaymentReturnRouteImport.update({
@@ -244,6 +250,7 @@ export interface FileRoutesByFullPath {
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
+  '/prototypes/xialiao-desk': typeof PrototypesXialiaoDeskRoute
   '/watch/$work': typeof WatchWorkRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -269,6 +276,7 @@ export interface FileRoutesByTo {
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
+  '/prototypes/xialiao-desk': typeof PrototypesXialiaoDeskRoute
   '/watch/$work': typeof WatchWorkRoute
   '/': typeof AppIndexRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -297,6 +305,7 @@ export interface FileRoutesById {
   '/_app/access-unavailable': typeof AppAccessUnavailableRoute
   '/_app/credits': typeof AppCreditsRoute
   '/_app/payment-return': typeof AppPaymentReturnRoute
+  '/prototypes/xialiao-desk': typeof PrototypesXialiaoDeskRoute
   '/watch/$work': typeof WatchWorkRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -326,6 +335,7 @@ export interface FileRouteTypes {
     | '/access-unavailable'
     | '/credits'
     | '/payment-return'
+    | '/prototypes/xialiao-desk'
     | '/watch/$work'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/access-unavailable'
     | '/credits'
     | '/payment-return'
+    | '/prototypes/xialiao-desk'
     | '/watch/$work'
     | '/'
     | '/projects/$project/assistant'
@@ -378,6 +389,7 @@ export interface FileRouteTypes {
     | '/_app/access-unavailable'
     | '/_app/credits'
     | '/_app/payment-return'
+    | '/prototypes/xialiao-desk'
     | '/watch/$work'
     | '/_app/'
     | '/_app/projects/$project/assistant'
@@ -403,6 +415,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   RechargeRoute: typeof RechargeRoute
   DownloadLazyRoute: typeof DownloadLazyRoute
+  PrototypesXialiaoDeskRoute: typeof PrototypesXialiaoDeskRoute
   WatchWorkRoute: typeof WatchWorkRoute
 }
 
@@ -455,6 +468,13 @@ declare module '@tanstack/react-router' {
       path: '/watch/$work'
       fullPath: '/watch/$work'
       preLoaderRoute: typeof WatchWorkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prototypes/xialiao-desk': {
+      id: '/prototypes/xialiao-desk'
+      path: '/prototypes/xialiao-desk'
+      fullPath: '/prototypes/xialiao-desk'
+      preLoaderRoute: typeof PrototypesXialiaoDeskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/payment-return': {
@@ -658,6 +678,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   RechargeRoute: RechargeRoute,
   DownloadLazyRoute: DownloadLazyRoute,
+  PrototypesXialiaoDeskRoute: PrototypesXialiaoDeskRoute,
   WatchWorkRoute: WatchWorkRoute,
 }
 export const routeTree = rootRouteImport

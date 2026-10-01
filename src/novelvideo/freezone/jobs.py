@@ -623,6 +623,62 @@ async def extract_reshoot_keyframes(
     return first_png, last_png
 
 
+async def extract_continue_anchor_frames(
+    *,
+    source_path: str,
+    end_seconds: float,
+    out_dir: Path,
+    sample_count: int = 3,
+) -> list[Path]:
+    """抽「整片采样帧 + 结尾锚点帧」，返回的**最后一张是锚点帧**。
+
+    与 `extract_reshoot_keyframes` 的区别：重拍只关心选中区间怎么演，给首尾两帧
+    就够；续写要的是「这条片子在演什么」，所以先在 `[0, end)` 里均匀采样几帧交代
+    人物、场景与光线，再把片尾那一帧放在最后——它就是续写段的首帧，也就是接缝。
+
+    尾帧必须落在片内：`ffmpeg -ss <片长>` 一帧都解不出来（见
+    `extract_reshoot_keyframes` 里的同一段说明），所以先探真实时长再夹一次。
+    """
+    src = Path(source_path)
+    if not src.exists():
+        raise FileNotFoundError(f"video source not found: {src}")
+    probe = await asyncio.to_thread(
+        subprocess.run,
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(src)],
+        capture_output=True, text=True, timeout=30,
+    )
+    try:
+        media_duration = float((probe.stdout or "").strip())
+    except ValueError:
+        media_duration = 0.0
+    anchor_at = end_seconds
+    if media_duration > 0:
+        anchor_at = min(end_seconds, max(0.0, media_duration - 0.1))
+    if anchor_at <= 0:
+        raise ValueError("no decodable frame at the tail of this video")
+
+    # 采样点落在锚点之前，且彼此拉开距离：贴着锚点抽两帧等于给模型同一张图。
+    count = max(1, int(sample_count))
+    seek_points = [anchor_at * (index + 1) / (count + 1) for index in range(count)]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frames: list[Path] = []
+    for index, at in enumerate([*seek_points, anchor_at]):
+        target = out_dir / ("anchor.png" if index == count else f"context_{index:02d}.png")
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", f"{at:.3f}", "-i", str(src),
+            "-frames:v", "1", str(target),
+        ]
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True, timeout=120
+        )
+        if proc.returncode != 0 or not target.exists():
+            raise RuntimeError(f"frame extract failed at {at:.3f}s: {proc.stderr[-300:]}")
+        frames.append(target)
+    return frames
+
+
 async def run_freezone_video_greybox(
     *,
     project_dir: Path,

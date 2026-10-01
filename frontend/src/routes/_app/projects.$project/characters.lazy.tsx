@@ -207,8 +207,6 @@ const CHARACTER_SELECT_CONTENT_CLASS =
   "rounded-md p-1 shadow-xl shadow-black/20 data-[align-trigger=true]:animate-in [&_[data-slot=select-item]]:min-h-8 [&_[data-slot=select-item]]:rounded-sm [&_[data-slot=select-item]]:px-2 [&_[data-slot=select-item]]:py-1.5 [&_[data-slot=select-item]]:text-xs [&_[data-slot=select-item]:focus]:bg-white/8 [&_[data-slot=select-item]:focus]:text-current [&_[data-slot=select-item]_svg]:size-3.5";
 const CHARACTER_INPUT_CLASS =
   "!h-9 rounded-[8px] border-white/10 bg-white/[0.025] px-3 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-white/20 focus-visible:ring-2 focus-visible:ring-white/8 dark:bg-white/[0.025]";
-const CHARACTER_TEXTAREA_CLASS =
-  "w-full resize-none rounded-[8px] border border-white/10 bg-white/[0.025] p-2.5 text-sm leading-relaxed shadow-none placeholder:text-muted-foreground/60 focus-visible:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/8";
 const CHARACTER_SELECT_TRIGGER_CLASS =
   "!h-9 w-full rounded-[8px] border-white/10 bg-white/[0.025] px-3 text-sm shadow-none focus-visible:border-white/20 focus-visible:ring-2 focus-visible:ring-white/8 dark:bg-white/[0.025]";
 const CHARACTER_DIALOG_CONTENT_CLASS =
@@ -1122,7 +1120,6 @@ function DetailsFormCard({
   const [role, setRole] = useState(character.role ?? "");
   const [bodyType, setBodyType] = useState(character.body_type ?? "");
   const [aliases, setAliases] = useState((character.aliases ?? []).join(", "));
-  const [desc, setDesc] = useState(character.description ?? "");
   const [facePrompt, setFacePrompt] = useState(character.face_prompt ?? "");
 
   useEffect(() => {
@@ -1130,14 +1127,12 @@ function DetailsFormCard({
     setRole(character.role ?? "");
     setBodyType(character.body_type ?? "");
     setAliases((character.aliases ?? []).join(", "));
-    setDesc(character.description ?? "");
     setFacePrompt(character.face_prompt ?? "");
   }, [
     character.name,
     character.role,
     character.body_type,
     character.aliases,
-    character.description,
     character.face_prompt,
   ]);
 
@@ -1187,10 +1182,6 @@ function DetailsFormCard({
   const handleBlurRole = () => {
     if (role !== (character.role ?? "")) saveField({ role: role || undefined });
   };
-  const handleBlurBodyType = () => {
-    if (bodyType !== (character.body_type ?? ""))
-      saveField({ body_type: bodyType || undefined });
-  };
   const handleBlurAliases = () => {
     const prev = (character.aliases ?? []).join(", ");
     if (aliases !== prev) {
@@ -1200,14 +1191,6 @@ function DetailsFormCard({
         .filter(Boolean);
       saveField({ aliases: parsed });
     }
-  };
-  const handleBlurDesc = () => {
-    if (desc !== (character.description ?? ""))
-      saveField({ description: desc || undefined });
-  };
-  const handleBlurFacePrompt = () => {
-    if (facePrompt !== (character.face_prompt ?? ""))
-      saveField({ face_prompt: facePrompt || undefined });
   };
 
   return (
@@ -1389,7 +1372,6 @@ function IdentityCard({
     identity.appearance_details ?? "",
   );
   const [facePrompt, setFacePrompt] = useState(identity.face_prompt ?? "");
-  const [bodyType, setBodyType] = useState(identity.body_type ?? "");
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const costumeInputRef = useRef<HTMLInputElement>(null);
@@ -1432,23 +1414,17 @@ function IdentityCard({
   useEffect(() => {
     setAppearance(identity.appearance_details ?? "");
     setFacePrompt(identity.face_prompt ?? "");
-    setBodyType(identity.body_type ?? "");
     setRenameValue(identity.identity_name);
   }, [
     identity.identity_id,
     identity.identity_name,
     identity.appearance_details,
     identity.face_prompt,
-    identity.body_type,
     identity.age_group,
     identity.portrait_image_url,
   ]);
 
   const appearanceDirty = appearance !== (identity.appearance_details ?? "");
-  const refsDirty =
-    facePrompt !== (identity.face_prompt ?? "") ||
-    bodyType !== (identity.body_type ?? "");
-
   const bumpAttempt = () => {
     onAttempt();
     attemptsRes.refetch();
@@ -1466,20 +1442,6 @@ function IdentityCard({
     }
   };
 
-  const handleSaveRefs = async () => {
-    try {
-      await updateIdentity.mutateAsync({
-        identityId: identity.identity_id,
-        data: {
-          face_prompt: facePrompt,
-          body_type: bodyType,
-        },
-      });
-      toast.success(t("characters.toasts.identityUpdated"));
-    } catch {
-      toast.error(t("common.error"));
-    }
-  };
 
   const handleAgeGroupChange = async (value: string) => {
     try {

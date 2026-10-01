@@ -344,6 +344,10 @@ vi.mock("@/lib/queries/ingest", () => ({
     refetch: mocks.refetchKnowledgeGraph,
   }),
   useUploadNovel: () => ({ mutateAsync: mocks.uploadNovel, isPending: false }),
+  useManuscriptAction: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRepairManuscript: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveManuscriptImitation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useWriteFirst: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useStartIngest: () => ({
     mutateAsync: mocks.startIngest,
     isPending: false,

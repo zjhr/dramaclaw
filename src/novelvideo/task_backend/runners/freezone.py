@@ -115,7 +115,13 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "suggest_reshoot_prompt_from_keyframes": LeafEgressRule(
         "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
     ),
+    "suggest_continue_prompt_from_frames": LeafEgressRule(
+        "novelvideo.freezone.continue_prompt", LeafEgress.NETWORK, "EG-18b"
+    ),
     "extract_reshoot_keyframes": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "extract_continue_anchor_frames": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
     # EG-18a `freezone.text.generate` / `.structured`（:51，`gateway-routed`）
@@ -1568,6 +1574,91 @@ def run_freezone_video_reshoot_suggest_prompt(
     )
 
 
+async def _run_freezone_video_continue_suggest_prompt_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.continue_prompt import suggest_continue_prompt_from_frames
+    from novelvideo.freezone.jobs import ensure_freezone_dirs, extract_continue_anchor_frames
+    from novelvideo.freezone.paths import outputs_dir
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    source_path = Path(str(payload["source_path"]))
+    end_seconds = float(payload.get("end_seconds") or 0.0)
+    duration_seconds = float(payload.get("duration_seconds") or 5.0)
+    direction = str(payload.get("direction") or "auto")
+    _update(
+        ctx,
+        "freezone_video_continue_suggest_prompt",
+        job_id,
+        0.2,
+        "正在抽取原片采样帧与片尾锚点帧...",
+    )
+    frames = await _call_freezone_leaf(
+        envelope,
+        extract_continue_anchor_frames,
+        "extract_continue_anchor_frames",
+        source_path=str(source_path),
+        end_seconds=end_seconds,
+        out_dir=outputs_dir(project_dir, "freezone_video_continue_suggest_prompt")
+        / job_id,
+    )
+    _update(
+        ctx,
+        "freezone_video_continue_suggest_prompt",
+        job_id,
+        0.5,
+        "正在按设定的时长与方向写续写提示词...",
+    )
+    prompt = await _call_freezone_leaf(
+        envelope,
+        suggest_continue_prompt_from_frames,
+        "suggest_continue_prompt_from_frames",
+        frame_paths=frames,
+        duration_seconds=duration_seconds,
+        direction=direction,
+    )
+    out = (
+        outputs_dir(project_dir, "freezone_video_continue_suggest_prompt")
+        / f"{job_id}.json"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    import json
+
+    out.write_text(
+        json.dumps({"prompt": prompt}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    rel = out.relative_to(project_dir).as_posix()
+    result = {
+        "job_id": job_id,
+        "output_format": "json",
+        "output_path": str(out),
+        "output_url": make_static_url_for_context(ctx, rel),
+        "prompt": prompt,
+    }
+    _update(
+        ctx,
+        "freezone_video_continue_suggest_prompt",
+        job_id,
+        1.0,
+        "续写提示词推荐完成",
+    )
+    return result
+
+
+def run_freezone_video_continue_suggest_prompt(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope, _run_freezone_video_continue_suggest_prompt_async(envelope, ctx)
+    )
+
+
 async def _run_freezone_audio_speech_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -1810,6 +1901,11 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_video_reshoot_suggest_prompt",
     run_freezone_video_reshoot_suggest_prompt,
+    requires_home_node=False,
+)
+register_project_task_runner(
+    "freezone_video_continue_suggest_prompt",
+    run_freezone_video_continue_suggest_prompt,
     requires_home_node=False,
 )
 register_project_task_runner(

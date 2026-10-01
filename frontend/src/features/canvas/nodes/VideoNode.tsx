@@ -215,6 +215,8 @@ import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
 import { IdentityCallPanel } from "@/features/canvas/ui/IdentityCallPanel";
+import { CharacterPerformanceEditor } from "@/features/canvas/components/CharacterPerformanceEditor";
+import { buildVideoPerformancePrompt } from "@/features/canvas/domain/characterPerformance";
 import { fetchIdentityLooks } from "@/lib/queries/characters";
 import {
   mergeCappedUrls,
@@ -252,6 +254,22 @@ export const OPERATIONS_PANEL_GAP = 12;
 // Extend the ops panel beyond the node's left/right edges so the textarea +
 // chips have more room than the video frame itself.
 export const OPERATIONS_PANEL_OVERHANG = 120;
+const SHOT_RECIPE_PANEL_MARGIN = 12;
+const SHOT_RECIPE_PANEL_MAX_WIDTH = 1200;
+
+function shotRecipePanelWidth() {
+  return Math.max(
+    320,
+    Math.min(
+      SHOT_RECIPE_PANEL_MAX_WIDTH,
+      Math.round(window.innerWidth - SHOT_RECIPE_PANEL_MARGIN * 2),
+    ),
+  );
+}
+
+function shotRecipePanelMaxHeight() {
+  return Math.max(360, Math.round(window.innerHeight - SHOT_RECIPE_PANEL_MARGIN * 2));
+}
 
 // 空态 CTA 的图标 + 文案：具体展示哪几个模式由 `videoEmptyStateCtaModes(modelId)`
 // 按模型能力决定（见 shared/videoModelCapabilities.ts），这里只负责「模式 → 外观」。
@@ -1126,9 +1144,9 @@ export const VideoNode = memo(
       const place = () => {
         const rect = albumRootRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const panelWidth = 520;
-        const margin = 16;
-        const maxHeight = Math.min(640, Math.round(window.innerHeight * 0.72));
+        const panelWidth = shotRecipePanelWidth();
+        const margin = SHOT_RECIPE_PANEL_MARGIN;
+        const maxHeight = shotRecipePanelMaxHeight();
         const roomOnRight = window.innerWidth - rect.right - margin;
         const roomOnLeft = rect.left - margin;
         let left = rect.right + margin;
@@ -1136,10 +1154,7 @@ export const VideoNode = memo(
           left = rect.left - margin - panelWidth;
         }
         left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
-        let top = rect.top;
-        if (top + maxHeight > window.innerHeight - margin) {
-          top = Math.max(margin, window.innerHeight - maxHeight - margin);
-        }
+        const top = Math.max(margin, Math.min(rect.top, window.innerHeight - maxHeight - margin));
         setRecipeDock({ left, top });
       };
       place();
@@ -2168,6 +2183,12 @@ export const VideoNode = memo(
       let identityImageUrls: string[] = [];
       let identityVoiceRefs: { url: string; label: string }[] = [];
       if (identityCalls.length > 0) {
+        composedPrompt = buildVideoPerformancePrompt(
+          composedPrompt,
+          identityCalls,
+          data.performances,
+          data.performanceTimelines,
+        );
         try {
           const rows = await fetchIdentityLooks(projectId);
           const plan = planIdentityCall(
@@ -3576,12 +3597,16 @@ export const VideoNode = memo(
 
         {showVideoOpsPanel && recipeProjectId && showShotRecipePanel && recipeDock && createPortal(
           <div
-            className="nodrag nopan nowheel"
+            className="nodrag nopan nowheel flex min-h-0 flex-col gap-2 overflow-hidden"
             style={{
               position: "fixed",
               left: recipeDock.left,
               top: recipeDock.top,
-              width: 520,
+              width: shotRecipePanelWidth(),
+              height: shotRecipePanelMaxHeight(),
+              maxHeight: shotRecipePanelMaxHeight(),
+              overflow: "hidden",
+              overscrollBehavior: "contain",
               zIndex: 80,
             }}
             onPointerDown={(event) => event.stopPropagation()}
@@ -3595,6 +3620,16 @@ export const VideoNode = memo(
               audioCap={referenceCaps ? referenceCaps.audio : null}
               onChange={(next) => updateNodeData(id, { identityCalls: next })}
               onClose={() => setShowShotRecipePanel(false)}
+            />
+            <CharacterPerformanceEditor
+              identities={Array.isArray(data.identityCalls) ? data.identityCalls : []}
+              performances={data.performances ?? {}}
+              timelines={data.performanceTimelines ?? {}}
+              durationSec={durationSec}
+              onChange={(identityId, value, keyframes) => updateNodeData(id, {
+                performances: { ...(data.performances ?? {}), [identityId]: value },
+                performanceTimelines: { ...(data.performanceTimelines ?? {}), [identityId]: keyframes },
+              })}
             />
           </div>,
           document.body,

@@ -27,8 +27,12 @@ import { useProject, useUpdateProject } from "@/lib/queries/projects";
 import {
   useChapters,
   useKnowledgeGraph,
+  useManuscriptAction,
+  useRepairManuscript,
+  useSaveManuscriptImitation,
   useStartIngest,
   useUploadNovel,
+  useWriteFirst,
   type FormatCheck,
   type UploadResult,
 } from "@/lib/queries/ingest";
@@ -41,6 +45,7 @@ import {
 } from "@/lib/visual-styles";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
+import { AskFirstPanel } from "@/features/ingest/ask-first-panel";
 import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
 import { IngestElapsedTime } from "@/components/ingest/IngestElapsedTime";
 import { useStyles } from "@/lib/queries/styles";
@@ -1027,6 +1032,18 @@ export function IngestPageContent({ project }: { project: string }) {
 
   const uploadMutation = useUploadNovel(project);
   const startIngestMutation = useStartIngest(project);
+  const manuscriptActionMutation = useManuscriptAction(project);
+  const repairMutation = useRepairManuscript(project);
+  const writeFirstMutation = useWriteFirst(project);
+  const saveImitationMutation = useSaveManuscriptImitation(project);
+  const repairRestartRef = useRef(false);
+  const repairSourceFilenameRef = useRef<string | null>(null);
+  const repairSourceStorageKey = `dramaclaw-repair-source:${project}`;
+  const [headerChoices, setHeaderChoices] = useState<string[]>([]);
+
+  useEffect(() => {
+    repairSourceFilenameRef.current = sessionStorage.getItem(repairSourceStorageKey);
+  }, [repairSourceStorageKey]);
 
   useEffect(() => {
     setHideImportedPreview(readHiddenImportedPreview(project));
@@ -1338,6 +1355,9 @@ export function IngestPageContent({ project }: { project: string }) {
         });
         setUploadedFile(result.data);
         setUploadedFileSource("upload");
+        repairSourceFilenameRef.current = null;
+        sessionStorage.removeItem(repairSourceStorageKey);
+        repairRestartRef.current = false;
         setHideImportedPreview(false);
         writeHiddenImportedPreview(project, false);
         setIngestFileStatus("uploaded");
@@ -1350,7 +1370,7 @@ export function IngestPageContent({ project }: { project: string }) {
         return false;
       }
     },
-    [project, settingsValues.spine_template, uploadMutation, t],
+    [project, repairSourceStorageKey, settingsValues.spine_template, uploadMutation, t],
   );
 
   const handleReupload = useCallback(() => {
@@ -1406,6 +1426,9 @@ export function IngestPageContent({ project }: { project: string }) {
     });
     setUploadedFile(result.data);
     setUploadedFileSource("paste");
+    repairSourceFilenameRef.current = null;
+    sessionStorage.removeItem(repairSourceStorageKey);
+    repairRestartRef.current = false;
     setIngestFileStatus("uploaded");
     setIngestError(null);
     warnFormatCheck(
@@ -1423,7 +1446,97 @@ export function IngestPageContent({ project }: { project: string }) {
     t,
     uploadMutation,
     warnFormatCheck,
+    repairSourceStorageKey,
   ]);
+
+  const handleAskRepair = useCallback(
+    async (
+      report: (line: string, details?: string[]) => void,
+      sceneHeader?: string,
+      reasoningEffort?: "none" | "low" | "medium" | "high",
+    ) => {
+      let filename = repairSourceFilenameRef.current ?? uploadedFile?.filename ?? "";
+      if (inputMode === "paste" && uploadedFileSource !== "paste") {
+        const uploaded = await uploadPastedText();
+        filename = uploaded?.filename ?? "";
+      }
+      if (!filename) {
+        throw new Error(t("ingest.askFirst.repairNeedFile"));
+      }
+      repairSourceFilenameRef.current = filename;
+      sessionStorage.setItem(repairSourceStorageKey, filename);
+      const restart = repairRestartRef.current;
+      repairRestartRef.current = false;
+      let previous = "";
+      for (let step = 0; step < 500; step += 1) {
+        const response = await repairMutation.mutateAsync({
+          filename,
+          spine_template: settingsValues.spine_template ?? "drama",
+          restart: step === 0 && restart && !sceneHeader,
+          scene_header: step === 0 ? sceneHeader : undefined,
+          reasoning_effort: reasoningEffort ?? "none",
+        });
+        const data = response.data;
+        if (!data) {
+          throw new Error(t("ingest.askFirst.repairFailed"));
+        }
+        if (data.needs_choice) {
+          setHeaderChoices(data.choices ?? []);
+          report(
+            t("ingest.askFirst.repairNeedHeader", {
+              chapter: data.chapter_number,
+            }),
+            data.calls,
+          );
+          return;
+        }
+        setHeaderChoices([]);
+        const blocked = data.format_check?.level === "blocking";
+        report(
+          data.done
+            ? blocked
+              ? t("ingest.askFirst.repairStillBlocked", {
+                  summary: data.format_check?.summary || "",
+                })
+              : t("ingest.askFirst.repairDone", {
+                  filename: data.working_filename,
+                })
+            : t("ingest.askFirst.repairProgress", {
+                chapter: data.chapter_number,
+                chunk: data.chunk_index,
+                chunks: data.chunk_count,
+                total: data.chapter_count,
+              }),
+          data.calls,
+        );
+        if (data.done) {
+          repairRestartRef.current = blocked;
+          if (data.upload && !blocked) {
+            setUploadedFile(data.upload);
+            setUploadedFileSource(inputMode === "paste" ? "paste" : "upload");
+            setIngestFileStatus("uploaded");
+          }
+          return data.working_filename;
+        }
+        const marker = `${data.chapter_number}:${data.chunk_index}:${data.completed_chapters.join(",")}`;
+        if (marker === previous) {
+          throw new Error(t("ingest.askFirst.repairStalled"));
+        }
+        previous = marker;
+      }
+      throw new Error(t("ingest.askFirst.repairStalled"));
+    },
+    [
+      inputMode,
+      repairMutation,
+      repairSourceStorageKey,
+      settingsValues.spine_template,
+      t,
+      uploadPastedText,
+      uploadedFile?.filename,
+      uploadedFileSource,
+    ],
+  );
 
   const saveProjectSettings = useCallback(async () => {
     const defaults = normalizeLegacyDefaults(config);
@@ -1608,6 +1721,63 @@ export function IngestPageContent({ project }: { project: string }) {
       : inputMode === "paste" && hasUserUploadedFile && hasPastedText
         ? t("ingest.sourceHint.pasteActive")
         : "";
+  const askFilename =
+    uploadedFile?.filename.toLowerCase().endsWith(".xialiao.txt")
+      ? uploadedFile.filename
+      : shouldShowPreview && previewFile
+        ? previewFile.filename
+        : inputMode === "paste" && hasPastedText
+          ? t("ingest.askFirst.pastedName")
+          : (uploadedFile?.filename ?? t("ingest.askFirst.untitled"));
+  const hasAskManuscript = shouldShowPreview
+    ? Boolean(previewFile)
+    : inputMode === "upload"
+      ? Boolean(uploadedFile)
+      : hasPastedText;
+  const retainAskConversation =
+    chaptersFetching && chaptersRes === undefined
+      ? null
+      : hasAskManuscript || shouldShowPreview;
+  const askFirstPanel = (
+    <AskFirstPanel
+      projectId={project}
+      filename={askFilename}
+      hasManuscript={hasAskManuscript}
+      formatBlocked={formatCheckBlocksImport}
+      onRepair={(report, effort) => handleAskRepair(report, undefined, effort)}
+      headerChoices={headerChoices}
+      onChooseHeader={(header, report, effort) => handleAskRepair(report, header, effort)}
+      spineTemplate={settingsValues.spine_template ?? "drama"}
+      onManuscriptAction={async (params) => {
+        const response = await manuscriptActionMutation.mutateAsync(params);
+        if (!response.data) throw new Error(t("ingest.askFirst.actionFailed"));
+        return response.data;
+      }}
+      onSaveImitation={(params) => saveImitationMutation.mutateAsync(params)}
+      onWriteFirst={async (params) => {
+        const response = await writeFirstMutation.mutateAsync(params);
+        if (!response.upload) throw new Error(t("ingest.askFirst.actionFailed"));
+        return response;
+      }}
+      onManuscriptFileChanged={(upload) => {
+        setUploadedFile(upload);
+        setUploadedFileSource("upload");
+        setInputMode("upload");
+        setIngestFileStatus("uploaded");
+        setIngestError(null);
+        warnFormatCheck(
+          resolveFormatCheckForSpineTemplate(
+            upload.format_check,
+            settingsValues.spine_template,
+            t,
+          ) ?? undefined,
+          upload.filename,
+        );
+      }}
+      retainConversation={retainAskConversation}
+      className={shouldShowPreview ? "mt-0" : "mt-6"}
+    />
+  );
 
   return (
     <div className="-m-6 flex h-[calc(100%+3rem)] flex-col overflow-hidden">
@@ -1643,6 +1813,7 @@ export function IngestPageContent({ project }: { project: string }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-10">
         <div className="mx-auto w-full max-w-[1080px]">
           {!shouldShowPreview ? (
+            <>
             <motion.section
               layout
               transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
@@ -1924,6 +2095,8 @@ export function IngestPageContent({ project }: { project: string }) {
                 </div>
               </div>
             </motion.section>
+            {askFirstPanel}
+            </>
           ) : (
             <div className="min-w-0 space-y-6">
               {/* Upload zone OR uploaded file card */}
@@ -1974,6 +2147,8 @@ export function IngestPageContent({ project }: { project: string }) {
                   onDelete={handleDeleteFile}
                 />
               )}
+
+              <div>{askFirstPanel}</div>
 
               <AlertDialog
                 open={reuploadConfirmOpen}

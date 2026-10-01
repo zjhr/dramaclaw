@@ -100,6 +100,74 @@ describe("useCanvasSync hydrate lifecycle", () => {
     });
   });
 
+  it("hydrates and autosaves performance state for multiple identities on one video shot", async () => {
+    const serverNode = {
+      id: "shot-1",
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 10, y: 20 },
+      data: {
+        identityCalls: [
+          { characterName: "Lin", identityId: "lin-a" },
+          { characterName: "Bo", identityId: "bo-b" },
+        ],
+        performances: {
+          "lin-a": { valence: 0.4, arousal: 0.2, brows: 0.7, eyes: 0, mouth: 0.6, jaw: 0 },
+          "bo-b": { valence: -0.5, arousal: 0.1, brows: -0.7, eyes: 0, mouth: -0.5, jaw: 0.2 },
+        },
+        performanceTimelines: {
+          "lin-a": [{ timeMs: 1800, performance: { valence: 0.4, arousal: 0.2, brows: 0.7, eyes: 0, mouth: 0.6, jaw: 0 } }],
+          "bo-b": [{ timeMs: 400, performance: { valence: -0.5, arousal: 0.1, brows: -0.7, eyes: 0, mouth: -0.5, jaw: 0.2 } }],
+        },
+      },
+    };
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [serverNode],
+      edges: [],
+      revision: 7,
+      viewport: null,
+    } as unknown as Awaited<ReturnType<typeof getFreezoneCanvas>>);
+
+    const hook = renderHook(() => useCanvasSync("project-a", "performance_user"));
+    await waitFor(() => expect(hook.result.current.status).toBe("ready"));
+    const hydrated = useCanvasStore.getState().nodes.find((node) => node.id === "shot-1");
+    expect(hydrated?.data).toMatchObject({
+      performances: serverNode.data.performances,
+      performanceTimelines: serverNode.data.performanceTimelines,
+    });
+
+    act(() => {
+      useCanvasStore.getState().updateNodeData("shot-1", {
+        performances: {
+          ...serverNode.data.performances,
+          "bo-b": { ...serverNode.data.performances["bo-b"], mouth: 0.9 },
+        },
+        performanceTimelines: {
+          ...serverNode.data.performanceTimelines,
+          "bo-b": [
+            ...serverNode.data.performanceTimelines["bo-b"],
+            { timeMs: 2400, performance: { ...serverNode.data.performances["bo-b"], mouth: 0.9 } },
+          ],
+        },
+      });
+    });
+    await waitFor(() => expect(putFreezoneCanvas).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2]).toMatchObject({
+      base_revision: 7,
+      save_source: "autosave",
+      nodes: [expect.objectContaining({
+        id: "shot-1",
+        data: expect.objectContaining({
+          performances: expect.objectContaining({ "lin-a": expect.any(Object), "bo-b": expect.objectContaining({ mouth: 0.9 }) }),
+          performanceTimelines: expect.objectContaining({
+            "lin-a": expect.any(Array),
+            "bo-b": expect.arrayContaining([expect.objectContaining({ timeMs: 2400 })]),
+          }),
+        }),
+      })],
+    });
+    hook.unmount();
+  });
+
   it("aborts the in-flight hydrate request after the release grace when unmounted", async () => {
     vi.useFakeTimers();
     vi.mocked(getFreezoneCanvas).mockImplementation(

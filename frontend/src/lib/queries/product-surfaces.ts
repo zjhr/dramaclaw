@@ -30,7 +30,9 @@ export function useProductSurfaces(enabled = true) {
     enabled,
     staleTime: 60_000,
     refetchOnWindowFocus: true,
-    retry: false,
+    // 瞬时失败(窗口聚焦重取被取消/网络抖动)不要立刻锁面板：允许几次重试，
+    // 且已有上次成功状态时保留旧值（门禁改为 error && !data 才拦截）。
+    retry: 2,
   });
 }
 

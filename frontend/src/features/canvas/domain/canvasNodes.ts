@@ -57,6 +57,21 @@ export type ImageSize = (typeof IMAGE_SIZES)[number];
 /** Image quality value advertised by the selected media model. */
 export type ImageQuality = string;
 
+export interface CharacterPerformance {
+  valence: number;
+  arousal: number;
+  brows: number;
+  eyes: number;
+  mouth: number;
+  jaw: number;
+}
+
+/** 单镜头、单身份的一帧表演状态；时间单位为毫秒。 */
+export interface CharacterPerformanceKeyframe {
+  timeMs: number;
+  performance: CharacterPerformance;
+}
+
 export interface NodeDisplayData {
   displayName?: string;
   /**
@@ -182,6 +197,10 @@ export interface VideoNodeData extends NodeDisplayData {
   referenceOrder?: string[];
   /** 这一镜选用的虾塘身份，顺序就是送图和送声线的顺序。 */
   identityCalls?: { characterName: string; identityId: string }[];
+  /** 本镜按身份保存的表演控制；与身份基础外观字段分开。 */
+  performances?: Record<string, CharacterPerformance>;
+  /** 本镜按身份保存的视频表演关键帧；旧画布缺失时回退到 performances。 */
+  performanceTimelines?: Record<string, CharacterPerformanceKeyframe[]>;
   /** Uploaded document reference for all-reference generation. */
   referenceFileUrl?: string | null;
   referenceFileName?: string | null;
@@ -392,6 +411,9 @@ export interface ImageGenNodeData extends NodeImageData {
   cameraSelection?: ImageGenCameraSelection | null;
   /** User-uploaded reference image, fed into the generation request. */
   referenceImageUrl?: string | null;
+  /** 静帧表演必须指向具体视频镜头和该镜头内的身份。 */
+  performanceShotNodeId?: string | null;
+  performanceIdentityId?: string | null;
   /** Present/mainline workflow nodes can auto-commit their generated image to slot_target. */
   autoCommitOnGenerate?: boolean;
   /** Local-only marks/annotations placed on upstream image. */

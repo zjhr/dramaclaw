@@ -241,7 +241,9 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
         speaker_label = re.split(r"[：:]", line, maxsplit=1)[0].strip()
         speaker_label = re.sub(r"[（(].*?[）)]", "", speaker_label).strip()
 
-        colon_count = line.count("：") + line.count(":")
+        # 引号内的冒号是消息内容（如手机屏幕弹出的字），不是第二个说话人。
+        colon_probe = re.sub(r"「[^」]*」|【[^】]*】|《[^》]*》", "", line)
+        colon_count = colon_probe.count("：") + colon_probe.count(":")
         if colon_count >= 2:
             multi_speaker_line_count += 1
         if speaker_label in AMBIGUOUS_SPEAKERS:

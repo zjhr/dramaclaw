@@ -33,6 +33,7 @@ import {
   type ImageGenCameraSelection,
   type ImageGenCount,
   type ImageGenNodeData,
+  type VideoNodeData,
   type ImageQuality,
   type ImageSize,
   type StyleNodeData,
@@ -97,6 +98,8 @@ import {
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
+import { buildImagePerformancePrompt } from '@/features/canvas/domain/characterPerformance';
+import type { IdentityCallSelection } from '@/features/canvas/domain/identityCallPlan';
 import { ReferenceValidationDialog, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from './shared/ReferenceValidationDialog';
 import { useShallow } from 'zustand/react/shallow';
 import { getFreezoneCanvasMetadata } from '@/features/freezone/canvasMetadataContext';
@@ -328,6 +331,31 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const deleteNodeAction = useCanvasStore((state) => state.deleteNode);
   const addNodeAction = useCanvasStore((state) => state.addNode);
   const addEdgeAction = useCanvasStore((state) => state.addEdge);
+  const performanceShots = useCanvasStore(useShallow((state) => state.nodes
+    .filter((node) => node.type === CANVAS_NODE_TYPES.video))) as Array<{
+      id: string;
+      data: VideoNodeData;
+    }>;
+  const performanceShotGroups = performanceShots.map((shot, index) => ({
+    shot,
+    name: shot.data.displayName?.trim() || t('node.performance.videoShotNumber', { number: index + 1 }),
+    identities: (Array.isArray(shot.data.identityCalls) ? shot.data.identityCalls : [])
+      .filter((item): item is IdentityCallSelection => Boolean(
+        item && typeof item.identityId === 'string' && typeof item.characterName === 'string',
+      )),
+  }));
+  const performanceShotGroup = performanceShotGroups.find((group) => group.shot.id === data.performanceShotNodeId);
+  const performanceShot = performanceShotGroup?.shot;
+  const performanceIdentities = performanceShotGroup?.identities ?? [];
+  const selectedPerformanceIdentity = performanceIdentities.find((item) => item.identityId === data.performanceIdentityId);
+  const performanceBindingOptions = performanceShotGroups.flatMap((group) => group.identities.map((identity) => ({
+    shotId: group.shot.id,
+    identity,
+    optionValue: JSON.stringify([group.shot.id, identity.identityId]),
+  })));
+  const selectedPerformanceOptionValue = performanceShot && selectedPerformanceIdentity
+    ? JSON.stringify([performanceShot.id, selectedPerformanceIdentity.identityId])
+    : '';
 
   // Local prompt buffer keeps the textarea's React `value` in lockstep with
   // user input even during IME composition (中文输入法). Committing to the
@@ -947,7 +975,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
 
   const hasGeneratedResult = Boolean(data.imageUrl);
   // Natural pixel size of the displayed image, mirrored from data when present
-  // (persisted by the onLoad handler below) and refreshed on every <img> load so
+  // (persisted by the onLoad handler below) and refreshed on every image-element load so
   // the resolution badge shows even for nodes whose size already matched (those
   // skip the persist branch). Lets us render a top-right resolution chip like the
   // video node.
@@ -1231,11 +1259,16 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       : [upstreamTextJoined, ownPrompt]
         .filter((s) => s.length > 0)
         .join('\n\n');
+    const requestPrompt = buildImagePerformancePrompt(
+      effectivePrompt,
+      selectedPerformanceIdentity,
+      performanceShot?.data.performances,
+    );
     setReferenceErrors([]);
     setReferenceErrorsOpen(false);
     const referenceSnapshot = [...upstreamNodes, ...useCanvasStore.getState().nodes.filter((node) => node.id === id)];
     const genPayload = {
-      prompt: effectivePrompt,
+      prompt: requestPrompt,
       // 后端只接受固定的几个比例；节点上的 aspectRatio 可能是图片自然尺寸约分出的
       // 非标准值（如 "43:24"）或 "auto"，提交前吸附到最接近的合法比例（auto→1:1）。
       aspectRatio: effectiveAspectRatio as typeof aspectRatio,
@@ -1843,7 +1876,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         ) : isGenerating && historyPreviewUrl ? (
           // 生成进行中，但用户点了历史记录预览：临时显示那张历史图，新图仍在
           // 后台生成。顶部 pill 提示「生成中」，右上「返回」回到 loading 遮罩。
-          // 用原生 <img>（非 CanvasNodeImage）避免 onLoad 按预览图改节点尺寸。
+          // 用原生图片元素（非 CanvasNodeImage）避免 onLoad 按预览图改节点尺寸。
           <div className="relative h-full w-full">
             <img
               src={resolveImageDisplayUrl(historyPreviewUrl)}
@@ -2304,6 +2337,85 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               onClose={() => setPromptGalleryOpen(false)}
             />
           )}
+
+          <details className="group shrink-0 border-t border-white/10 px-3 py-2 text-xs text-text-dark">
+            <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-text-dark/75 hover:text-text-dark [&::-webkit-details-marker]:hidden">
+              <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
+              <span>{t('node.performance.imageBindingTitle')}</span>
+              <span className="text-text-dark/45">{t('node.performance.optional')}</span>
+            </summary>
+            <div className="flex flex-col gap-2 pb-1 pt-2">
+              <p className="text-text-dark/60">{t('node.performance.imageBindingDescription')}</p>
+              {performanceShots.length === 0 ? (
+                <p className="text-text-dark/60" role="status">{t('node.performance.noVideoShots')}</p>
+              ) : (
+                <label className="flex items-center gap-2">
+                  <span>{t('node.performance.imageBindingCharacter')}</span>
+                  <select
+                    className="tap-field min-w-0 flex-1"
+                    aria-label={t('node.performance.chooseReferencedCharacter')}
+                    value={selectedPerformanceOptionValue}
+                    disabled={performanceBindingOptions.length === 0}
+                    onChange={(event) => {
+                      const binding = performanceBindingOptions.find((option) => option.optionValue === event.currentTarget.value);
+                      if (!binding) return;
+                      updateNodeData(id, {
+                        performanceShotNodeId: binding.shotId,
+                        performanceIdentityId: binding.identity.identityId,
+                      });
+                    }}
+                  >
+                    <option value="">{t('node.performance.chooseReferencedCharacter')}</option>
+                    {performanceShotGroups.map((group) => (
+                      <optgroup key={group.shot.id} label={group.name}>
+                        {group.identities.length > 0 ? group.identities.map((identity) => (
+                          <option
+                            key={`${group.shot.id}:${identity.identityId}`}
+                            value={JSON.stringify([group.shot.id, identity.identityId])}
+                          >
+                            {identity.characterName}
+                          </option>
+                        )) : (
+                          <option disabled value={`empty:${group.shot.id}`}>
+                            {t('node.performance.noCharactersInShot')}
+                          </option>
+                        )}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {performanceShots.length > 0 && performanceBindingOptions.length === 0 ? (
+                <p className="text-text-dark/60" role="status">{t('node.performance.noShotIdentities')}</p>
+              ) : null}
+              {performanceBindingOptions.length > 0 && !selectedPerformanceIdentity ? (
+                <p className="text-text-dark/60" role="status">{t('node.performance.chooseCharacterHelp')}</p>
+              ) : null}
+              {selectedPerformanceIdentity && performanceShot ? (
+                <div className="flex flex-col gap-2 rounded-md border border-white/10 p-2" role="status" aria-live="polite">
+                  <p>
+                    {t('node.performance.imageBindingSelected', {
+                      shot: performanceShotGroup?.name ?? '',
+                      character: selectedPerformanceIdentity.characterName,
+                    })}
+                  </p>
+                  <p className="text-text-dark/60">{t('node.performance.imageBindingEditElsewhere')}</p>
+                  <button
+                    type="button"
+                    className="tap-button self-start"
+                    aria-label={t('node.performance.clearImageBinding')}
+                    onClick={() => updateNodeData(id, {
+                      performanceShotNodeId: null,
+                      performanceIdentityId: null,
+                    })}
+                  >
+                    <X className="size-3.5" aria-hidden="true" />
+                    <span>{t('node.performance.clearImageBinding')}</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </details>
 
           <PromptMentionEditor
             ref={promptEditorRef}

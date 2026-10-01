@@ -2165,6 +2165,63 @@ export async function fetchFreezoneVideoReshootSuggestPromptResult(
   );
 }
 
+/**
+ * 画布视频节点「向后延长」的可选发展方向。
+ *
+ * 与后端 `novelvideo/freezone/continue_prompt.py` 的 `VIDEO_CONTINUE_DIRECTIONS`
+ * 一一对应：后端拿这个 id 去挑创作指令，id 对不上会直接 422，不做静默回退。
+ */
+export type FreezoneVideoContinueDirection =
+  | "auto"
+  | "plot"
+  | "emotion"
+  | "action"
+  | "camera"
+  | "environment"
+  | "dialogue"
+  | "ending";
+
+/**
+ * 延长提示词推荐：抽整片采样帧 + 片尾锚点帧，按目标时长与方向写一段续写提示词。
+ *
+ * 与重拍推荐的差别在抽帧口径：重拍给的是选中区间的首尾两帧（只描述这一段怎么演），
+ * 延长必须让模型先知道这条片子在演什么，所以喂的是整片采样帧加片尾那一帧。
+ */
+export interface FreezoneVideoContinueSuggestPromptPayload extends FreezoneNodeContext {
+  sourceUrl: string;
+  endSeconds: number;
+  durationSeconds: number;
+  direction: FreezoneVideoContinueDirection;
+}
+
+export async function submitFreezoneVideoContinueSuggestPrompt(
+  project: string,
+  payload: FreezoneVideoContinueSuggestPromptPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/continue/suggest-prompt`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        end_seconds: payload.endSeconds,
+        duration_seconds: payload.durationSeconds,
+        direction: payload.direction,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+export async function fetchFreezoneVideoContinueSuggestPromptResult(
+  project: string,
+  jobId: string,
+): Promise<FreezoneReversePromptResult> {
+  return await apiCall<FreezoneReversePromptResult>(
+    `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_video_continue_suggest_prompt/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
 // /freezone/audio/references + /freezone/audio/speech -------------------- //
 
 /**

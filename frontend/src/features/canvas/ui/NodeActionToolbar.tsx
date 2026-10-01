@@ -118,16 +118,18 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneAudioSeparateResult,
   fetchFreezoneJobResult,
+  fetchFreezoneVideoContinueSuggestPromptResult,
   fetchFreezoneVideoReshootSuggestPromptResult,
+  submitFreezoneVideoContinueSuggestPrompt,
   submitFreezoneVideoReshootSuggestPrompt,
   submitFreezoneAnalyzeVideoStory,
   submitFreezoneAudioSeparate,
   submitFreezoneVideoGreybox,
   submitFreezoneVideoCompose,
   submitFreezoneVideoKeyframes,
-
   submitFreezoneVideoReshoot,
   uploadFreezoneImage,
+  type FreezoneVideoContinueDirection,
 } from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { captureVideoFrameBlob } from "@/features/canvas/application/videoFrameCapture";
@@ -229,6 +231,25 @@ function continueAspectRatio(data: {
 
 /** 延长段开头丢掉的秒数。首帧就是原片锚点，留着会在接缝停住。 */
 const EXTEND_JOIN_SKIP_SECONDS = 0.1;
+
+/**
+ * 「向后延长」可选的发展方向。
+ *
+ * id 是后端契约：`novelvideo/freezone/continue_prompt.py` 的
+ * `VIDEO_CONTINUE_DIRECTIONS` 按 id 挑创作指令，对不上会直接 422。这里显示名走
+ * i18n（`nodeToolbar.video.continueDirection.<id>`），所以改 id 要同时改后端、
+ * ops.ts 的类型和三个词条文件。
+ */
+const CONTINUE_DIRECTION_OPTIONS: FreezoneVideoContinueDirection[] = [
+  "auto",
+  "plot",
+  "emotion",
+  "action",
+  "camera",
+  "environment",
+  "dialogue",
+  "ending",
+];
 
 function probeVideoDuration(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -689,12 +710,80 @@ export const NodeActionToolbar = memo(
           : { start: 0, end: reshootDurationSeconds ?? 0 },
       );
     }, [reshootDurationSeconds]);
+    // 模型目录里的时长边界。重拍与「向后延长」共用同一个模型的同一条限制，所以
+    // 提前算一次：拿不到目录（isFallback / 还没加载）时给 null，调用方按「不拦」
+    // 处理——后端 `normalize_video_duration_for_backend` 还会夹一次。
+    const reshootModelId =
+      typeof node.data.model === "string" ? node.data.model : "";
+    const reshootModelMaxDuration = useMemo(() => {
+      if (!reshootModelId) return null;
+      const match = reshootModels.models.find(
+        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+      );
+      const limit = match?.maxDuration;
+      return typeof limit === "number" && limit > 0 ? limit : null;
+    }, [reshootModels.models, reshootModelId]);
+    const reshootModelMinDuration = useMemo(() => {
+      if (!reshootModelId) return null;
+      const match = reshootModels.models.find(
+        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+      );
+      const limit = match?.minDuration;
+      return typeof limit === "number" && limit > 0 ? limit : null;
+    }, [reshootModels.models, reshootModelId]);
+
     // 「向后延长」：从片尾接着往下演，节点上放的是原片接到延长段之后的整段成片。
-    // 交互上只要两件事——选生成多久、写一句要演什么。
+    // 面板问三件事——生成多久、往哪个方向演、写什么（或让它替我们写）。
     const [showContinuePanel, setShowContinuePanel] = useState(false);
-    const [continueDurationSeconds, setContinueDurationSeconds] = useState(5);
+    const [continueDurationDraft, setContinueDurationDraft] = useState("5");
+    const [continueDirection, setContinueDirection] =
+      useState<FreezoneVideoContinueDirection>("auto");
     const [continuePrompt, setContinuePrompt] = useState("");
+    // 当前框里这段提示词是**按什么设定**推出来的（手动写的记 null）。改时长或改
+    // 方向之后这段就名不副实了，用它判断该不该提醒用户重推一次。
+    const [continuePromptSource, setContinuePromptSource] = useState<{
+      durationSeconds: number;
+      direction: FreezoneVideoContinueDirection;
+    } | null>(null);
     const [isContinuing, setIsContinuing] = useState(false);
+    const applyContinueEnhancedPrompt = useCallback((text: string) => {
+      setContinuePrompt(text);
+    }, []);
+    const continuePromptEnhance = usePromptEnhance(
+      node.id,
+      applyContinueEnhancedPrompt,
+    );
+
+    // 「继续生成」生成多久：与重拍用同一份模型时长边界（同一个模型的同一个限制），
+    // 目录读不到时给 4~12 秒的保守区间——后端还会再判一次，这里只保证输入有范围。
+    const CONTINUE_FALLBACK_MIN_SECONDS = 4;
+    const CONTINUE_FALLBACK_MAX_SECONDS = 12;
+    const continueMinSeconds = reshootModelMinDuration ?? CONTINUE_FALLBACK_MIN_SECONDS;
+    const continueMaxSeconds = Math.max(
+      continueMinSeconds,
+      reshootModelMaxDuration ?? CONTINUE_FALLBACK_MAX_SECONDS,
+    );
+    /**
+     * 自定义时长：输入框里的**文字**是唯一可编辑来源，秒数从它推出来。
+     *
+     * 不另存一个数字 state，否则滑杆、输入框、提交三处各有一份值，用户改到一半
+     * 时会悄悄漂移。非法输入（空、非整数、越出模型上下限）时 `continueDurationSeconds`
+     * 退回下限，而提交与推荐都被禁用，那条回退路径不会真的发到网络上。
+     */
+    const continueDurationNumber = Number(continueDurationDraft);
+    const continueDurationValid =
+      Number.isInteger(continueDurationNumber) &&
+      continueDurationNumber >= continueMinSeconds &&
+      continueDurationNumber <= continueMaxSeconds;
+    const continueDurationSeconds = continueDurationValid
+      ? continueDurationNumber
+      : continueMinSeconds;
+    // 目标时长 / 方向会写进推荐的任务描述，所以改了它们就意味着框里那段提示词
+    // 已经对不上了。提示条据此提醒用户重推，而不是悄悄按旧提示词生成。
+    const continuePromptStale =
+      continuePromptSource !== null &&
+      (continuePromptSource.durationSeconds !== continueDurationSeconds ||
+        continuePromptSource.direction !== continueDirection);
 
     /**
      * 「继续生成」的锚点区间：片尾往里收 0.1 秒的一小段。
@@ -713,12 +802,15 @@ export const NodeActionToolbar = memo(
       return end > start ? { start, end } : null;
     }, [reshootDurationSeconds]);
 
-    // 自动写提示词：面板一打开就跑一次「推荐」，把框填好。用户看到的是「已经
-    // 写好的下一步」，而不是一个空框——空框等于把「该演什么」这个问题又丢回给
-    // 用户。接的还是重拍那条推荐链路（视觉模型看锚点两帧 + 时长后写一句）。
     const [isSuggestingContinuePrompt, setIsSuggestingContinuePrompt] =
       useState(false);
 
+    /**
+     * 推荐：视觉模型看整片采样帧 + 片尾锚点帧，按设定的时长与方向写下一段。
+     *
+     * 不复用重拍那条推荐（它描述的是选中区间内怎么演），也不自动提交——只填框，
+     * 用户确认后再发。
+     */
     const handleSuggestContinuePrompt = useCallback(async () => {
       if (!isVideoNode(node)) return;
       const videoUrl = reshootVideoUrl;
@@ -727,30 +819,35 @@ export const NodeActionToolbar = memo(
         !videoUrl ||
         !projectId ||
         continueAnchor === null ||
+        !continueDurationValid ||
         isSuggestingContinuePrompt
       ) {
         return;
       }
-      const { start, end } = continueAnchor;
       setIsSuggestingContinuePrompt(true);
       try {
-        const ref = await submitFreezoneVideoReshootSuggestPrompt(projectId, {
+        const ref = await submitFreezoneVideoContinueSuggestPrompt(projectId, {
           sourceUrl: videoUrl,
-          startSeconds: start,
-          endSeconds: end,
+          endSeconds: continueAnchor.end,
+          durationSeconds: continueDurationSeconds,
+          direction: continueDirection,
           canvasId: readUrl().canvas ?? undefined,
           nodeId: node.id,
         });
         await awaitTaskCompletion(ref.task_key, projectId, {
           taskType: ref.task_type,
         });
-        const { prompt } = await fetchFreezoneVideoReshootSuggestPromptResult(
+        const { prompt } = await fetchFreezoneVideoContinueSuggestPromptResult(
           projectId,
           ref.job_id,
         );
         const trimmed = (prompt ?? "").trim();
         if (!trimmed) throw new Error(t("node.reshoot.suggestEmpty"));
         setContinuePrompt(trimmed);
+        setContinuePromptSource({
+          durationSeconds: continueDurationSeconds,
+          direction: continueDirection,
+        });
       } catch (error) {
         if (isTaskPollTimeoutError(error)) {
           toast.error(t("node.reshoot.suggestDetached"));
@@ -763,6 +860,9 @@ export const NodeActionToolbar = memo(
     }, [
       awaitTaskCompletion,
       continueAnchor,
+      continueDirection,
+      continueDurationSeconds,
+      continueDurationValid,
       isSuggestingContinuePrompt,
       node,
       reshootVideoUrl,
@@ -774,6 +874,9 @@ export const NodeActionToolbar = memo(
       const videoUrl = reshootVideoUrl;
       if (!videoUrl || continueAnchor === null || isContinuing) return;
       if (continuePrompt.trim().length === 0) return;
+      // 时长写死在输入框里，越界时后端会静默夹到模型上下限，用户看到的成片长度
+      // 就不是自己填的那个数。与其事后发现，不如在这里就当没填。
+      if (!continueDurationValid) return;
       const projectId = readUrl().project;
       if (!projectId) {
         console.error("[video-continue] no project in URL");
@@ -929,6 +1032,7 @@ export const NodeActionToolbar = memo(
       awaitTaskCompletion,
       continueAnchor,
       continueDurationSeconds,
+      continueDurationValid,
       continuePrompt,
       findNodePosition,
       isContinuing,
@@ -944,44 +1048,14 @@ export const NodeActionToolbar = memo(
       reshootDurationSeconds === null ||
       !(reshootRange.end > reshootRange.start) ||
       reshootRange.end > reshootDurationSeconds;
-    // 模型 maxDuration：区间超上限时后端会拒（不静默截断），前端提前拦并报出
-    // 具体数字。拿不到目录（isFallback）就不拦——后端那层已经有兜底。
-    const reshootModelId =
-      typeof node.data.model === "string" ? node.data.model : "";
-    const reshootModelMaxDuration = useMemo(() => {
-      if (!reshootModelId) return null;
-      const match = reshootModels.models.find(
-        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
-      );
-      const limit = match?.maxDuration;
-      return typeof limit === "number" && limit > 0 ? limit : null;
-    }, [reshootModels.models, reshootModelId]);
+    // `reshootModelId` / 时长上下限在本文件靠前处已按模型目录算好（重拍与延长共用）。
     const reshootOverMaxDuration =
       reshootModelMaxDuration !== null &&
       reshootRange.end - reshootRange.start > reshootModelMaxDuration;
-    // 模型 minDuration：多数模型的 seconds 有硬下限（agnes/seedance/MiniMax 都是
-    // 4s），区间短于下限时上游直接 400。生成段时长不可能小于该下限，所以提前拦。
-    const reshootModelMinDuration = useMemo(() => {
-      if (!reshootModelId) return null;
-      const match = reshootModels.models.find(
-        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
-      );
-      const limit = match?.minDuration;
-      return typeof limit === "number" && limit > 0 ? limit : null;
-    }, [reshootModels.models, reshootModelId]);
     const reshootUnderMinDuration =
       reshootModelMinDuration !== null &&
       reshootRange.end - reshootRange.start < reshootModelMinDuration;
 
-    // 「继续生成」生成多久：与重拍用同一份模型时长边界（同一个模型的同一个限制），
-    // 目录读不到时给 4~12 秒的保守区间——后端还会再判一次，这里只保证滑杆有范围。
-    const CONTINUE_FALLBACK_MIN_SECONDS = 4;
-    const CONTINUE_FALLBACK_MAX_SECONDS = 12;
-    const continueMinSeconds = reshootModelMinDuration ?? CONTINUE_FALLBACK_MIN_SECONDS;
-    const continueMaxSeconds = Math.max(
-      continueMinSeconds,
-      reshootModelMaxDuration ?? CONTINUE_FALLBACK_MAX_SECONDS,
-    );
     // 首尾帧锚定是片段重拍唯一的生成路径：模型没声明 first_last_frame 就没得可跑。
     // 目录没加载出来（找不到匹配项）时不拦——后端有同一道校验兜底，别在这里
     // 因为列表还没到就把入口锁死。
@@ -2926,6 +3000,18 @@ export const NodeActionToolbar = memo(
                         }
                         // 打开面板只开面板：**不**自动跑推荐。推荐要花一次视觉模型
                         // 调用，用户可能只想自己写一句；要推荐就点面板里的按钮。
+                        // 打开那一下把时长夹回模型范围：默认值 5 秒对 min=6 的模型
+                        // 是越界的，面板不该一开就摆着一个必然不能提交的红框。
+                        if (!showContinuePanel && !continueDurationValid) {
+                          setContinueDurationDraft(
+                            String(
+                              Math.min(
+                                Math.max(5, continueMinSeconds),
+                                continueMaxSeconds,
+                              ),
+                            ),
+                          );
+                        }
                         setShowContinuePanel((open) => !open);
                       }}
                     >
@@ -3434,9 +3520,12 @@ export const NodeActionToolbar = memo(
               </UiChipButton>
             )}
           </UiPanel>
-          {/* 继续生成：只问两件事——生成多久、要演什么。提交后直接出片。 */}
+          {/* 继续生成：问三件事——生成多久、往哪个方向演、写什么（或让它替我们写）。
+              提交后直接出片。 */}
           {isVideoNode(node) && showContinuePanel && (
-            <UiPanel className="nodrag mt-1.5 w-full min-w-[280px] animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-3 py-2.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none">
+            <UiPanel className="nodrag mt-1.5 w-full min-w-[320px] animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-3 py-2.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none">
+              {/* 时长：滑杆给常用档，直接输入给精确值——两条路写同一个 draft，
+                  所以自定义秒数和滑杆永远不会各说各话。 */}
               <div className="flex items-center gap-2">
                 <span className="shrink-0 text-[11px] text-text-dim">
                   {t("nodeToolbar.video.continueDurationLabel")}
@@ -3449,57 +3538,167 @@ export const NodeActionToolbar = memo(
                   value={continueDurationSeconds}
                   disabled={isContinuing}
                   onChange={(event) =>
-                    setContinueDurationSeconds(Number(event.target.value))
+                    setContinueDurationDraft(event.target.value)
                   }
                   onClick={(event) => event.stopPropagation()}
                   className="nodrag h-1.5 min-w-0 flex-1 cursor-pointer accent-cyan-300"
                   aria-label={t("nodeToolbar.video.continueDurationLabel")}
                 />
-                <span className="shrink-0 tabular-nums text-[12px] text-text-main">
-                  {t("nodeToolbar.video.continueSeconds", {
-                    count: continueDurationSeconds,
-                  })}
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={continueMinSeconds}
+                  max={continueMaxSeconds}
+                  step={1}
+                  value={continueDurationDraft}
+                  disabled={isContinuing}
+                  onChange={(event) =>
+                    setContinueDurationDraft(event.target.value)
+                  }
+                  onClick={(event) => event.stopPropagation()}
+                  aria-label={t("nodeToolbar.video.continueDurationInput")}
+                  data-testid="video-continue-duration-input"
+                  className={`nodrag w-[52px] shrink-0 rounded-md border bg-white/5 px-1.5 py-0.5 text-right text-[12px] tabular-nums text-text-main outline-none focus:border-[rgb(var(--accent-rgb)/0.6)] ${
+                    continueDurationValid
+                      ? "border-white/10"
+                      : "border-rose-300/60"
+                  }`}
+                />
+                <span className="shrink-0 text-[12px] text-text-main">
+                  {t("nodeToolbar.video.continueSecondsUnit")}
                 </span>
+              </div>
+              {/* 发展方向：推荐任务描述里的一句话，也是这段戏要往哪走的开关。 */}
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <span className="mr-0.5 shrink-0 text-[11px] text-text-dim">
+                  {t("nodeToolbar.video.continueDirectionLabel")}
+                </span>
+                {CONTINUE_DIRECTION_OPTIONS.map((option) => {
+                  const active = option === continueDirection;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={active}
+                      disabled={isContinuing}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setContinueDirection(option);
+                      }}
+                      className={`rounded-full border px-2 py-[2px] text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        active
+                          ? "border-cyan-300/60 bg-cyan-300/15 text-text-main"
+                          : "border-white/12 bg-white/[0.04] text-text-dim hover:border-white/25 hover:bg-white/[0.08]"
+                      }`}
+                      data-testid={`video-continue-direction-${option}`}
+                    >
+                      {t(`nodeToolbar.video.continueDirection.${option}`)}
+                    </button>
+                  );
+                })}
               </div>
               <textarea
                 value={continuePrompt}
-                onChange={(event) => setContinuePrompt(event.target.value)}
+                onChange={(event) => {
+                  setContinuePrompt(event.target.value);
+                  // 手动改过就不再属于任何一次推荐，别再提示「设定已变」。
+                  setContinuePromptSource(null);
+                }}
                 onClick={(event) => event.stopPropagation()}
                 rows={2}
                 placeholder={t("nodeToolbar.video.continuePromptPlaceholder")}
                 className="nodrag mt-2 w-full resize-y rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] leading-relaxed text-text-main outline-none placeholder:text-text-dim focus:border-[rgb(var(--accent-rgb)/0.6)]"
               />
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {/* 推荐：按当前时长与方向重写整段提示词。 */}
+                <button
+                  type="button"
+                  disabled={
+                    isSuggestingContinuePrompt ||
+                    isContinuing ||
+                    !continueDurationValid ||
+                    reshootDurationSeconds === null
+                  }
+                  title={t("nodeToolbar.video.continueSuggest")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleSuggestContinuePrompt();
+                  }}
+                  className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="video-continue-suggest"
+                >
+                  {isSuggestingContinuePrompt ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                  {isSuggestingContinuePrompt
+                    ? t("nodeToolbar.video.reshootPromptSuggestRunning")
+                    : t("nodeToolbar.video.continueSuggest")}
+                </button>
+                {/* 优化：把用户写的那句想法展开成更细的视频提示词，沿用重拍面板
+                    那套方言/力度弹窗，回填同一个输入框。 */}
+                <button
+                  type="button"
+                  disabled={
+                    continuePromptEnhance.busy ||
+                    isContinuing ||
+                    continuePrompt.trim().length === 0
+                  }
+                  title={t("nodeToolbar.video.continuePromptEnhance")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    continuePromptEnhance.setOpen(true);
+                  }}
+                  className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="video-continue-enhance"
+                >
+                  {continuePromptEnhance.busy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="h-3 w-3" />
+                  )}
+                  {continuePromptEnhance.busy
+                    ? t("nodeToolbar.video.continuePromptEnhanceRunning")
+                    : t("nodeToolbar.video.continuePromptEnhance")}
+                </button>
+              </div>
+              <EnhancePromptDialog
+                open={continuePromptEnhance.open}
+                onOpenChange={continuePromptEnhance.setOpen}
+                dialects={VIDEO_PROMPT_DIALECTS}
+                defaultDialect={dialectForVideoModel(reshootModelId)}
+                busy={continuePromptEnhance.busy}
+                onConfirm={(dialect, strength) => {
+                  void continuePromptEnhance.run(
+                    continuePrompt,
+                    dialect,
+                    strength,
+                    // 时长与方向一并交给改写：框里那句想法往往只有几个字，
+                    // 不给这两条约束，扩写出来的段落会和实际要生成的那段对不上。
+                    t("nodeToolbar.video.continueEnhanceGuidance", {
+                      seconds: continueDurationSeconds,
+                      direction: t(
+                        `nodeToolbar.video.continueDirection.${continueDirection}`,
+                      ),
+                    }),
+                  );
+                }}
+              />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className="text-[11px] text-text-dim">
                   {isSuggestingContinuePrompt
                     ? t("nodeToolbar.video.reshootPromptSuggestRunning")
-                    : t("nodeToolbar.video.continueHint")}
+                    : !continueDurationValid
+                      ? t("nodeToolbar.video.continueDurationOutOfRange", {
+                          min: continueMinSeconds,
+                          max: continueMaxSeconds,
+                        })
+                      : continuePromptStale
+                        ? t("nodeToolbar.video.continuePromptStale")
+                        : t("nodeToolbar.video.continueHint")}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    disabled={
-                      isSuggestingContinuePrompt ||
-                      isContinuing ||
-                      reshootDurationSeconds === null
-                    }
-                    title={t("nodeToolbar.video.reshootPromptSuggest")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleSuggestContinuePrompt();
-                    }}
-                    className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                    data-testid="video-continue-suggest"
-                  >
-                    {isSuggestingContinuePrompt ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-3 w-3" />
-                    )}
-                    {isSuggestingContinuePrompt
-                      ? t("nodeToolbar.video.reshootPromptSuggestRunning")
-                      : t("nodeToolbar.video.reshootPromptSuggest")}
-                  </button>
                   <button
                     type="button"
                     disabled={isContinuing}
@@ -3513,7 +3712,11 @@ export const NodeActionToolbar = memo(
                   </button>
                   <button
                     type="button"
-                    disabled={isContinuing || continuePrompt.trim().length === 0}
+                    disabled={
+                      isContinuing ||
+                      !continueDurationValid ||
+                      continuePrompt.trim().length === 0
+                    }
                     onClick={(event) => {
                       event.stopPropagation();
                       void handleVideoContinue();

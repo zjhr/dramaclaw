@@ -38,6 +38,7 @@ DEFAULT_TEXT_MODEL_BY_ENV = {
     "STYLE_ANALYZER_MODEL": "DC-style-analyzer-LLM",
     "CONTENT_REWRITER_MODEL": "DC-content-rewriter-LLM",
     "SCREENPLAY_NORMALIZER_MODEL": "DC-screenplay-normalizer-LLM",
+    "MANUSCRIPT_REPAIR_MODEL": "DC-cognee-LLM",
     "EPISODE_SCENE_RECONCILE_MODEL": "DC-episode-scene-reconciler-LLM",
     "NARRATED_SCENE_ASSET_MODEL": "DC-narrated-scene-asset-planner-LLM",
     "STAGING_PROP_MODEL": "DC-staging-prop-planner-LLM",

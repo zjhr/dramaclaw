@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { RefreshCw } from "lucide-react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  attemptAutomaticChunkReload,
+  forceChunkReload,
+  navigateToProjectList,
+} from "@/lib/chunk-load-recovery";
 
 export function AppUpdateRequired() {
   const { t } = useTranslation();
+
+  useEffect(() => {
+    if (!attemptAutomaticChunkReload()) navigateToProjectList();
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-background/92 px-6 text-foreground backdrop-blur-sm">
@@ -18,13 +28,22 @@ export function AppUpdateRequired() {
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           {t("app.updateRequired.description")}
         </p>
-        <button
-          type="button"
-          className="mt-6 inline-flex h-10 items-center justify-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
-          onClick={() => window.location.reload()}
-        >
-          {t("app.updateRequired.refresh")}
-        </button>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          <button
+            type="button"
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-white/15 px-5 text-sm font-medium text-foreground transition hover:bg-white/[0.08]"
+            onClick={() => navigateToProjectList()}
+          >
+            {t("app.updateRequired.projects")}
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
+            onClick={forceChunkReload}
+          >
+            {t("app.updateRequired.refresh")}
+          </button>
+        </div>
       </div>
     </div>
   );

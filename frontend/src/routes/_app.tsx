@@ -249,7 +249,7 @@ function AppLayout() {
                     ease: "easeOut",
                   }}
                 >
-                  {requiredSurfaceCode && productSurfaces.error ? (
+                  {requiredSurfaceCode && productSurfaces.error && !productSurfaces.data ? (
                     <ProductSurfaceUnavailable
                       message={t("productSurface.statusUnknown")}
                       retry={() => void productSurfaces.refetch()}

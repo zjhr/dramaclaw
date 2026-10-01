@@ -28,8 +28,9 @@
     "title": "SuperTale",
     "subtitle": "Bàn làm việc tạo và commit asset của SuperTale",
     "updateRequired": {
-      "title": "App đã được cập nhật",
-      "description": "Trang này đang dùng file app đã hết hạn. Tải lại để dùng bản mới nhất.",
+      "title": "Trang chưa tải đầy đủ",
+      "description": "Một mô-đun của trang không tải được. Ứng dụng sẽ thử tải lại một lần rồi quay về danh sách dự án nếu vẫn lỗi.",
+      "projects": "Quay lại danh sách dự án",
       "refresh": "Tải lại trang"
     },
     "updateAvailable": {
@@ -2666,6 +2667,209 @@
     },
     "pastePlaceholder": "Dán nội dung truyện vào đây, tối đa 1000 ký tự",
     "startIngest": "Bắt đầu nhập",
+    "askFirst": {
+      "title": "虾导",
+      "editing": "Đang xử lý {{name}}",
+      "writingNew": "Viết bài mới",
+      "question": "Xử lý bài này trước, hay viết một bài mới?",
+      "zeroOpen": "Cuộc trò chuyện này không đọc file đã tải lên. Chọn một: tiểu thuyết, hay phim ngắn?",
+      "handleThis": "Xử lý bài này",
+      "handleBlocked": "Chuyển thành bản có thể nhập. Bản gốc được giữ lại.",
+      "handleReady": "Tiếp tục sửa bản này. Bản gốc được giữ lại.",
+      "handleNeedFile": "Hãy tải lên hoặc dán một bài trước khi xử lý.",
+      "newPiece": "Viết bài mới",
+      "newPieceDetail": "Không đọc file đã tải lên.",
+      "switchToNew": "Đổi sang viết bài mới",
+      "switchToNewDetail": "Không đọc file đã tải lên. Đoạn chat vừa rồi vẫn còn.",
+      "backToEdit": "Quay lại bài này",
+      "backToEditDetail": "Quay lại {{name}}. Bài mới vẫn còn.",
+      "handled": "Bản gốc được giữ. Có thể chuyển thành bản nhập được. Dàn ý hiện bên phải sau khi đã có chương.",
+      "novel": "Tiểu thuyết",
+      "novelDetail": "Văn xuôi theo chương, nhập như phim thuyết minh.",
+      "drama": "Phim ngắn",
+      "dramaDetail": "Viết từng cảnh, nhập như phim cao cấp.",
+      "askPremiseNovel": "Nói trong một câu tiểu thuyết này kể về gì. Chưa cần mở đầu đầy đủ.",
+      "askPremiseDrama": "Nói trong một câu phim ngắn này kể về gì. Chưa cần chia cảnh.",
+      "askLead": "Nhân vật chính tên là gì? Một cái tên là đủ.",
+      "askCountNovel": "Khoảng bao nhiêu chương? Chọn một mức, sau này vẫn đổi được.",
+      "askCountDrama": "Khoảng bao nhiêu tập? Chọn một mức, sau này vẫn đổi được.",
+      "countNovel": "{{count}} chương",
+      "countDrama": "{{count}} tập",
+      "afterCount": "Có thể chọn cách viết, hoặc chưa chọn. Xong thì viết chương 1 hoặc tập 1.",
+      "writeFirst": "Viết {{unit}} 1",
+      "writeFirstUser": "Viết {{unit}} 1 theo các mục này",
+      "writeNext": "Viết {{unit}} {{next}}",
+      "writeNextUser": "Viết {{unit}} {{next}} theo các mục này",
+      "writeNextRunning": "Đang viết {{unit}} {{next}}; xong sẽ nối vào cùng một tệp.",
+      "writeNextDone": "{{unit}} {{next}} đã viết xong, nối tiếp trong {{filename}}. Kiểm tra rồi bắt đầu nhập.",
+      "viewResultShow": "Xem nội dung",
+      "viewResultHide": "Thu gọn",
+      "qualityNotes": "Ghi chú chất lượng",
+      "unitChapter": "chương",
+      "unitEpisode": "tập",
+      "writeRunning": "Đang viết {{unit}} 1. Xong sẽ tự lưu thành tệp mới; bài đã tải lên không bị thay đổi.",
+      "writeDone": "{{unit}} 1 đã viết xong, lưu thành {{filename}}. Kiểm tra rồi bắt đầu nhập.",
+      "editTools": "Sửa bài này",
+      "skillsLabel": "Cách viết, chọn nhiều",
+      "repair": "Sửa định dạng",
+      "repairHint": "Tạo bản có thể nhập, không ghi đè bản gốc.",
+      "repairRecheckHint": "Kiểm tra lại bản làm việc đã lưu. Bản gốc được giữ, chỉ tạo lại chương không đạt kiểm tra.",
+      "repairPending": "Sửa định dạng chưa nối API tạo nội dung, nên nội dung chưa đổi. Bản gốc vẫn còn.",
+      "repairWorkingStart": "Đang gọi mô hình theo từng chương, nhiều chương cùng lúc, để không vượt quá 120 giây của cổng. Bản gốc được giữ.",
+      "repairing": "Đang gọi mô hình, vui lòng đợi.",
+      "repairProgress": "Đang chỉnh chương {{chapter}} ({{chunk}}/{{chunks}}), tổng {{total}} chương. Bản gốc được giữ.",
+      "repairDone": "Xong. Bản làm việc là {{filename}}. Bản gốc vẫn còn, có thể bắt đầu nhập.",
+      "downloadWorkingCopy": "Tải bản này",
+      "repairStillBlocked": "Đã chỉnh hết các chương, cửa định dạng vẫn chưa qua: {{summary}}",
+      "repairNeedFile": "Hãy tải lên hoặc dán một bài trước khi sửa.",
+      "repairNeedHeader": "Chương {{chapter}} chưa có đầu cảnh để nhập. Hãy chọn một mục, đặt câu hỏi, hoặc gửi một dòng của bạn.",
+      "headerChoices": "Lựa chọn đầu cảnh",
+      "headerChoiceHint": "Dùng dòng này làm đầu cảnh của chương, rồi tiếp tục.",
+      "repairHeaderAdvice": "Đầu cảnh là một dòng riêng, ví dụ “办公室 日 内”. Chọn một mục bên dưới, hoặc gửi dòng bạn muốn.",
+      "repairApplyingHeader": "Tiếp tục theo đầu cảnh bạn chọn. Bản gốc được giữ.",
+      "thinkingLabel": "Mức suy nghĩ",
+      "callDetails": "Chi tiết lần gọi",
+      "thinking": {
+        "none": "Tắt",
+        "low": "Thấp",
+        "medium": "Vừa",
+        "high": "Cao"
+      },
+      "repairStalled": "Việc sửa đã dừng vì không tiến thêm.",
+      "repairFailed": "Chương này chưa được viết lại.",
+      "hook": "Mở đầu hút",
+      "hookHint": "Chỉ đổi cách mở cảnh đầu. Các cảnh sau giữ nguyên.",
+      "wash": "Viết lại lời",
+      "washHint": "Đổi cách nói thoại. Tên và đầu cảnh giữ nguyên.",
+      "cast": "Đổi vai",
+      "castHint": "Lập bảng đối chiếu trước. Tên để trống thì giữ nguyên.",
+      "gender": "Đổi tính cách",
+      "genderHint": "Đổi giới tính người được chọn. Người không chọn giữ nguyên.",
+      "imitate": "Viết theo mạch này",
+      "imitateHint": "Một câu chuyện khác cùng cách viết, chỉ lưu khi bạn yêu cầu file mới.",
+      "actionsNeedWorkingCopy": "Hãy sửa định dạng và vượt qua kiểm tra trước khi chỉnh bản làm việc.",
+      "chooseHookStyle": "Chọn cấu trúc mở đầu",
+      "hookStyles": {
+        "default": "Chung",
+        "reversal": "Đảo chiều",
+        "contrast": "Tương phản",
+        "emotion": "Dẫn cảm xúc",
+        "burst": "Xung đột ngay",
+        "setting": "Thiết lập thế giới",
+        "rebirth": "Trùng sinh hoặc xuyên không"
+      },
+      "hookStyleHints": {
+        "default": "Mở bằng hồi hộp để nêu xung đột của chương.",
+        "reversal": "Đưa ra kết quả bất ngờ rồi tiết lộ nguyên nhân.",
+        "contrast": "Mở bằng sự đối lập về thân phận, hoàn cảnh hoặc niềm tin.",
+        "emotion": "Dùng xung đột cảm xúc cụ thể để tạo căng thẳng.",
+        "burst": "Bắt đầu bằng khủng hoảng hoặc hành động căng thẳng.",
+        "setting": "Giới thiệu thiết lập rồi cho thấy cái giá của nó.",
+        "rebirth": "Chỉ dùng bước ngoặt số phận khi bản gốc đã có yếu tố này."
+      },
+      "castWorking": "Đang phân tích nhân vật và tạo bảng đổi tên.",
+      "genderWorking": "Đang phân tích nhân vật và tạo bảng chuyển đổi giới tính.",
+      "hookWorking": "Đang viết lại phần mở đầu cảnh hoặc chương đầu.",
+      "washWorking": "Đang đổi cách diễn đạt hành động và lời thoại.",
+      "imitateWorking": "Đang tạo bản phỏng riêng.",
+      "mappingReady": "Đã tạo {{count}} dòng đối chiếu. Hãy kiểm tra trước khi áp dụng.",
+      "castMappingTitle": "Bảng đổi tên nhân vật",
+      "genderMappingTitle": "Bảng chuyển đổi giới tính",
+      "noAliases": "Không tìm thấy bí danh",
+      "suggestedName": "Tên thay thế",
+      "suggestedAliases": "Bí danh thay thế, ngăn cách bằng dấu phẩy",
+      "convertCharacter": "Chuyển nhân vật {{gender}}",
+      "genders": {
+        "male": "nam",
+        "female": "nữ",
+        "animal": "động vật",
+        "unknown": "không rõ giới tính"
+      },
+      "applyCast": "Xác nhận và thay tên",
+      "applyGender": "Xác nhận và chuyển đổi",
+      "imitatePreviewTitle": "Kết quả phỏng",
+      "imitatePreviewHint": "Bản xem trước không thay thế bản làm việc. Lưu sẽ tạo file mới và không tự động nhập.",
+      "imitateReady": "Đã tạo bản xem trước:",
+      "adapt": "Chuyển thể thành kịch bản ngắn",
+      "adaptHint": "Đưa chương này thành kịch bản phân cảnh của {{unit}} 1; cắt nhánh phụ yếu.",
+      "adaptReady": "Đã tạo bản xem trước chuyển thể:",
+      "adaptPreviewTitle": "Kết quả chuyển thể",
+      "adaptPreviewHint": "Kịch bản phân cảnh được giữ tạm, không thay thế bản làm việc. Lưu sẽ tạo file mới và không tự động nhập.",
+      "saveImitation": "Lưu thành file mới",
+      "imitateSaved": "Đã lưu {{filename}}. Chưa bắt đầu nhập.",
+      "actionDone": "Đã cập nhật {{filename}}. File gốc vẫn được giữ.",
+      "actionDoneGeneric": "Đã xong.",
+      "actionFailed": "Chỉnh sửa chưa hoàn tất. Bản làm việc chưa bị thay thế.",
+      "rejectEdit": "Câu này không sửa được bản hiện tại. Có thể đổi cách nói, không được xóa chương, thêm tình tiết, hoặc xuất phân cảnh.",
+      "ackZero": "Chương đã viết được giữ. Phần vừa nói áp dụng cho phần sau.",
+      "ackEdit": "Đây là sửa bản làm việc. File gốc không đổi.",
+      "placeholderPremise": "Ví dụ: đêm mưa trở lại quán trà cũ, hỏi nốt câu còn bỏ dở",
+      "placeholderLead": "Ví dụ: Lâm Vãn",
+      "placeholderChat": "Nói tiếp, hoặc bảo một câu ngắn lại",
+      "send": "Gửi",
+      "outline": "Dàn ý",
+      "outlineNote": "Chỉ liệt kê chương. Nội dung vẫn nằm trong hội thoại.",
+      "pastedName": "Bản dán",
+      "untitled": "Chưa đặt tên",
+      "skills": {
+        "default": {
+          "title": "Mở đầu chung",
+          "detail": "Dùng vài kiểu móc cùng lúc khi chưa chọn được một kiểu."
+        },
+        "reversal": {
+          "title": "Lật tình tiết",
+          "detail": "Đưa một kết quả, rồi lật ngay."
+        },
+        "contrast": {
+          "title": "Tương phản",
+          "detail": "Giữ người xem bằng chỗ trước sau khác nhau."
+        },
+        "emotion": {
+          "title": "Kéo cảm xúc",
+          "detail": "Mở cảm xúc trước, rồi vào chuyện."
+        },
+        "burst": {
+          "title": "Xung đột ngay",
+          "detail": "Mở đầu bằng xung đột mạnh nhất."
+        },
+        "setting": {
+          "title": "Luật thế giới",
+          "detail": "Nói rõ luật của thế giới, rồi mới viết người."
+        },
+        "rebirth": {
+          "title": "Trùng sinh",
+          "detail": "Viết từ khoảng cách thân phận do trùng sinh hoặc xuyên không."
+        },
+        "sweet": {
+          "title": "Ngọt ngào",
+          "detail": "Ngọt là chính, ngược nhẹ làm phụ; yêu thể hiện qua chi tiết."
+        },
+        "revenge": {
+          "title": "Trả thù vả mặt",
+          "detail": "Nén rồi bùng nổ; chuỗi vả mặt gom cảm giác đã."
+        },
+        "warlord": {
+          "title": "Chiến thần con rể",
+          "detail": "Bị sỉ nhục khi giấu thân, lộ thân phận rồi vả mặt."
+        },
+        "imitate": {
+          "title": "Học cách viết",
+          "detail": "Học cách viết của bài này, nhưng viết một chuyện khác."
+        },
+        "wash": {
+          "title": "Đổi lời",
+          "detail": "Giữ ý, đổi cách nói."
+        },
+        "gender": {
+          "title": "Đổi giới tính",
+          "detail": "Đổi giới tính những người được chọn."
+        },
+        "rename": {
+          "title": "Đổi tên",
+          "detail": "Chỉ đổi tên. Tình tiết giữ nguyên."
+        }
+      }
+    },
     "saveSettings": "Lưu cài đặt",
     "settingsSaved": "Đã lưu cài đặt dự án",
     "settingsSaveFailed": "Lưu cài đặt dự án thất bại",
@@ -2759,21 +2963,19 @@
       "ruleClockTime": "Đừng nhét giờ đồng hồ vào tên địa điểm. Khi cần giờ chính xác, viết thêm một dòng riêng “Time: 11:47 PM” ngay dưới dòng đầu cảnh — địa điểm vẫn được đọc là “Seoul Subway Station” còn thời gian được chuẩn hoá thành đêm."
     },
     "sceneHeaders": {
-      "missing": "Không nhận diện được dòng đầu cảnh nào, nên hệ thống không biết mỗi cảnh bắt đầu từ đâu.",
-      "missingFix": "Hãy làm theo ví dụ phía trên: mở đầu bằng “Episode N”, rồi đặt cho mỗi phân cảnh một tiêu đề riêng gồm số cảnh, địa điểm, thời gian và INT/EXT trước phần nhân vật, hành động và lời thoại. Giữ nguyên các từ khoá tiếng Anh/tiếng Trung trong ví dụ.",
-      "repairable": "Đã nhận diện được ranh giới phân cảnh, nhưng một số tiêu đề thiếu thời gian, bối cảnh hoặc INT/EXT. Vẫn có thể nhập, phần metadata thiếu sẽ được bổ sung khi lên kế hoạch phân cảnh.",
-      "repairableFix": "Dựa theo ví dụ phía trên để bổ sung địa điểm, thời gian hoặc INT/EXT còn thiếu. Bạn cũng có thể nhập tiếp mà không cần sửa file gốc.",
-      "open": "Xem các phân cảnh của {{chapter}}",
-      "rowCount_one": "{{count}} phân cảnh",
-      "rowCount_other": "{{count}} phân cảnh",
-      "count_one": "{{count}} phân cảnh",
-      "count_other": "{{count}} phân cảnh",
+      "open": "Xem nội dung của {{chapter}}",
       "scene": "Cảnh {{number}}",
+      "unknownLocation": "Chưa ghi địa điểm",
       "characters": "Nhân vật",
       "characterSeparator": ", ",
-      "unknownLocation": "Không nhận diện được bối cảnh của phân cảnh",
-      "empty": "Chương này không có nội dung phân cảnh",
-      "unparsedBody": "Phần văn bản nằm ngoài các phân cảnh nhận diện được"
+      "empty": "Chương này chưa phân tích được cảnh nào",
+      "unparsedBody": "Phần nội dung chưa phân tích",
+      "missing": "Không nhận ra tiêu đề cảnh",
+      "missingFix": "Thêm tiêu đề cảnh ở đầu mỗi cảnh, ví dụ \"Cảnh 1 Quán cà phê Ngày NỘI\"",
+      "repairable": "Tiêu đề cảnh không đúng chuẩn",
+      "repairableFix": "Viết lại tiêu đề cảnh theo dạng \"cảnh địa điểm thời gian NỘI/NGOẠI\"",
+      "count": "{{count}} khối cảnh",
+      "rowCount": "{{count}} khối"
     },
     "chapterDetails": {
       "open": "Xem nội dung của {{chapter}}",
@@ -2881,21 +3083,6 @@
           "fix": "Nếu đây là văn xuôi tiểu thuyết, hãy đổi loại dự án sang Có lời dẫn. Nếu là kịch bản, hãy bổ sung các dòng đầu cảnh."
         }
       }
-    },
-    "sceneHeaders": {
-      "open": "Xem nội dung của {{chapter}}",
-      "scene": "Cảnh {{number}}",
-      "unknownLocation": "Chưa ghi địa điểm",
-      "characters": "Nhân vật",
-      "characterSeparator": ", ",
-      "empty": "Chương này chưa phân tích được cảnh nào",
-      "unparsedBody": "Phần nội dung chưa phân tích",
-      "missing": "Không nhận ra tiêu đề cảnh",
-      "missingFix": "Thêm tiêu đề cảnh ở đầu mỗi cảnh, ví dụ \"Cảnh 1 Quán cà phê Ngày NỘI\"",
-      "repairable": "Tiêu đề cảnh không đúng chuẩn",
-      "repairableFix": "Viết lại tiêu đề cảnh theo dạng \"cảnh địa điểm thời gian NỘI/NGOẠI\"",
-      "count": "{{count}} khối cảnh",
-      "rowCount": "{{count}} khối"
     }
   },
   "video": {
@@ -2958,6 +3145,7 @@
     "types": {
       "build_characters": "Dựng nhân vật",
       "ingest_fast": "Nhập truyện nhanh",
+      "manuscript_repair": "Sửa bản thảo",
       "build_episodes": "Lên kế hoạch tập phim",
       "character_portrait": "Chân dung nhân vật",
       "identity_image": "Ảnh tạo hình",
@@ -5571,6 +5759,25 @@
       "continueHint": "Nối thêm phía sau và trả về cả đoạn",
       "continueDurationLabel": "Thời lượng",
       "continueSeconds": "{{count}} giây",
+      "continueSecondsUnit": "giây",
+      "continueDurationInput": "Thời lượng tùy chỉnh (giây)",
+      "continueDurationOutOfRange": "Mô hình này sinh mỗi đoạn {{min}}–{{max}} giây",
+      "continueDirectionLabel": "Hướng phát triển",
+      "continueDirection": {
+        "auto": "Tự động",
+        "plot": "Cốt truyện",
+        "emotion": "Cảm xúc",
+        "action": "Hành động",
+        "camera": "Máy quay",
+        "environment": "Môi trường",
+        "dialogue": "Đối thoại",
+        "ending": "Kết thúc"
+      },
+      "continueSuggest": "Gợi ý theo thiết lập",
+      "continuePromptStale": "Đã đổi thời lượng hoặc hướng — bấm Gợi ý để viết lại",
+      "continuePromptEnhance": "Mở rộng lời nhắc",
+      "continuePromptEnhanceRunning": "Đang mở rộng…",
+      "continueEnhanceGuidance": "Mở rộng câu này thành lời nhắc video chi tiết: dài khoảng {{seconds}} giây, theo hướng {{direction}}. Nối tiếp khung hình cuối của đoạn trước và chỉ mô tả những gì xảy ra tiếp theo.",
       "continuePromptPlaceholder": "Mô tả điều gì xảy ra tiếp theo",
       "continueCancel": "Huỷ",
       "continueSubmit": "Tạo",
@@ -5786,6 +5993,7 @@
   },
   "node": {
     "identityCall": {
+      "characterList": "Danh sách nhân vật",
       "toggle": "Nhân vật",
       "title": "Nhân vật trong cảnh này",
       "hint": "Giữ thứ tự đã chọn. Khi tạo video, gửi mặt hiện tại trước, còn chỗ thì gửi ảnh ba góc và lưới biểu cảm. Giọng chỉ gửi khi kiểu tạo này nhận âm thanh.",
@@ -5804,6 +6012,58 @@
       "missingVoice": "{{name}} chưa có giọng.",
       "droppedVoice": "Giọng của {{name}} lần này không còn chỗ.",
       "reshootKeepsFrames": "Quay lại chỉ giữ khung đầu và cuối của đoạn này. Ảnh tạo hình và giọng không được gửi."
+    },
+    "performance": {
+      "title": "Diễn xuất trong cảnh",
+      "disclaimer": "Mô tả bằng chữ giúp định hướng tạo ảnh nhưng không đảm bảo mô hình sẽ làm theo chính xác.",
+      "empty": "Chọn một danh tính trong cảnh để chỉnh diễn xuất.",
+      "identityTabs": "Chọn nhân vật cần chỉnh",
+      "editorSections": {
+        "label": "Nhóm thông số diễn xuất",
+        "face": "Khuôn mặt",
+        "emotion": "Cảm xúc",
+        "timeline": "Dòng thời gian"
+      },
+      "preview": {
+        "canvasLabel": "Xem trước điều khiển khuôn mặt chung",
+        "label": "Mô hình chung",
+        "disclaimer": "Xem trước điều khiển khuôn mặt chung, không đại diện cho nhân vật được tạo cuối cùng."
+      },
+      "matrix": {
+        "label": "Ma trận cảm xúc",
+        "energy": "Cường độ",
+        "lowValence": "Tiêu cực",
+        "highValence": "Tích cực",
+        "cell": "Xu hướng {{valence}}, cường độ {{arousal}}"
+      },
+      "timeline": {
+        "time": "Thời gian {{seconds}} giây",
+        "timeControl": "Thời điểm diễn xuất của {{character}}",
+        "keyframeAt": "Khung hình chính của {{character}} tại {{seconds}} giây"
+      },
+      "addKeyframe": "Thêm khung hình chính",
+      "removeKeyframe": "Xóa khung hình này",
+      "imageBindingTitle": "Đưa biểu cảm nhân vật từ cảnh video vào ảnh",
+      "optional": "Tùy chọn",
+      "imageBindingDescription": "Chọn nhân vật từ danh sách được nhóm theo cảnh video. Cảm xúc và trạng thái gương mặt của họ sẽ được ghi vào lời nhắc tạo ảnh tĩnh. Video không tự động được thêm làm ảnh tham chiếu. Chỉnh biểu cảm tại nút video, mục Nhân vật → Diễn xuất trong cảnh.",
+      "imageBindingCharacter": "Nhân vật",
+      "videoShotNumber": "Cảnh video {{number}}",
+      "noVideoShots": "Canvas chưa có cảnh video. Hãy thêm nút video rồi quay lại chọn cảnh.",
+      "noShotIdentities": "Các cảnh video này chưa có nhân vật để chọn. Hãy thêm nhân vật trong bảng Nhân vật của nút video. Nếu chưa có, hãy tạo nhân vật trong Tài sản nhân vật trước.",
+      "noCharactersInShot": "Cảnh này chưa có nhân vật",
+      "chooseReferencedCharacter": "Chọn nhân vật có biểu cảm muốn tham chiếu",
+      "chooseCharacterHelp": "Chọn nhân vật để dùng biểu cảm trong cảnh cho ảnh tĩnh này.",
+      "imageBindingSelected": "Đã thêm cảm xúc và trạng thái gương mặt của {{character}} từ “{{shot}}”.",
+      "imageBindingEditElsewhere": "Để chỉnh biểu cảm, hãy chọn nút video đó rồi mở Nhân vật → Diễn xuất trong cảnh. Video không tự động được thêm làm ảnh tham chiếu.",
+      "clearImageBinding": "Gỡ tham chiếu",
+      "controls": {
+        "valence": "Cảm xúc",
+        "arousal": "Năng lượng",
+        "brows": "Lông mày",
+        "eyes": "Mắt",
+        "mouth": "Miệng",
+        "jaw": "Hàm"
+      }
     },
     "shotRecipe": {
       "title": "Tạo hình",
@@ -6941,26 +7201,26 @@
           "name": "Camera điện ảnh và dàn dựng hành động",
           "desc": "Thiết kế khung hình cho đánh nhau, rượt đuổi và các đoạn hành động"
         },
-      "modelMaker": {
-        "name": "Tạo mô hình cho bàn đạo diễn",
-        "desc": "Dựng mô hình từ các khối tham số"
-      },
-      "staging": {
-        "name": "Bối cảnh và đạo cụ",
-        "desc": "Sắp đặt bối cảnh, đạo cụ và quan hệ không gian"
-      },
-      "method": {
-        "name": "Phương pháp đạo diễn",
-        "desc": "Chỉ giải thích, không thay đổi bối cảnh"
-      },
-      "script": {
-        "name": "Chia kịch bản thành bảng phân cảnh",
-        "desc": "Chỉ ra danh sách, không thay đổi bối cảnh"
-      },
-      "review": {
-        "name": "Góp ý duyệt phim",
-        "desc": "Chỉ góp ý, không thay đổi bối cảnh"
-      }
+        "modelMaker": {
+          "name": "Tạo mô hình cho bàn đạo diễn",
+          "desc": "Dựng mô hình từ các khối tham số"
+        },
+        "staging": {
+          "name": "Bối cảnh và đạo cụ",
+          "desc": "Sắp đặt bối cảnh, đạo cụ và quan hệ không gian"
+        },
+        "method": {
+          "name": "Phương pháp đạo diễn",
+          "desc": "Chỉ giải thích, không thay đổi bối cảnh"
+        },
+        "script": {
+          "name": "Chia kịch bản thành bảng phân cảnh",
+          "desc": "Chỉ ra danh sách, không thay đổi bối cảnh"
+        },
+        "review": {
+          "name": "Góp ý duyệt phim",
+          "desc": "Chỉ góp ý, không thay đổi bối cảnh"
+        }
       },
       "move": {
         "orbitLeft": "Xoay sang trái",
@@ -6998,13 +7258,35 @@
         "depthMesh": "Địa hình độ sâu",
         "model": "Mô hình ngoài"
       },
-    "example1": "Đẩy camera từ từ về phía nhân vật chính",
-    "example2": "Hai người đứng đối diện nói chuyện",
-    "example3": "Thêm một cái bàn và cho nhân vật ngồi phía sau"
+      "example1": "Đẩy camera từ từ về phía nhân vật chính",
+      "example2": "Hai người đứng đối diện nói chuyện",
+      "example3": "Thêm một cái bàn và cho nhân vật ngồi phía sau"
     },
-    "reshoot": { "clipTitle": "Đoạn quay lại",  "fullTitle": "Quay lại toàn bộ video",  "generating": "Đang quay lại…",  "noResult": "Tác vụ quay lại không trả về kết quả",  "suggestDetached": "Node không còn trên canvas, kết quả gợi ý đã bị bỏ",  "suggestEmpty": "Dịch vụ gợi ý không trả về lời nhắc" },
-    "videoGreybox": { "nodeTitle": "Video độ sâu",  "generating": "Đang tạo video độ sâu…",  "noResult": "Tác vụ video độ sâu không trả về kết quả" },
-    "reshootTimeline": { "unknownDuration": "Không đọc được thời lượng video nguồn",  "startFrame": "Khung bắt đầu",  "endFrame": "Khung kết thúc",  "startHandle": "Tay nắm thời điểm bắt đầu",  "endHandle": "Tay nắm thời điểm kết thúc",  "startLabel": "{{value}}s",  "endLabel": "{{value}}s",  "spanLabel": "Vùng chọn {{value}}s" , "playPreview": "Phát đoạn này", "pausePreview": "Tạm dừng"}
+    "reshoot": {
+      "clipTitle": "Đoạn quay lại",
+      "fullTitle": "Quay lại toàn bộ video",
+      "generating": "Đang quay lại…",
+      "noResult": "Tác vụ quay lại không trả về kết quả",
+      "suggestDetached": "Node không còn trên canvas, kết quả gợi ý đã bị bỏ",
+      "suggestEmpty": "Dịch vụ gợi ý không trả về lời nhắc"
+    },
+    "videoGreybox": {
+      "nodeTitle": "Video độ sâu",
+      "generating": "Đang tạo video độ sâu…",
+      "noResult": "Tác vụ video độ sâu không trả về kết quả"
+    },
+    "reshootTimeline": {
+      "unknownDuration": "Không đọc được thời lượng video nguồn",
+      "startFrame": "Khung bắt đầu",
+      "endFrame": "Khung kết thúc",
+      "startHandle": "Tay nắm thời điểm bắt đầu",
+      "endHandle": "Tay nắm thời điểm kết thúc",
+      "startLabel": "{{value}}s",
+      "endLabel": "{{value}}s",
+      "spanLabel": "Vùng chọn {{value}}s",
+      "playPreview": "Phát đoạn này",
+      "pausePreview": "Tạm dừng"
+    }
   },
   "viewer": {
     "imageAlt": "Ảnh",

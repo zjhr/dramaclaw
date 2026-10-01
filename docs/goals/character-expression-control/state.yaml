@@ -1,0 +1,1594 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "角色表演控制台端到端接入"
+  slug: "character-expression-control"
+  kind: existing_plan # specific | open_ended | existing_plan | recovery | audit
+  tranche: "完成持续可验证的角色表演控制流程，直到端到端验收通过。"
+  status: active # active | blocked | done
+  oracle:
+    signal: "浏览器演示证明通用 3D 面部预览可响应控制，镜头表演状态可保存并恢复，且生成图像与视频请求都包含对应的表演描述。"
+    cadence: "每个 Worker 切片完成后及最终审查时"
+    final_proof: "最终审查提供浏览器操作记录、保存/重载证据、图像和视频提交请求证据，并确认既有角色外观和参考图流程保持有效。"
+  intake:
+    original_request: "把角色表情功能改成参考项目的形式，并确认是否可行。"
+    interpreted_outcome: "在 DramaClaw 中加入按镜头和角色配置、可保存恢复并接入图像与视频生成的表演控制台，包含通用 3D 人头预览。"
+    input_shape: existing_plan # vague | specific | existing_plan | recovery | audit
+    audience: "DramaClaw 创作者"
+    authority: requested # requested | approved | inferred | needs_approval | blocked
+    proof_type: demo # test | demo | artifact | metric | review | source_backed_answer | decision
+    completion_proof: "表演状态跨画布重载保留，并进入图像及视频请求；通用 3D 人头对面部控制有响应，且 UI 明确其不代表最终生成角色。"
+    likely_misfire: "只做出相似界面，却未持久化状态或接入生成请求；或把通用人头预览误当成真实角色预览。"
+    blind_spots_considered:
+      - "角色基础外观表情与镜头表演状态必须分离。"
+      - "参考项目的 FaceCap 模型是低精度通用资产，复用前需核实授权。"
+      - "提示词无法保证视频模型逐时精确执行微表情。"
+      - "多角色视频需要每个镜头内按身份隔离表演轨迹。"
+      - "生成请求仍须保留现有身份参考图顺序与数量限制。"
+    existing_plan_facts:
+      - "保留 identity look expression 与现有表情九宫格流程。"
+      - "新增按镜头和身份保存的情绪坐标、细部控制和视频关键帧。"
+      - "包含通用 3D 人头实时预览，并明确它不等同最终角色。"
+      - "静帧使用当前表演状态；视频把关键帧转换为带时间点的具体表演提示。"
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  exact_human_approval_can_terminal_wait: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  # installed | bundled_not_installed | missing | unknown
+  # missing and bundled_not_installed use PM fallback; unknown requires one exact-role attempt before fallback.
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  # none | local | unknown
+  selected: local
+  local:
+    status: live # not_requested | starting | live | generated | blocked
+    url: "http://goalbuddy.localhost:41737/character-expression-control/"
+    command: "node /Users/mac/.codex/plugins/cache/goalbuddy/goalbuddy/0.4.3/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/character-expression-control"
+
+active_task: T031
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: low # default | low | medium | high | xhigh
+    objective: "只读核实角色表演控制台的数据持久化、静帧/视频生成接入、3D 预览资产边界与验收路径，并给出带证据的实施切片。"
+    inputs:
+      - README.md
+      - frontend/package.json
+      - frontend/src/features/canvas/domain/canvasNodes.ts
+      - frontend/src/features/canvas/nodes/VideoNode.tsx
+      - src/novelvideo
+      - tests
+    constraints:
+      - "只读探索，不修改实现文件或 GoalBuddy 控制文件。"
+      - "结构搜索优先使用 codebase-memory，并检查引用路径的索引覆盖；覆盖不确定时读精确源码。"
+      - "如需重新读取用户给出的 GitHub 项目，使用 agent-reach；不复制未确认授权的源码或模型资产。"
+      - "核实角色外观 expression 与镜头表演状态的存储边界、多角色隔离和画布重载路径。"
+      - "分别追踪图像和视频请求如何接收提示词与身份参考图，并记录提供方限制。"
+      - "盘点可用 3D 引擎、可授权通用人头资产及替代方案；不能把预览模型说成最终角色。"
+      - "只盘点验收命令；执行基线仍未知，不在只读勘察中运行完整套件。"
+    expected_output:
+      - "带文件与行号证据的数据/调用链图，覆盖保存、恢复、图像提交、视频提交和角色参考图。"
+      - "推荐的 per-shot/per-identity 表演数据契约与旧画布默认策略。"
+      - "3D 渲染栈、资产许可状态和可实施的人头预览方案。"
+      - "前端定向 Vitest、构建、必要的后端定向 pytest 命令；明确基线未运行。"
+      - "建议的最大安全 Worker 切片及残余风险。"
+    receipt:
+      result: done
+      summary: "只读核实画布节点 JSON 可承载新增表演状态并经现有同步保存/恢复；视频节点已有按镜头身份解析角色参考图的路径，图像节点接收通用 referenceUrls，但未发现共享的 per-shot 表演契约或图像身份选择字段。PlayCanvas 已在依赖中，可复用现有 3D viewer 架构；通用可驱动头模的资产许可与能力尚未核实。完整测试未运行。"
+      evidence:
+        - path: "frontend/src/features/canvas/domain/canvasNodes.ts:182"
+          detail: "VideoNodeData 已有 referenceOrder、identityCalls；节点类型允许额外字段。ImageGenNodeData 有 prompt 与 referenceImageUrl，但无身份绑定表演字段。"
+        - path: "frontend/src/features/canvas/nodes/VideoNode.tsx:2147"
+          detail: "视频提交先组合上游文本、用户提示词和运镜片段；随后按 identityCalls 获取 identity looks，planIdentityCall 提取角色参考图 URL。"
+        - path: "frontend/src/features/canvas/nodes/VideoNode.tsx:2316"
+          detail: "首帧/I2V 路径将 identityImageUrls 与上游图片合并后受模型 image cap 限制，并与 composedPrompt 一起提交。"
+        - path: "frontend/src/features/canvas/nodes/VideoNode.tsx:2504"
+          detail: "Omni 路径优先加入身份图和声线，再收集上游图片/视频/音频；按模型能力上限裁剪参考素材。"
+        - path: "frontend/src/features/canvas/nodes/ImageGenNode.tsx:1228"
+          detail: "图像路径合成有效提示词，并生成包含 referenceUrls、模型、生成模式和参数的请求 payload；身份专用参考须接入该链路。"
+        - path: "frontend/src/features/freezone/useCanvasSync.ts:792"
+          detail: "画布同步 hook 使用 React Flow 节点数据；源码中包含 autosave 和跨画布同步逻辑，新增节点数据字段适合随节点保存。"
+        - path: "src/novelvideo/freezone/canvas_store.py:743"
+          detail: "save_canvas 基于客户端 payload 构建整份画布数据并原子写入 JSON；不会因新增节点数据字段而要求独立后端字段迁移。"
+        - path: "src/novelvideo/api/routes/freezone.py:13192"
+          detail: "提供画布 GET 路由；保存路由位于该文件 13491 行附近。"
+        - path: "src/novelvideo/freezone/video_node.py:413"
+          detail: "视频 prompt builder 接收用户 prompt 并追加运镜和身份一致性说明；具体表演描述可作为 prompt 内容传入。"
+        - path: "src/novelvideo/api/schemas.py:1190"
+          detail: "图生视频 schema 支持 image_urls 和 prompt；Omni schema 支持混合 references，描述称图像、视频、音频上限由模型目录控制。"
+        - path: "frontend/package.json:52"
+          detail: "前端已有 playcanvas ^2.18.2；项目现有 viewer-kit/three-d 使用 PlayCanvas。未发现 Three.js 依赖。"
+        - path: "frontend/src/features/viewer-kit/three-d/engine/viewerApp.ts:3"
+          detail: "现有 3D viewer engine 直接导入 PlayCanvas，可作为实现头模预览的渲染栈参考；当前资产用途是场景/导演预览，不证明已有面部驱动。"
+      facts:
+        - claim: "表演状态可存入对应 VideoNodeData/镜头节点 data 并随画布 nodes 一起保存；无需单独身份全局表演状态。推荐契约为 shotNode.data.performances[identityId] = {schemaVersion, affect:{valence,arousal}, face:{brows,eyes,mouth,jaw}, keyframes:[{tMs,face,affect}]};UI 草稿默认中性空状态。"
+          evidence: "frontend/src/features/canvas/domain/canvasNodes.ts:115,src/novelvideo/freezone/canvas_store.py:743"
+        - claim: "保留角色 identity look.expression、脸图、三视图和九宫格原有语义。旧画布字段缺失时视为无表演状态，读时归一化为空记录/中性默认；不写回覆盖外观字段。"
+          evidence: "frontend/src/features/canvas/nodes/VideoNode.tsx:2172,frontend/src/lib/queries/characters.ts:587"
+        - claim: "图像生成需要从所选镜头节点解析身份图、格式化当前表演状态描述并合入 prompt；再将对应身份参考并入现有 referenceUrls，尊重图像模型实际能力和数量限制。"
+          evidence: "frontend/src/features/canvas/nodes/ImageGenNode.tsx:1237,frontend/src/features/canvas/nodes/ImageGenNode.tsx:1294"
+        - claim: "视频需按 identityCalls 隔离生成每个身份的当前状态和时间顺序关键帧描述；与身份参考图一起送入现有 prompt/reference 路径。文字提示不能保证模型逐时精确执行面部微表情。"
+          evidence: "frontend/src/features/canvas/nodes/VideoNode.tsx:2159,src/novelvideo/api/schemas.py:1190"
+        - claim: "已确认 PlayCanvas 渲染栈可用，但限定输入范围没有发现通用可驱动头模资产、许可文本或 BlendShape 能力证明；优先自制程序化简化头部或使用明确许可且支持面部 morph targets 的资产。模型必须标注为控制预览，不代表最终角色。"
+          evidence: "frontend/package.json:52,frontend/src/features/viewer-kit/three-d/engine/viewerApp.ts:3"
+        - claim: "图像参考字段当前是 referenceUrls；视频身份图片先按身份选择顺序解析，随后受选定模型引用能力约束，身份参考可能与其他输入竞争额度。"
+          evidence: "frontend/src/features/canvas/domain/canvasNodes.ts:182,frontend/src/features/canvas/nodes/VideoNode.tsx:2316,frontend/src/features/canvas/nodes/VideoNode.tsx:2504"
+      contradictions:
+        - claim: "目标要求表演状态分别进入图像与视频生成，但现有代码只提供通用 prompt 与参考图载体，没有相同的按镜头、按身份表演状态数据契约；当前 identityCalls 是视频节点字段，图像节点没有相应字段。"
+          evidence: "frontend/src/features/canvas/domain/canvasNodes.ts:183,frontend/src/features/canvas/domain/canvasNodes.ts:375"
+        - claim: "用户材料提及 FaceCap 通用模型，但本次给定范围内无法证明其许可可复用或存在可用头模文件。"
+          evidence: "frontend/package.json:16,frontend/src/features/viewer-kit/three-d/engine/viewerApp.ts:3"
+      ambiguity_requiring_judge:
+        - question: "Judge 是否采用建议的 per-shot performances[identityId] 契约，并将当前表演状态和 keyframes 都放在镜头节点 data？现有视频身份配置采用 identityCalls 字段。"
+        - question: "首个 Worker 是否实施完整的前端表演面板、画布重载、图像/视频 prompt 接入与请求证据，暂缓 3D 预览到专门切片？这是最大但仍可界定的垂直切片；精确 allowlist 需由 Judge 结合函数边界确定。"
+        - question: "是否批准以程序化简化头部替代第三方模型资产，或要求先找到并审查有明确许可和面部 morph targets 的模型？"
+      commands:
+        - command: "cd frontend && pnpm exec vitest run src/__tests__/features/canvas/<新增表演状态测试>.test.tsx src/__tests__/features/freezone/use-canvas-sync.test.tsx"
+          purpose: "定向检查控制状态交互、保存与恢复；尖括号需替换为实际新增文件名。"
+        - command: "cd frontend && pnpm run build"
+          purpose: "TypeScript 与 Vite 构建验证。"
+        - command: "uv run pytest tests/test_freezone_canvas_store.py tests/test_freezone_video_route_modes.py"
+          purpose: "仅当改动涉及后端画布存储或视频请求/schema 时定向运行。"
+        - command: "uv run pytest tests/test_freezone_image_backend.py"
+          purpose: "仅当改动涉及图像后端请求适配时定向运行；文件范围可能较大，应优先用 pytest -k 选择具体回归项。"
+      note_needed: false
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "审查 T001 证据，确认数据边界、3D 方案和端到端验收口径，并把后续工作整理成最大安全可用切片。"
+    inputs:
+      - "T001 回执"
+      - "goal.md 中的原始目标、验收 Oracle 和用户选择"
+    constraints:
+      - "只评审和规划，不实现。"
+      - "每个 Worker 必须在开始前获得准确的 allowed_files、verify 和 stop_if。"
+      - "不能把身份外观表情与镜头表演数据合并；不能依赖无授权模型资产。"
+      - "先做实际请求接入和持久化；依据 Scout 证据安排通用 3D 预览和视频时间轴。"
+    expected_output:
+      - "基于证据的架构与切片决策"
+      - "填写 T003 及后续 Worker 的 objective、allowed_files、verify、stop_if"
+      - "说明旧画布兼容、参考图上限、提供方提示词精度和授权风险的处理方式"
+      - "明确延后项与仍需验证的假设"
+    receipt:
+      result: done
+      decision: approved
+      full_outcome_complete: false
+      rationale: "批准 T003 实现首个可验证的功能切片：按镜头与身份保存表演状态，提供基础控制，并让静帧和视频请求消费当前状态。将图像节点显式绑定到来源镜头，避免身份状态被推成全局数据。视频时间轴和程序化 3D 预览留作后续顺序切片。当前缺少真实浏览器重载和提交证据，不能判为目标完成。"
+      worker_package:
+        objective: "实现可编辑、按镜头和身份隔离的基础表演状态；状态随现有画布节点数据保存恢复；静帧请求消费显式绑定镜头和身份的当前表演描述，视频请求按 identityCalls 消费当前表演描述。保留身份级 look.expression、九宫格语义、参考图顺序与模型数量限制；界面明确提示文字描述不保证生成模型精确执行。"
+        allowed_files:
+          - frontend/src/features/canvas/domain/canvasNodes.ts
+          - frontend/src/features/canvas/domain/characterPerformance.ts
+          - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+          - frontend/src/features/canvas/nodes/VideoNode.tsx
+          - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+          - frontend/public/locales/en/translation.json
+          - frontend/public/locales/vi/translation.json
+          - frontend/public/locales/zh/translation.json
+          - frontend/src/__tests__/features/canvas/character-performance.test.ts
+          - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+        verify:
+          - "pnpm --dir frontend exec vitest run src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          - "pnpm --dir frontend build"
+          - "浏览器验收：编辑一个镜头的两种身份表演状态，保存并重载画布，确认值仍绑定原镜头和身份；提交静帧与视频，检查实际请求 payload 中的具体表演描述及既有参考图顺序和数量限制。"
+        stop_if:
+          - "需要修改 allowlist 外文件。"
+          - "行为边界有歧义，或生成提供方能力/资产授权与计划冲突。"
+          - "同一验证失败两次且没有明确修复方向。"
+      evidence:
+        - source: "state.yaml:T001.receipt"
+          finding: "节点 JSON 随画布保存；video 已有 identityCalls 和参考图上限处理；image payload 已包含 prompt 与 referenceUrls，但缺少身份表演绑定；后端已有 prompt 和 image_urls 承载路径。"
+        - source: frontend/src/features/viewer-kit/three-d/engine/viewerApp.ts
+          finding: "当前 viewer 使用 PlayCanvas，具备实体、程序化 render primitive、材质构造和统一销毁生命周期；未发现通用面部形变或可复用头模能力。可据此另做隔离的程序化简化头部预览，但不能将现有人形 proxy 当作面部驱动依据。"
+        - source: "git status --short"
+          finding: "工作区存在与本目标无关的 ingest、prototype 等未提交变更，以及未跟踪 GoalBuddy 目录；T003 不应触碰这些路径。英、中、越 locale 文件已有未提交修改，只能在不覆盖其现有差异的前提下增加新键。"
+        - task: T004
+          recommendation: "在 T003 完成并确认状态契约后再执行，不与 T003 并行。范围：frontend/src/features/canvas/domain/canvasNodes.ts、frontend/src/features/canvas/domain/characterPerformance.ts、frontend/src/features/canvas/domain/characterPerformanceTimeline.ts、frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx、frontend/src/features/canvas/nodes/VideoNode.tsx、frontend/src/__tests__/features/canvas/character-performance-timeline.test.ts、frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx。验收：定向 Vitest、pnpm --dir frontend build、浏览器确认多身份关键帧编辑/重载/按时间顺序进入视频提交请求。"
+        - task: T005
+          recommendation: "T004 后顺序执行；沿用 PlayCanvas 依赖，自制无外部资产的简化头部，眉、眼睑、嘴、下颌变化必须能在预览中观察到，并标注“通用控制预览，不代表最终角色”。候选范围：frontend/src/features/canvas/preview/CharacterFacePreview.tsx、frontend/src/features/canvas/preview/characterFaceScene.ts、frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx、frontend/src/__tests__/features/canvas/character-face-preview.test.tsx。验收：定向 Vitest、pnpm --dir frontend build、浏览器分别操作眼眉口控制并观察模型响应及免责声明。若需第三方资产或修改 viewerApp.ts 才能实现，应停止并重新审查范围。"
+      subgoal_contract: null
+      parallel_safety:
+        parallel_workers_safe: false
+        reason: "state.yaml 限制 max_write_workers 为 1；T003、T004 共享状态与 UI 文件，T005 集成编辑器文件。必须顺序执行。"
+      blocked_tasks: []
+      missing_evidence:
+        - "没有实际浏览器操作、画布重载前后对照或静帧/视频提交请求记录。"
+        - "没有验证真实生成提供方对表演提示的执行效果；验收只应主张描述进入请求，不应主张精确表演保证。"
+        - "通用头模尚无许可明确且具面部驱动能力的资产证据；本判断建议自制程序化替代。"
+      required_board_updates:
+        - "将 T003 的 objective、allowed_files、verify 和 stop_if 写入看板后再派发。"
+        - "保留 T004、T005 为 T003 之后的顺序切片；待 T003 收据确认实际状态契约和 UI 文件后，由 PM 更新后续精确 allowlist。"
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "实现可编辑、按镜头和身份隔离的基础表演状态；状态随现有画布节点数据保存恢复；静帧请求消费显式绑定镜头和身份的当前表演描述，视频请求按 identityCalls 消费当前表演描述。保留身份级 look.expression、九宫格语义、参考图顺序与模型数量限制；界面明确提示文字描述不保证生成模型精确执行。"
+    allowed_files:
+      - frontend/src/features/canvas/domain/canvasNodes.ts
+      - frontend/src/features/canvas/domain/characterPerformance.ts
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/features/canvas/nodes/VideoNode.tsx
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+      - frontend/src/__tests__/features/canvas/character-performance.test.ts
+      - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+    verify:
+      - "pnpm --dir frontend exec vitest run src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "pnpm --dir frontend build"
+      - "浏览器验收：编辑一个镜头的两种身份表演状态，保存并重载画布，确认值仍绑定原镜头和身份；提交静帧与视频，检查实际请求 payload 中的具体表演描述及既有参考图顺序和数量限制。"
+    stop_if:
+      - "需要修改 allowlist 外的文件。"
+      - "行为边界含糊，或生成提供方能力/资产授权与计划冲突。"
+      - "同一验证失败两次且没有明确修复方向。"
+      - "现有图像节点与镜头之间无法建立确定的来源绑定；不要退化为全局身份表演状态或覆盖 look.expression。"
+      - "实现需要修改保存同步逻辑、后端 schema 或 API 等 allowlist 外文件；停止并提供所需文件与证据。"
+      - "翻译文件已有未提交修改与新键发生冲突；保留工作区现有内容并停止协调。"
+      - "所选模型没有可用身份参考额度时，不得绕过其引用上限。"
+      - "需要使用未确认授权的代码或模型资产。"
+    receipt:
+      result: blocked
+      changed_files:
+        - frontend/src/features/canvas/domain/canvasNodes.ts
+        - frontend/src/features/canvas/domain/characterPerformance.ts
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/features/canvas/nodes/VideoNode.tsx
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+        - frontend/src/__tests__/features/canvas/character-performance.test.ts
+        - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+      commands:
+        - cmd: "pnpm --dir frontend exec vitest run src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: "failed before test startup: installed pnpm 11.20.0 conflicts with pinned 11.5.0"
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: "passed: 2 files, 4 tests"
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: "failed twice: after repairing this task's type error, remaining TypeScript errors are in allowlist-external video-reshoot-timeline.test.tsx, IdentityLookDesign.tsx, visual-look.tsx, prototypes/xialiao-desk/*, and characters.lazy.tsx"
+        - cmd: "pnpm --dir frontend build"
+          status: "failed before build startup: installed pnpm 11.20.0 conflicts with pinned 11.5.0"
+        - cmd: "node -e 'for (const f of [\"frontend/public/locales/en/translation.json\",\"frontend/public/locales/vi/translation.json\",\"frontend/public/locales/zh/translation.json\"]) JSON.parse(require(\"fs\").readFileSync(f,\"utf8\")); console.log(\"locale JSON valid\")' && git diff --check"
+          status: passed
+      summary: "已实现镜头节点内按身份保存的中性表演控制、编辑器及三语免责声明。图像节点需显式选择视频镜头和该镜头身份，提交时只追加该身份描述；视频按 identityCalls 顺序追加对应描述。身份外观 expression、参考图拼装顺序和模型限额逻辑未改。定向测试通过。构建被白名单外既有 TypeScript 错误阻断，因此按 stop_if 停止；未做浏览器验收，留给 PM。"
+      deviations: []
+      remaining_blockers:
+        - "构建仍被允许文件之外的现存 TypeScript 错误阻断；需 PM 决定如何处理其他工作区改动后再复验。"
+        - "浏览器编辑、保存/重载及图像/视频实际请求 payload 验收尚无证据，按板要求由 PM 后续执行。"
+        - "仓库 pnpm shim 为 11.20.0，但 frontend/package.json 固定 11.5.0；使用 corepack 指定版本执行了替代验证命令。"
+      verification_attempts: 2
+      stopped_because: "pnpm build 在修复本任务错误后仍因 allowlist 外文件的 TypeScript 错误失败；修改这些文件违反 T003 stop_if。"
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "在前序状态模型上完成按镜头和身份隔离的视频表情关键帧、插值及按时间排序的提示词接入。"
+    allowed_files:
+      - frontend/src/features/canvas/domain/canvasNodes.ts
+      - frontend/src/features/canvas/domain/characterPerformance.ts
+      - frontend/src/features/canvas/domain/characterPerformanceTimeline.ts
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/features/canvas/nodes/VideoNode.tsx
+      - frontend/src/__tests__/features/canvas/character-performance-timeline.test.ts
+      - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-timeline.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "浏览器验收：确认多身份关键帧可编辑，保存并重载后仍绑定原镜头和身份，且视频提交请求中的关键帧按时间顺序序列化。若管理员策略阻止浏览器操作，记录该阻塞，不以其他自动化方式替代验收。"
+    constraints:
+      - "开始 UI 改动前阅读 `12ui-design` skill 和仓库 `DESIGN.md`，遵循既有视觉变量与交互规范。"
+      - "项目浏览器策略曾拒绝本地访问；不通过其他浏览器自动化方式绕过。"
+    stop_if:
+      - "请求接口或模型不支持该视频路径，且没有可验证的提示词适配方案。"
+      - "需要修改 allowlist 外的文件。"
+      - "完整构建失败：记录完整诊断并保留任务阻塞，不跳过构建门禁，也不修改诊断涉及的白名单外文件。"
+      - "管理员策略阻止浏览器验收：保留缺失证据，不得声称端到端验收通过。"
+      - "实现破坏按镜头与身份隔离、关键帧时间顺序、既有身份外观语义、参考图顺序或模型参考图上限。"
+    receipt:
+      result: blocked
+      changed_files:
+        - frontend/src/features/canvas/domain/canvasNodes.ts
+        - frontend/src/features/canvas/domain/characterPerformance.ts
+        - frontend/src/features/canvas/domain/characterPerformanceTimeline.ts
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/features/canvas/nodes/VideoNode.tsx
+        - frontend/src/__tests__/features/canvas/character-performance-timeline.test.ts
+        - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+      commands:
+        - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-timeline.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx — FAIL first run (one incorrect assertion); PASS after correction, 2 files / 5 tests."
+        - "corepack pnpm@11.5.0 --dir frontend build — FAIL twice. After correcting this task's TypeScript errors, remaining diagnostics are outside the allowlist."
+        - "git diff --check -- [T004 tracked files] — PASS; `git diff --no-index --check /dev/null [new timeline module]` and the equivalent command for the new test — no whitespace diagnostics (exit 1 because each file is untracked)."
+        - "Browser acceptance — NOT RUN; prior administrator policy blocks local-address access, and the task prohibits trying another browser channel."
+      summary: "Added per-shot, per-identity video keyframes with ordered replacement/removal, numeric interpolation, stable fallback to legacy single-frame state, scrub controls, and timestamp-ordered prompt descriptions. The timeline disclaimer remains visible. Identity look.expression and reference assembly paths were not changed. Focused tests pass; full build and browser acceptance remain blocked."
+      deviations: []
+      remaining_blockers:
+        - "Full build still fails on allowlist-external diagnostics: `video-reshoot-timeline.test.tsx` HTMLElement.currentTime (251-252); `IdentityLookDesign.tsx` response narrowing (148-166, 204, 300); unused declarations in `visual-look.tsx` (35-209); `xialiao-desk` prototype typing and `replaceAll` target errors (AnnotatedDesk.tsx:11, desk.ts:128, DialogueDesk.tsx:15, InspectorDesk.tsx:11, views.tsx:58, 166-167); unused declarations in `characters.lazy.tsx` (210, 1190, 1204, 1208, 1448, 1469). These files are outside the allowlist and were not changed."
+        - "No browser evidence for editing multiple identities, save/reload persistence, or submitted request payload; administrator policy had previously denied local access, and alternate browser automation is prohibited."
+      verification_attempts: 2
+      stopped_because: "The required full build still fails on allowlist-external TypeScript diagnostics after task-local compile errors were corrected. T004 stop_if requires stopping on full build failure. Browser acceptance also remains unavailable under the administrator policy."
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "使用 PlayCanvas 和无外部资产的程序化简化头部实现通用面部控制预览；眉、眼睑、嘴和下颌响应可见，并明确注明该模型不代表最终角色。"
+    allowed_files:
+      - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+      - frontend/src/features/canvas/preview/characterFaceScene.ts
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/__tests__/features/canvas/character-face-preview.test.tsx
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-face-preview.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "浏览器验收：分别操作眼、眉、嘴、下颌控件并观察模型响应及免责声明；管理员策略阻止浏览器操作时如实保留该缺失证据。"
+    constraints:
+      - "开始 UI 改动前阅读 `12ui-design` skill 和仓库 `DESIGN.md`，遵循既有视觉变量与交互规范。"
+      - "仅用无外部资产的程序化模型，不复制参考仓库资产或未授权代码。"
+      - "项目浏览器策略曾拒绝本地访问；不通过其他浏览器自动化方式绕过。"
+    stop_if:
+      - "需要修改 allowlist 外的文件。"
+      - "修改现有 viewerApp.ts 或引入第三方头模资产才能实现；停止并重新审查范围。"
+      - "项目构建失败或浏览器验收被管理员策略阻止时，不得宣称此任务端到端通过。"
+    receipt:
+      result: blocked
+      changed_files:
+        - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+        - frontend/src/features/canvas/preview/characterFaceScene.ts
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/__tests__/features/canvas/character-face-preview.test.tsx
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-face-preview.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/features/canvas/preview/CharacterFacePreview.tsx frontend/src/features/canvas/preview/characterFaceScene.ts frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/__tests__/features/canvas/character-face-preview.test.tsx"
+          status: pass
+        - cmd: "Browser acceptance for local app"
+          status: "blocked: administrator policy denied access to local URL; no alternate browser automation used"
+      summary: "接入 PlayCanvas 程序化头部预览，通过独立几何响应眉、眼睑、嘴角/开合和下颌控制，并标明不代表最终角色。定向测试和完整生产构建通过，资源监听与应用在卸载时清理。管理员策略阻止浏览器实际交互验收。"
+      deviations: []
+      remaining_blockers:
+        - "缺少浏览器对模型实际渲染、控件响应及免责声明的视觉/交互证据。"
+      verification_attempts: 1
+      stopped_because: "管理员策略拒绝访问本地开发页面，且禁止改用其他浏览器自动化通道。"
+  - id: T008
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: low
+    objective: "在 T004 后只读核实项目构建错误的文件归属、HEAD 基线和最小安全修复范围，避免触碰未经确认的现有工作区内容。"
+    inputs:
+      - "T006 构建诊断回执"
+      - "T004 完成后的锁定版本构建输出"
+      - "错误文件当前内容、git status 与相对 HEAD 差异"
+    constraints:
+      - "只读，不修改实现文件、用户差异或 state.yaml。"
+      - "区分 HEAD 已有错误、用户未提交差异和本目标新增错误；无法证明来源时明确标记未知。"
+      - "输出准确文件/行号和最小修复范围，禁止笼统要求清理全部工作区。"
+    expected_output:
+      - "锁定版本的完整构建诊断"
+      - "错误文件的 git 状态和 HEAD 对比证据"
+      - "可继续、不需修改板外文件的真实验证方式，或需单独授权的具体修复范围"
+    receipt:
+      result: done
+      summary: "只读核对了全部报错路径的状态：五个 xialiao-desk 文件未跟踪，其余四个文件在 HEAD 中受跟踪且无工作区差异。clean 文件的诊断属于仓库 HEAD 基线；未跟踪文件的诊断涉及现有用户内容。未重复构建，引用任务提供的构建结果。修改未跟踪文件前应先由用户确认。"
+      evidence:
+        - "定向 git status --short：AnnotatedDesk.tsx、DialogueDesk.tsx、InspectorDesk.tsx、desk.ts、views.tsx 显示 ??；其他报错路径无状态输出。"
+        - "定向 git diff --unified=3 HEAD 对四个 clean 文件为空；无已跟踪报错文件的差异 hunk。"
+        - "git ls-files --error-unmatch 显示 test、IdentityLookDesign.tsx、visual-look.tsx、characters.lazy.tsx 均受 HEAD 跟踪；五个 xialiao-desk 文件不受跟踪。"
+        - "IdentityLookDesign.tsx 诊断行附近代码使用 mutateAsync 返回值的 ok/error 字段；当前文件无工作区差异。"
+        - "visual-look.tsx 诊断附近包含 bodyGlyph、faceGlyph、发型映射及服装常量；当前文件无工作区差异。"
+        - "测试报错行断言 start.currentTime 和 end.currentTime；当前测试文件无工作区差异。"
+        - "characters.lazy.tsx 报错行附近含若干 handleBlur 函数及 dirty 状态计算；当前文件无工作区差异。"
+        - "任务输入提供的锁定版本构建结果为退出 2；本次未重跑。"
+      facts:
+        - "仓库 HEAD 基线报错文件：video-reshoot-timeline.test.tsx、IdentityLookDesign.tsx、visual-look.tsx、characters.lazy.tsx。"
+        - "当前未跟踪用户内容涉及的报错文件：xialiao-desk 下 AnnotatedDesk.tsx、DialogueDesk.tsx、InspectorDesk.tsx、desk.ts、views.tsx。"
+        - "最小修复范围应先限定到构建诊断所列的具体表达式或声明，不应扩展到其他前端差异。"
+        - "修改四个 clean 文件会改动 HEAD 基线代码；修改五个未跟踪文件会改动现有用户内容。"
+      contradictions: []
+      ambiguity_requiring_judge:
+        - "T003、T004 白名单不含这些报错路径，且本次材料不能证明 HEAD 基线诊断与先前 ingest、locale 或 prototype 工作之间的因果关系。"
+        - "五个未跟踪文件被描述为已有用户改动；是否允许对这些具体文件作最小修复需要用户确认。"
+      commands:
+        - "git status --short -- [全部九个报错文件路径]"
+        - "git diff -- [全部九个报错文件路径]"
+        - "git ls-files --error-unmatch -- [全部九个报错文件路径]"
+        - "git diff --unified=3 HEAD -- [四个受跟踪报错文件路径]"
+        - "nl -ba frontend/src/components/assets/IdentityLookDesign.tsx | sed -n '140,170p;198,208p;294,304p'"
+        - "nl -ba frontend/src/components/assets/visual-look.tsx | sed -n '25,55p;185,215p'"
+        - "nl -ba frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx | sed -n '245,257p'; nl -ba 'frontend/src/routes/_app/projects.$project/characters.lazy.tsx' | sed -n '205,214p;1186,1194p;1200,1212p;1444,1472p'"
+      note_needed: false
+  - id: T009
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "审查 T008 构建归属证据，批准精确且不覆盖用户差异的构建恢复任务，或确认无需触碰板外文件。"
+    inputs:
+      - "T008 回执"
+      - "T003 与 T004 回执"
+      - "当前构建门禁与工作区差异"
+    constraints:
+      - "只审查，不实现。"
+      - "必须逐路径确认文件所有权和差异归属后再定义 Worker 白名单。"
+      - "不得以跳过项目构建或隐藏诊断的方式解除门禁。"
+      - "若需修复未提交用户文件且无法无损界定修改，应继续保留阻塞，不擅自覆盖。"
+    expected_output:
+      - "是否需要单独构建恢复任务的决定"
+      - "若批准，给出精确 objective、allowed_files、verify、stop_if"
+      - "对保留或阻塞用户差异的明确说明"
+    receipt:
+      result: done
+      decision: approved
+      full_outcome_complete: false
+      rationale: "批准独立修复切片，仅限四个 HEAD 跟踪且工作区 clean 的构建错误文件。完整 corepack pnpm 11.5 构建仍须保留为门禁；修复这四个文件后，五个未跟踪原型文件的错误仍会阻断 build。它们属于现有用户内容，角色表演目标不授权修改。须向用户申请对这五个确切文件的最小修复授权，或等待用户自行处理；不得排除文件、隐藏诊断或用无项目配置的 tsc 命令代替构建。T005 继续等待完整构建通过。浏览器保存/重载、图像/视频请求及 3D 响应证据仍缺失。"
+      worker_package:
+        objective: "修复以下四个 clean 的 HEAD 基线文件中构建诊断所指的精确类型或未使用声明错误，使其符合现有项目类型与测试约束；不得扩展到无关逻辑、其他文件或用户工作区差异。运行完整项目构建并如实记录剩余诊断，不得宣称尚未通过的构建门禁已恢复。"
+        allowed_files:
+          - frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx
+          - frontend/src/components/assets/IdentityLookDesign.tsx
+          - frontend/src/components/assets/visual-look.tsx
+          - "frontend/src/routes/_app/projects.$project/characters.lazy.tsx"
+        verify:
+          - "corepack pnpm@11.5.0 --dir frontend build"
+          - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/video-reshoot-timeline.test.tsx"
+          - "git diff --check -- frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx frontend/src/components/assets/IdentityLookDesign.tsx frontend/src/components/assets/visual-look.tsx 'frontend/src/routes/_app/projects.$project/characters.lazy.tsx'"
+        stop_if:
+          - "修复需要改动 allowed_files 以外的路径，包括任何未跟踪 xialiao-desk 原型文件。"
+          - "诊断要求扩展到非精确报错行的逻辑改写，或无法在不改变现有行为的情况下修复。"
+          - "完整构建仍失败时，保留门禁阻塞并记录完整诊断；不得跳过构建、排除文件或隐藏错误。"
+          - "同一验证失败两次且没有明确、安全的修复方向。"
+      evidence:
+        - "T008 回执确认 video-reshoot-timeline.test.tsx、IdentityLookDesign.tsx、visual-look.tsx、characters.lazy.tsx 均由 HEAD 跟踪、工作区 clean，且相对 HEAD 无差异；对应诊断属于仓库基线。"
+        - "T004 回执记录完整构建在修正任务内错误后仍因 allowlist 外诊断失败；其中四个 clean 文件的错误分别涉及 currentTime 测试断言、IdentityLookDesign 的返回值字段收窄、visual-look 未使用声明、characters.lazy 未使用声明。"
+        - "T008 回执确认 AnnotatedDesk.tsx、DialogueDesk.tsx、InspectorDesk.tsx、desk.ts、views.tsx 为未跟踪的现有用户内容，且不在 T003/T004 allowlist。"
+        - "T003 和 T004 均保持 blocked：定向 Vitest 通过，但完整构建失败，浏览器保存/重载及实际请求证据缺失。"
+        - "T007 已规定顺序为 T004、构建门禁归属处理、T005；T005 也要求完整 pnpm build。"
+      subgoal_contract: null
+      parallel_safety:
+        parallel_workers_safe: false
+        reason: "看板限制 max_write_workers 为 1；构建恢复影响共享项目门禁，T005 依赖该门禁，且后续目标流程仍依赖前序表演状态实现。应顺序派发和验收。"
+      blocked_tasks:
+        - "T003：保持 blocked，直至完整项目构建门禁和浏览器验收证据得到处理。"
+        - "T004：保持 blocked，直至完整项目构建门禁和时间轴浏览器验收得到处理。"
+        - "T005：继续 queued；完整构建通过前不得开始。"
+      missing_evidence:
+        - "四个 clean 基线文件修复后的完整 corepack pnpm 11.5 项目构建通过记录。"
+        - "以下未跟踪用户文件的最小修复授权或用户自行修复结果，以及之后完整构建通过记录：frontend/src/features/canvas/prototypes/xialiao-desk/AnnotatedDesk.tsx、frontend/src/features/canvas/prototypes/xialiao-desk/DialogueDesk.tsx、frontend/src/features/canvas/prototypes/xialiao-desk/InspectorDesk.tsx、frontend/src/features/canvas/prototypes/xialiao-desk/desk.ts、frontend/src/features/canvas/prototypes/xialiao-desk/views.tsx。"
+        - "T003 的浏览器编辑、保存/重载、静帧和视频实际请求 payload 证据。"
+        - "T004 的多身份关键帧编辑、保存/重载及时间顺序视频请求浏览器证据。"
+        - "T005 的眉、眼、嘴、下颌控件引发 3D 预览响应及免责声明浏览器证据。"
+        - "既有角色外观、九宫格、身份参考图顺序和数量限制在端到端流程中保持有效的证据。"
+      required_board_updates:
+        - "将上述 Worker package 注册为独立构建恢复切片，精确保留四条 allowed_files；完整构建仍失败时不得解除门禁。"
+        - "明确要求用户授权对这五个现有未跟踪原型文件进行最小修复，或由用户自行处理：frontend/src/features/canvas/prototypes/xialiao-desk/AnnotatedDesk.tsx、frontend/src/features/canvas/prototypes/xialiao-desk/DialogueDesk.tsx、frontend/src/features/canvas/prototypes/xialiao-desk/InspectorDesk.tsx、frontend/src/features/canvas/prototypes/xialiao-desk/desk.ts、frontend/src/features/canvas/prototypes/xialiao-desk/views.tsx。在授权前不得修改、暂存或回退这些文件。"
+        - "继续保持 T003、T004 blocked；四个 clean 文件修复后，若五个用户文件仍有构建错误，继续保留 build 门禁阻塞，不得以跳过、排除或隐藏诊断宣称通过。"
+        - "只有完整项目构建通过后，按既定顺序派发 T005；T003、T004、T005 的浏览器证据缺口仍须在最终验收前补齐。"
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "修复四个 clean 的 HEAD 基线文件中构建诊断所指的精确类型或未使用声明错误，使其符合现有项目类型与测试约束；不得扩展到无关逻辑、其他文件或用户工作区差异。运行完整项目构建并如实记录剩余诊断，不得宣称尚未通过的构建门禁已恢复。"
+    allowed_files:
+      - frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx
+      - frontend/src/components/assets/IdentityLookDesign.tsx
+      - frontend/src/components/assets/visual-look.tsx
+      - frontend/src/routes/_app/projects.$project/characters.lazy.tsx
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/video-reshoot-timeline.test.tsx"
+      - "git diff --check -- frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx frontend/src/components/assets/IdentityLookDesign.tsx frontend/src/components/assets/visual-look.tsx 'frontend/src/routes/_app/projects.$project/characters.lazy.tsx'"
+    stop_if:
+      - "修复需要改动 allowed_files 以外的路径，包括任何未跟踪 xialiao-desk 原型文件。"
+      - "诊断要求扩展到非精确报错行的逻辑改写，或无法在不改变现有行为的情况下修复。"
+      - "完整构建仍失败时，保留门禁阻塞并记录完整诊断；不得跳过构建、排除文件或隐藏错误。"
+      - "同一验证失败两次且没有明确、安全的修复方向。"
+    receipt:
+      result: blocked
+      changed_files:
+        - frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx
+        - frontend/src/components/assets/IdentityLookDesign.tsx
+        - frontend/src/components/assets/visual-look.tsx
+        - "frontend/src/routes/_app/projects.$project/characters.lazy.tsx"
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: "failed; baseline reproduced the four authorized-file diagnostics and five untracked prototype-file diagnostics"
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: "failed; authorized-file diagnostics cleared, but five untracked prototype files still fail TypeScript"
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/video-reshoot-timeline.test.tsx"
+          status: "passed; 1 file and 20 tests passed (rerun after final test-file cleanup)"
+        - cmd: "git diff --check -- frontend/src/__tests__/features/canvas/video-reshoot-timeline.test.tsx frontend/src/components/assets/IdentityLookDesign.tsx frontend/src/components/assets/visual-look.tsx 'frontend/src/routes/_app/projects.$project/characters.lazy.tsx'"
+          status: passed
+      summary: "Fixed the four authorized baseline files: typed the video test elements, removed response checks that contradict the mutation success types, and deleted unused private helpers, mappings, and declarations. The final build has no diagnostics in these files, but still fails on five untracked xialiao-desk prototype files. Those files were not modified. The full-build gate remains blocked."
+      deviations: []
+      remaining_blockers:
+        - "Full frontend build still reports TypeScript errors in the untracked frontend/src/prototypes/xialiao-desk/AnnotatedDesk.tsx, DialogueDesk.tsx, InspectorDesk.tsx, desk.ts, and views.tsx. Their corrections are outside the allowed files."
+      verification_attempts: 2
+      stopped_because: "The full project build remains blocked by diagnostics in five untracked prototype files outside the allowed files."
+  - id: T011
+    type: pm
+    assignee: PM
+    status: done
+    reasoning_hint: default
+    objective: "向用户申请是否允许对五个现有未跟踪 xialiao-desk 原型文件按 TypeScript 诊断做最小修复，以解除完整前端构建门禁。"
+    inputs:
+      - "T008 文件归属回执"
+      - "T009 Judge 对授权边界的决定"
+      - "T010 完整构建剩余诊断"
+    constraints:
+      - "只询问精确列出的五个文件；说明修改只限修复当前构建诊断。"
+      - "未获明确同意前不得修改、暂存、覆盖或回退这些未跟踪文件。"
+      - "用户拒绝时保留构建阻塞并说明 T005 暂不能启动。"
+    expected_output:
+      - "用户对精确文件范围的授权或拒绝"
+      - "若授权，创建有精确 allowlist 的后续 Worker；若拒绝，记录该 blocker"
+    receipt:
+      result: done
+      summary: "用户明确批准对五个未跟踪 xialiao-desk 原型文件进行最小 TypeScript 构建错误修复，范围仅限当前诊断点，不含重构或其他修改。授权文件已逐一写入 T012 allowed_files。"
+      authorization_scope:
+        - frontend/src/prototypes/xialiao-desk/AnnotatedDesk.tsx
+        - frontend/src/prototypes/xialiao-desk/DialogueDesk.tsx
+        - frontend/src/prototypes/xialiao-desk/InspectorDesk.tsx
+        - frontend/src/prototypes/xialiao-desk/desk.ts
+        - frontend/src/prototypes/xialiao-desk/views.tsx
+      evidence:
+        - "用户回复：批准最小修复（推荐）。"
+        - "用户批准范围明确限定为上述五个文件中的 TypeScript 构建报错点；不包含重构或其他修改。"
+  - id: T012
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "仅修复以下五个 xialiao-desk 原型文件中当前完整构建诊断所指的 TypeScript 错误；不做重构、视觉调整或其他功能改动。用户已明确授权这些文件的最小修复范围。"
+    allowed_files:
+      - frontend/src/prototypes/xialiao-desk/AnnotatedDesk.tsx
+      - frontend/src/prototypes/xialiao-desk/DialogueDesk.tsx
+      - frontend/src/prototypes/xialiao-desk/InspectorDesk.tsx
+      - frontend/src/prototypes/xialiao-desk/desk.ts
+      - frontend/src/prototypes/xialiao-desk/views.tsx
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/prototypes/xialiao-desk/AnnotatedDesk.tsx frontend/src/prototypes/xialiao-desk/DialogueDesk.tsx frontend/src/prototypes/xialiao-desk/InspectorDesk.tsx frontend/src/prototypes/xialiao-desk/desk.ts frontend/src/prototypes/xialiao-desk/views.tsx"
+    stop_if:
+      - "修复需要改动五个授权文件以外的路径。"
+      - "诊断不能在不改变功能意图的情况下最小修复。"
+      - "完整构建仍失败时，如实记录完整剩余诊断，不得排除文件或隐藏错误。"
+      - "同一验证失败两次且没有明确、安全的修复方向。"
+    constraints:
+      - "用户明确授权仅修复当前 TypeScript 构建错误，不授权重构、清理其他代码或更改产品行为。"
+      - "完成前逐文件检查差异，保留原型现有交互意图。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/prototypes/xialiao-desk/AnnotatedDesk.tsx
+        - frontend/src/prototypes/xialiao-desk/DialogueDesk.tsx
+        - frontend/src/prototypes/xialiao-desk/InspectorDesk.tsx
+        - frontend/src/prototypes/xialiao-desk/desk.ts
+        - frontend/src/prototypes/xialiao-desk/views.tsx
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/prototypes/xialiao-desk/AnnotatedDesk.tsx frontend/src/prototypes/xialiao-desk/DialogueDesk.tsx frontend/src/prototypes/xialiao-desk/InspectorDesk.tsx frontend/src/prototypes/xialiao-desk/desk.ts frontend/src/prototypes/xialiao-desk/views.tsx"
+          status: pass
+      summary: "修复了完整构建的剩余 TypeScript 错误：移除 ManuscriptThread 不支持的 kind 属性，用等效 split/join 替代 replaceAll，并把三个 Mini 动态标签改为单一字符串子节点。完整前端构建通过，仍有原有的 chunk 大小与动态导入警告；改动仅限用户授权的五个文件。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T013
+    type: pm
+    assignee: PM
+    status: done
+    reasoning_hint: default
+    objective: "启动前端开发服务器供用户查看新的人头预览，并在管理员策略允许时用当前 in-app Browser 做一次本地页面验收；策略拒绝时保留证据缺口。"
+    inputs:
+      - "T005 回执"
+      - "frontend Vite 启动脚本与可用端口"
+    constraints:
+      - "只做运行时启动与只读验收，不修改产品文件。"
+      - "仅使用当前 in-app Browser；若管理员策略拒绝，不用其他浏览器通道或绕过方式。"
+      - "保持开发服务器运行并将可访问 URL 提供给用户。"
+    expected_output:
+      - "开发服务器 URL 和启动会话"
+      - "若可访问：预览实际启动且交互响应的证据"
+      - "若不可访问：精确记录管理员策略阻塞"
+    receipt:
+      result: done
+      summary: "使用锁定的 pnpm 11.5.0 在 127.0.0.1:5174 启动前端 Vite 开发服务器；GET / 返回 HTTP 200。5173 上已有同项目服务，未停止或修改。通过此前唯一 Browser 通道尝试访问 5174，管理员策略再次拒绝，未使用替代浏览器或绕过方式。服务保持运行，URL 已可供用户访问。"
+      evidence:
+        - "开发服务器会话 83452 输出 Vite ready：Local http://127.0.0.1:5174/。"
+        - "curl http://127.0.0.1:5174/ 返回 HTTP 200 和 text/html。"
+        - "此前 Browser API 对 127.0.0.1:5174 返回 admin-enforced policy check unavailable / access not granted。"
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend dev --host 127.0.0.1 --port 5174"
+          status: pass
+        - cmd: "curl -sS -o /dev/null -w 'HTTP %{http_code} content-type=%{content_type}\\n' http://127.0.0.1:5174/"
+          status: pass
+      spawned_tasks:
+        - T014
+  - id: T014
+    type: pm
+    assignee: PM
+    status: blocked
+    reasoning_hint: default
+    objective: "收集用户在本地开发页对通用人头渲染、眉眼口颌响应和免责声明的实际视觉验收；记录具体结果并据此修复或继续。"
+    inputs:
+      - "T013 的本地 URL、HTTP 200 证据与管理员策略阻塞回执"
+      - "T005 的程序化头部和定向测试证据"
+    constraints:
+      - "仅请求用户检查浏览器中可见结果，不要求修改源码或浏览器设置。"
+      - "用户无需触发付费的图像/视频生成；请求/提示词契约由自动化验证覆盖。"
+      - "若用户无法访问或发现模型不响应，保持目标 active 并建立精确修复任务。"
+    expected_output:
+      - "头部预览是否可见"
+      - "眉、眼睑、嘴、下颌控制是否分别引发可观察形变"
+      - "通用预览免责声明是否清晰可见"
+      - "后续修复任务或验收回执"
+    receipt:
+      result: blocked
+      blocked_reason: "The user reports the exact Maximum update depth exceeded error in the local page, but administrator policy prevents agent browser access; manual user report provides the symptom and the GoalBuddy worker will establish an automated red-capable component-test loop."
+      summary: "User verified that the local server reaches React but the page fails during render with Maximum update depth exceeded. The server remains available at http://127.0.0.1:5174/. Browser automation was denied by administrator policy; no alternate channel was used."
+      evidence:
+        - "User report after opening http://127.0.0.1:5174/: Maximum update depth exceeded."
+        - "T013 curl health check returns HTTP 200; this does not prove React rendered successfully."
+        - "T015 is active to construct and run a minimal ImageGenNode render test with a video node in the canvas store."
+      spawned_tasks:
+        - T015
+  - id: T015
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "仅在现有 ImageGenNode React 测试夹具中加入同时存在视频节点的最小渲染场景，运行并确认是否重现用户报告的 Maximum update depth exceeded；先只写测试，不修改产品代码。"
+    allowed_files:
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+    stop_if:
+      - "测试夹具无法真实挂载 ImageGenNode 或不能捕获 Maximum update depth exceeded。"
+      - "需要修改产品实现或白名单外文件才能搭建复现。"
+      - "相同验证失败两次且无明确安全修复方向。"
+    receipt:
+      result: blocked
+      changed_files:
+        - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+          status: "failed during initial test harness setup: NodeSideActionRail expected XYFlow nodeLookup"
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+          status: "reproduced exact symptom: Maximum update depth exceeded; React getSnapshot should be cached warning; 1 new test failed and 11 existing tests passed"
+      summary: "Added a real ImageGenNode render with an image node explicitly bound to one video performance shot containing identityCalls and performances. The existing React test harness now reproduces the user's Maximum update depth exceeded error. No product code changed; PlayCanvas emits a jsdom getContext warning but the React error stack is in useSyncExternalStore updates."
+      deviations:
+        - "Added minimal NodeToolbar and nodeLookup behavior to the existing XYFlow mock so ImageGenNode reaches its actual render path."
+      remaining_blockers:
+        - "The precise selector or subscription causing the cached-snapshot loop has not yet been isolated; continue minimization before hypothesizing or changing product code."
+      verification_attempts: 2
+      stopped_because: "The exact failure is reproduced; this task was explicitly limited to the failing regression test."
+  - id: T016
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "逐一移除不必要的 ImageGenNode / VideoNode 测试输入，最小化已复现的 Maximum update depth exceeded 场景；保留实际 ImageGenNode 挂载和精确错误断言，仅编辑诊断测试文件。"
+    allowed_files:
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+    stop_if:
+      - "最小化步骤无法重现相同的 Maximum update depth exceeded 时，恢复上一个仍为红色的最小场景，不得修改产品代码。"
+      - "需要修改产品实现或其他测试文件。"
+      - "同一验证失败两次且没有明确方向。"
+    constraints:
+      - "遵循 diagnosing-bugs Phase 2：一次只移除一个输入，每一步都运行红灯测试。"
+      - "不要提出或测试根因假设，直到场景被最小化。"
+      - "将 PlayCanvas 提示与导致 React Maximum update depth exceeded 的失败分开记录。"
+    receipt:
+      result: blocked
+      blocked_reason: "The user-reported Maximum update depth exceeded was reproduced. The test was minimized to a real ImageGenNode mount with one empty videoNode; removing identities, performance state and image bindings did not remove the error, while removing the video node did."
+      summary: "Kept a red-capable React regression test in the existing ImageGenNode harness. Only the test file changed; no product code was touched."
+      commands:
+        - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts — baseline 11 pass / 1 fail with Maximum update depth exceeded."
+        - "Same command after removing video identityCalls — still red."
+        - "Same command after removing video performances — still red."
+        - "Same command after removing image performanceShotNodeId — still red."
+        - "Same command after removing image performanceIdentityId — still red."
+        - "Same command after removing video node — React loop disappeared; after restoring the video node the same error returned."
+      evidence:
+        - "React stderr also reported getSnapshot should be cached."
+        - "The final minimal fixture has a real ImageGenNode and one empty videoNode; it has no selected shot/identity, so neither CharacterPerformanceEditor nor the PlayCanvas preview mounts."
+      spawned_tasks:
+        - T017
+  - id: T017
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "验证并修复最小红灯场景中的 ImageGenNode store 订阅快照稳定性：只返回稳定 video node 引用，让 useShallow 能缓存选择结果；保留红灯回归测试。"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-requests.test.tsx src/__tests__/features/canvas/character-performance-timeline.test.ts src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-face-preview.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+    stop_if:
+      - "稳定化视频节点 selector 后红灯仍复现；停下并报告，不继续猜测修改。"
+      - "需要修改 allowlist 外文件。"
+      - "相同验证失败两次且没有明确安全修复方向。"
+    receipt:
+      result: blocked
+      blocked_reason: "The predicted selector change removed Maximum update depth exceeded and the getSnapshot warning, but the regression test then failed on an unrelated text query; full verification was not run."
+      summary: "The ImageGenNode video selector now returns stable node references instead of fresh {id,data} wrappers. The user's exact React update-loop symptom disappeared in the reproduction. Test assertion cleanup and broader verification are assigned to T018."
+      changed_files:
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      commands:
+        - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts — before edit: Maximum update depth exceeded and getSnapshot warning reproduced."
+        - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts — after edit: neither targeted React error remains; unrelated getByText(\"图片\") assertion fails."
+      evidence:
+        - "The test reproduction is a real ImageGenNode mount with one empty videoNode in canvasStore.nodes; video identity data and image-node selection bindings were removed without eliminating the error."
+        - "Removing the newly allocated video-node {id,data} wrappers caused the exact Maximum update depth symptom and React cached-snapshot warning to disappear in the same harness."
+      spawned_tasks:
+        - T018
+  - id: T018
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "将 T015 红灯用例的成功判据改为直接验证真实 ImageGenNode 挂载不抛 Maximum update depth exceeded、不输出 getSnapshot 缓存警告；验证 T017 的 selector 修复并运行角色表演回归集和完整构建。"
+    allowed_files:
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-requests.test.tsx src/__tests__/features/canvas/character-performance-timeline.test.ts src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-face-preview.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+    stop_if:
+      - "最小场景仍出现 Maximum update depth exceeded 或 getSnapshot 缓存警告；不要扩展修复范围。"
+      - "需要修改 allowlist 外路径。"
+      - "任一指定验证失败两次且无明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-requests.test.tsx src/__tests__/features/canvas/character-performance-timeline.test.ts src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-face-preview.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+          status: pass
+      summary: "The minimized ImageGenNode fixture now directly asserts that mounting with any video node does not throw Maximum update depth exceeded and does not log the getSnapshot should be cached warning. Returning stable VideoNode references from the shallow store selector fixed the reported loop. The regression test, role-performance test suite, and full frontend build pass."
+      deviations: []
+      remaining_blockers:
+        - "Manual page refresh and visible control-response confirmation remain pending because administrator policy blocks agent browser access; T019 requests user verification at the running local URL."
+      verification_attempts: 2
+      stopped_because: null
+  - id: T019
+    type: pm
+    assignee: PM
+    status: queued
+    reasoning_hint: default
+    objective: "请用户刷新本地 DramaClaw 页面，确认 chunk 错误弹窗是否消失；检查 XiaoLuo 复用后的工作台视觉、面部控件响应、镜头状态绑定和图片节点选择体验。"
+    inputs:
+      - "T017 selector 稳定化修复"
+      - "T018 红灯回归测试转绿及完整构建结果"
+      - "T013 保持运行的本地开发服务器 http://127.0.0.1:5174/"
+    constraints:
+      - "浏览器管理员策略此前阻止 agent 访问；通过用户直接观察收集实际运行证据。"
+      - "不要求用户提交任何付费图像或视频生成任务。"
+      - "若用户仍观察到渲染错误，记录原始文本并重新建立红灯复现；不得猜测修复。"
+    expected_output:
+      - "刷新后的页面是否能加载，不再反复显示“应用已更新”全屏弹窗"
+      - "XiaoLuo 头模和表情工作台是否可见，眉眼口颌控制是否响应"
+      - "情绪矩阵、面部参数、时间轴及多身份切换是否可用"
+      - "预览免责声明是否可见，现有图像/视频生成流程是否仍正常"
+    receipt:
+      result: blocked
+      blocked_reason: "Awaiting user confirmation of the cache-busted chunk recovery in the browser. The local URL is available, but administrator policy previously denied direct agent browser access."
+      summary: "The development app is available at http://127.0.0.1:5174/ (HTTP 200). T028 adds one cache-busted auto-reload attempt per BUILD_ID and a cache-busted manual retry, preventing an automatic loop. T026 vendors the XiaoLuo studio controls and Three.js preview/assets behind the existing per-shot/per-identity bridge; T027 removes the duplicate preview and pairs the upstream preview with the emotion matrix. Focused tests and production build pass. User confirmation that the full-screen '应用已更新' prompt is gone and the integrated UI works remains pending; no alternate browser channel was used."
+      evidence:
+        - "Latest user report: a persistent full-screen '应用已更新' prompt prevents normal use."
+        - "T028 tests verify one cache-busted reload per build, preserved project/canvas query, and no automatic retry loop."
+        - "The local app is running, but in-app Browser was denied by administrator policy."
+        - "T024 focused tests cover the video-node portal height cap/scrolling, editor sections, identity switching, and generation request contract."
+        - "T026 focused tests cover direct XiaoLuo matrix/face controls bridged to the existing per-shot state; build and design scan pass."
+        - "T027 focused tests cover one upstream preview and side-by-side matrix layout; build and design scan pass."
+        - "frontend/src/features/canvas/ui/NodeActionToolbar.tsx:2942 — selected video node exposes the '角色' action; frontend/src/features/canvas/nodes/VideoNode.tsx:3607 — this opens IdentityCallPanel and CharacterPerformanceEditor."
+        - "frontend/public/locales/zh/translation.json:6051 — editor title is '本镜表演'; line 6052 — disclaimer states generated models may not execute descriptions precisely; lines 6054-6056 label and explain the optional image-node reference."
+      spawned_tasks:
+        - T020
+  - id: T020
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "完成一个端到端数据集成切片：证明按镜头/身份的表演状态经画布 hydrate/autosave 保留，ImageGenNode 仅消费显式绑定镜头与身份的提示，VideoNode 将对应身份的关键帧按时间顺序接入提交 prompt；若测试发现窄范围接线缺陷，可在授权节点文件内修复。"
+    allowed_files:
+      - frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx
+      - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      - frontend/src/features/canvas/nodes/VideoNode.tsx
+      - frontend/src/features/canvas/domain/characterPerformance.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/freezone/use-canvas-sync.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/domain/characterPerformance.ts"
+    stop_if:
+      - "真实 save/hydrate 路径无法在现有测试夹具中验证，或请求契约只能靠与产品实现无关的弱断言覆盖。"
+      - "发现缺陷需要改动 allowed_files 外的产品代码；记录缺口并停止，不要扩展范围。"
+      - "测试不能证明静帧选定镜头/身份和视频身份/时间顺序映射时，保留证据缺口，不得声称通过。"
+      - "任一指定验证失败两次且无明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx
+        - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+        - frontend/src/features/canvas/nodes/VideoNode.tsx
+        - frontend/src/features/canvas/domain/characterPerformance.ts
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/freezone/use-canvas-sync.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/domain/characterPerformance.ts"
+          status: pass
+      summary: "增加了 useCanvasSync hydrate/autosave 测试，验证一个镜头内两种身份的 performances 和 performanceTimelines 保留在实际 autosave payload。请求测试验证静帧只使用明确绑定身份、视频关键帧按时间戳排序且身份顺序不变，并检查 ImageGenNode/VideoNode 调用链将结果写入实际生成 payload。所有目标测试和完整构建通过。"
+      deviations: []
+      remaining_blockers:
+        - "静帧/视频提交的浏览器实操证据仍缺；无付费生成请求被触发。"
+      verification_attempts: 2
+      stopped_because: null
+  - id: T021
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "把图片节点的来源镜头与身份两个选择器收进默认收起的可选表演引用区，并说明角色身份需先在虾塘创建、再加入视频镜头；保持现有生成绑定逻辑不变。"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+    stop_if:
+      - "需要修改允许文件以外的内容。"
+      - "无法在不改变镜头/身份绑定与提示词生成行为的情况下收起控件。"
+      - "测试或完整构建连续失败两次且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+        - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx src/__tests__/features/freezone/use-canvas-sync.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "node locale JSON parse check and git diff --check"
+          status: pass
+      summary: "图片节点的来源镜头和身份选择已收进默认折叠的“引用视频镜头表演（可选）”区域。展开后有用途说明；没有视频节点或所选镜头未加入身份时显示具体下一步提示。角色需先在虾塘创建，再通过视频节点“角色”面板加入本镜。绑定与提示词逻辑未改变。组件回归测试验证默认收起、展开显示选择器和无身份说明。"
+      deviations: []
+      remaining_blockers:
+        - "管理员策略仍阻止代理浏览器查看本地页面；用户实际看到的折叠状态尚无浏览器证据。"
+      verification_attempts: 2
+      stopped_because: null
+  - id: T022
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "重整图片节点的可选视频表演引用为清晰的两步绑定流程：先选视频镜头，再选该镜头中的角色；明确它会把表演描述加入静帧提示词，并且表演值仍只在视频节点的角色面板编辑。"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+      - "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+    stop_if:
+      - "修复需要修改以上文件以外的产品代码。"
+      - "无法在保留现有显式镜头/角色绑定及静帧提示词行为的情况下重整界面。"
+      - "本镜表演仍需在图片节点编辑，导致图片与视频两个状态源无法保持一致。"
+      - "指定测试或完整构建连续失败两次且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+        - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+          status: pass
+        - cmd: "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+          status: pass
+      summary: "图片节点的可选表演引用改成两步绑定：选视频镜头、选角色。标题、字段、空状态和选中摘要说明静帧提示词影响；镜头和角色展示名不再暴露内部 ID，无自定义镜头名时显示本地化序号。表演值只在视频节点角色面板编辑；绑定可取消。测试验证默认折叠、空状态、绑定、内部 ID 隐藏、取消引用及不重复渲染表演编辑器。定向测试 19 项、完整构建、diff check 和设计扫描全部通过；构建仅有既有动态导入和 chunk 体积警告。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T023
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "将图片节点的视频表演绑定简化为一个角色选择器，按视频镜头分组选项；选择角色时仍同时保存来源镜头与角色 ID，并让用户清楚该表情会用于当前静帧。"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+      - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+      - "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+    stop_if:
+      - "单一角色选择无法明确表达选项所属的视频镜头或产生镜头 ID 与角色 ID 错配。"
+      - "需要修改允许列表以外的产品代码。"
+      - "两次修复尝试后指定测试、构建或设计扫描仍失败。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/ImageGenNode.tsx
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+        - frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts"
+          status: pass
+        - cmd: "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+          status: pass
+      summary: "图片节点改为单一角色选择器，并按视频镜头分组；无自定义镜头名时使用本地化序号。一次选择同时写入对应 performanceShotNodeId 和 performanceIdentityId，选项仅显示角色名，旧绑定可恢复。保留用途说明、空状态、只读绑定摘要、取消引用；表演仍仅在视频节点编辑。20 项定向测试、完整构建、diff check 和 impeccable detector 均通过。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T024
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "依据 XiaoLuo 表情导演台的预览优先、参数分区切换交互，重整视频节点角色表演浮层：固定 3D 预览高度，情绪/面部/时间轴一次只展开一组，限制整体高度并支持滚动，确保长内容下仍能访问预览和面板底部。"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/VideoNode.tsx
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+      - frontend/src/__tests__/features/canvas/video-node-director-desk-reference.test.tsx
+      - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/video-node-director-desk-reference.test.tsx src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx frontend/src/__tests__/features/canvas/video-node-director-desk-reference.test.tsx frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+      - "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx"
+    stop_if:
+      - "需要修改 allowed_files 外的产品代码。"
+      - "测试无法证明面板高度受视口限制、长内容可滚动，或参数分区可达。"
+      - "外部参考有授权不明确的资产需求；只能沿用 DramaClaw 自有程序化预览，不能复制参考项目代码或模型资产。"
+      - "指定测试或完整构建两次失败且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/VideoNode.tsx
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+        - frontend/src/__tests__/features/canvas/video-node-director-desk-reference.test.tsx
+        - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/video-node-director-desk-reference.test.tsx src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx frontend/src/__tests__/features/canvas/video-node-director-desk-reference.test.tsx frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+          status: pass
+        - cmd: "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx"
+          status: pass
+      summary: "按 XiaoLuo 参考交互将角色表演编辑器改为预览优先，后接可切换的情绪、面部和时间轴分区；每次只显示当前身份的控件，3D 预览固定为 16:9 / 180px 高。VideoNode portal 定位和 max-height 使用同一视口计算，上限为 72vh/640px，面板自身支持纵向滚动且 wheel 不冒泡至画布。新增真实 VideoNode portal 与编辑器组件测试，先复现 maxHeight/overflow 缺失和 editor tabs 缺失的红灯，再运行绿灯。定向 15 项、完整构建、diff check、impeccable detector 均通过。外部参考只用于核对交互；没有复用其代码或模型资产。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T025
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "基于 XiaoLuo 的交互结构独立重做 DramaClaw 角色表演面板：情绪矩阵与预览并列、身份选择紧凑、面部/情绪/时间轴分区可切换，并升级无外部资产的程序化头模，使视觉层级接近参考工作台而不是当前堆叠控件。"
+    allowed_files:
+      - frontend/src/features/canvas/ui/IdentityCallPanel.tsx
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+      - frontend/src/features/canvas/preview/characterFaceScene.ts
+      - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+      - frontend/src/__tests__/features/canvas/character-face-preview.test.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-face-preview.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/features/canvas/ui/IdentityCallPanel.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx frontend/src/features/canvas/preview/characterFaceScene.ts frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/src/__tests__/features/canvas/character-face-preview.test.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+      - "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/ui/IdentityCallPanel.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx"
+    stop_if:
+      - "需要复制 XiaoLuo 仓库源码或 FaceCap 模型资产；该仓库许可证字段为空，第三方资产声明要求商业发布前替换或取得许可。"
+      - "需要引入未在 frontend/package.json 中存在的新渲染依赖。"
+      - "表演状态写入、身份隔离、关键帧格式或生成请求接线发生变化。"
+      - "定向测试或完整构建两次失败且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/ui/IdentityCallPanel.tsx
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+        - frontend/src/features/canvas/preview/characterFaceScene.ts
+        - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-face-preview.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/features/canvas/ui/IdentityCallPanel.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx frontend/src/features/canvas/preview/characterFaceScene.ts frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/src/__tests__/features/canvas/character-face-preview.test.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+          status: pass
+        - cmd: "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/ui/IdentityCallPanel.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx"
+          status: pass
+      summary: "独立实现 XiaoLuo 交互结构：紧凑角色 chip、5×5 情绪矩阵、预览优先、面部/情绪/时间轴分区和受光中性灰头肩程序化预览。状态写入、关键帧和请求契约保持不变。基线 5 项、最终 12 项定向测试通过，完整构建、diff check、设计扫描通过。没有复制上游源码或模型资产。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 2
+      stopped_because: null
+  - id: T026
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "在用户明确要求下，将 XiaoLuo 项目的源码组件作为本地内部原型直接复用并接入 DramaClaw；保留上游来源说明，隔离非授权商业再分发，适配现有镜头/身份表演状态和生成请求。"
+    allowed_files:
+      - frontend/package.json
+      - frontend/pnpm-lock.yaml
+      - frontend/src/features/canvas/reference/xiaoluo/**
+      - frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/features/canvas/ui/IdentityCallPanel.tsx
+      - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+      - frontend/src/features/canvas/preview/ThreeMannequinViewport.tsx
+      - frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx
+      - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+      - frontend/public/xiaoluo/**
+      - frontend/public/xiaoluo/basis/basis_transcoder.js
+      - frontend/public/xiaoluo/basis/basis_transcoder.wasm
+      - frontend/public/xiaoluo/expression-atlas-female-v1.png
+      - frontend/public/xiaoluo/expression-atlas-male-v1.png
+      - frontend/public/xiaoluo/expression-preset-sheet-01-v2.png
+      - frontend/public/xiaoluo/expression-preset-sheet-02-v2.png
+      - frontend/public/xiaoluo/expression-preset-sheet-03-v2.png
+      - frontend/public/xiaoluo/expression-preset-sheet-04-v2.png
+      - frontend/public/xiaoluo/expression-preset-sheet-05-v2.png
+      - frontend/public/xiaoluo/mannequin-female.png
+      - frontend/public/xiaoluo/mannequin-male.png
+      - frontend/public/xiaoluo/models/facecap.glb
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+      - docs/compliance/xiaoluo-emotion-director-studio-notice.md
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/package.json frontend/pnpm-lock.yaml frontend/src/features/canvas/reference/xiaoluo frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/ui/IdentityCallPanel.tsx frontend/src/features/canvas/preview/CharacterFacePreview.tsx frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/public/xiaoluo frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json docs/compliance/xiaoluo-emotion-director-studio-notice.md"
+      - "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/ui/IdentityCallPanel.tsx"
+    stop_if:
+      - "上游来源继续没有许可证且需要将复用内容作为可再发布产品依赖；记录阻塞并保留内部原型隔离。"
+      - "需要复制或分发 FaceCap/其他第三方资产却无法在 notice 中明确标注来源和内部限制。"
+      - "依赖安装要求升级核心框架或改变现有生成/保存契约。"
+      - "复用后的状态桥接无法证明按镜头/身份保存恢复或进入图像/视频请求。"
+      - "指定测试或完整构建两次失败且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/package.json
+        - frontend/pnpm-lock.yaml
+        - frontend/src/features/canvas/reference/xiaoluo/components/MinimalMatrixStudio.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/FacialParameterPanel.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/EmotionPresets.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/EmotionTimeline.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/MannequinHeadViewport.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/ThreeMannequinViewport.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/VideoRecorderModal.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/components/PromptGenerator.tsx
+        - frontend/src/features/canvas/reference/xiaoluo/data/presets.ts
+        - frontend/src/features/canvas/reference/xiaoluo/store/useEmotionStore.ts
+        - frontend/src/features/canvas/reference/xiaoluo/types.ts
+        - frontend/src/features/canvas/reference/xiaoluo/utils/promptBuilder.ts
+        - frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/features/canvas/preview/ThreeMannequinViewport.tsx
+        - frontend/src/features/canvas/preview/CharacterFacePreview.tsx
+        - frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx
+        - frontend/public/xiaoluo/basis/basis_transcoder.js
+        - frontend/public/xiaoluo/basis/basis_transcoder.wasm
+        - frontend/public/xiaoluo/expression-atlas-female-v1.png
+        - frontend/public/xiaoluo/expression-atlas-male-v1.png
+        - frontend/public/xiaoluo/expression-preset-sheet-01-v2.png
+        - frontend/public/xiaoluo/expression-preset-sheet-02-v2.png
+        - frontend/public/xiaoluo/expression-preset-sheet-03-v2.png
+        - frontend/public/xiaoluo/expression-preset-sheet-04-v2.png
+        - frontend/public/xiaoluo/expression-preset-sheet-05-v2.png
+        - frontend/public/xiaoluo/mannequin-female.png
+        - frontend/public/xiaoluo/mannequin-male.png
+        - frontend/public/xiaoluo/models/facecap.glb
+        - docs/compliance/xiaoluo-emotion-director-studio-notice.md
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- T026 allowed files"
+          status: pass
+        - cmd: "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/ui/IdentityCallPanel.tsx"
+          status: pass
+      summary: "按用户明确要求将 XiaoLuo 交互源码组件和 FaceCap/表达图集/Basis 资产本地接入，Three.js 依赖加入 lockfile。矩阵、上游面部参数、时间轴和 ThreeMannequinViewport 由 bridge 映射到现有镜头/身份 performances 与 keyframes，生成请求契约测试保持通过。来源 notice 记录上游无 LICENSE、FaceCap 第三方声明以及仅本地内部非商用使用；没有宣称可商业再分发。定向 12 项、完整构建、diff check 与 detector 通过。"
+      deviations:
+        - "上游无明确许可证；按用户限定仅用于本地内部非商用原型，公开或商业分发前须取得权利人许可或移除/替换相关内容。"
+      remaining_blockers:
+        - "最终实际视觉效果尚缺浏览器确认；用户此前反馈参考差距显著，本轮仍需核验唯一主预览和矩阵布局。"
+      verification_attempts: 1
+      stopped_because: null
+  - id: T027
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "收尾直接复用后的布局：移除重复的 DramaClaw 程序化预览，让 XiaoLuo MannequinHeadViewport 成为唯一主预览；情绪页将该预览与上游情绪矩阵并列，面部/时间轴页保持预览在前，避免双头和纵向堆叠。"
+    allowed_files:
+      - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+      - frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx
+      - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+      - frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+      - "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx"
+    stop_if:
+      - "修改上游参考目录、FaceCap 资产或生成/保存状态契约。"
+      - "需要修改 T026 allowlist 外代码。"
+      - "定向测试或 build 两次失败且无明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+        - frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx
+        - frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx
+        - frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx src/__tests__/features/canvas/character-performance-editor.test.tsx src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx frontend/src/__tests__/features/canvas/character-performance-editor.test.tsx frontend/src/__tests__/features/canvas/xiaoluo-performance-studio.test.tsx frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+          status: pass
+        - cmd: "node /Users/mac/.agents/skills/impeccable/scripts/detect.mjs --json frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/components/XiaoLuoPerformanceStudio.tsx"
+          status: pass
+      summary: "移除了旧 DramaClaw 预览与上游 MannequinHeadViewport 同屏重复显示。情绪分区将唯一上游 3D 预览与 XiaoLuo 矩阵并列；面部和时间轴分区保持预览优先。补充组件布局断言。定向 13 项、完整构建、diff check 和 detector 均通过。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T028
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "修复用户反馈的“应用已更新”全屏弹窗反复出现：对动态 chunk 加载失败执行每个构建一次的缓存规避自动恢复；若仍失败保留明确的手动刷新入口，并避免重试循环。"
+    allowed_files:
+      - frontend/src/lib/chunk-load-recovery.ts
+      - frontend/src/components/app-update-required.tsx
+      - frontend/src/__tests__/lib/chunk-load-recovery.test.ts
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/lib/chunk-load-recovery.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/lib/chunk-load-recovery.ts frontend/src/components/app-update-required.tsx frontend/src/__tests__/lib/chunk-load-recovery.test.ts frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+    stop_if:
+      - "回归用例无法证明同一构建最多自动刷新一次或刷新参数能规避旧 HTML 缓存。"
+      - "修复需要修改允许文件之外的产品代码。"
+      - "两次测试或构建失败且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/lib/chunk-load-recovery.ts
+        - frontend/src/components/app-update-required.tsx
+        - frontend/src/__tests__/lib/chunk-load-recovery.test.ts
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/lib/chunk-load-recovery.test.ts"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/lib/chunk-load-recovery.ts frontend/src/components/app-update-required.tsx frontend/src/__tests__/lib/chunk-load-recovery.test.ts frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+          status: pass
+      summary: "动态 chunk 加载错误时，弹窗挂载后按 BUILD_ID 在当前标签页自动强刷一次，并通过 __app_chunk_recovery 查询参数规避旧 HTML 缓存；同一构建第二次失败不再自动重试，手动按钮也使用缓存规避 URL。保留路径、canvas 参数和 hash。8 项定向测试、前端构建、diff check 通过。"
+      deviations: []
+      remaining_blockers:
+        - "尚未在用户实际弹窗页面验证自动恢复能否避开其部署/CDN中的缺失 chunk；若相同 chunk 仍缺失，修复需要服务端/CDN部署信息。"
+      verification_attempts: 1
+      stopped_because: null
+  - id: T029
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "在 chunk 错误无法自动恢复时，给全屏错误页增加通往项目列表的逃生路径，让其他已加载页面仍可使用；保留缓存规避重试按钮。"
+    allowed_files:
+      - frontend/src/components/app-update-required.tsx
+      - frontend/src/lib/chunk-load-recovery.ts
+      - frontend/src/__tests__/lib/chunk-load-recovery.test.ts
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/lib/chunk-load-recovery.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/components/app-update-required.tsx frontend/src/lib/chunk-load-recovery.ts frontend/src/__tests__/lib/chunk-load-recovery.test.ts frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+    stop_if:
+      - "逃生路径会丢弃当前 query/hash 或产生自动导航循环。"
+      - "需要修改 allowlist 外产品代码。"
+      - "指定测试或 build 两次失败且无明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/components/app-update-required.tsx
+        - frontend/src/lib/chunk-load-recovery.ts
+        - frontend/src/__tests__/lib/chunk-load-recovery.test.ts
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/lib/chunk-load-recovery.test.ts"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/components/app-update-required.tsx frontend/src/lib/chunk-load-recovery.ts frontend/src/__tests__/lib/chunk-load-recovery.test.ts frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+          status: pass
+      summary: "为 chunk 错误恢复页新增返回项目列表入口；缓存规避自动重载一次失败后，用户仍可离开无法加载的页面继续用其它路由。保留手动强制刷新。新增 1 个行为测试覆盖逃生路径；9 项 recovery 定向测试、前端构建与 diff check 通过。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T030
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "若单次缓存规避自动重载后当前路由仍因 chunk 错误不可用，自动退出到项目列表；根路由也失败时停止自动导航，避免循环。"
+    allowed_files:
+      - frontend/src/lib/chunk-load-recovery.ts
+      - frontend/src/components/app-update-required.tsx
+      - frontend/src/__tests__/lib/chunk-load-recovery.test.ts
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - frontend/public/locales/zh/translation.json
+    verify:
+      - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/lib/chunk-load-recovery.test.ts"
+      - "corepack pnpm@11.5.0 --dir frontend build"
+      - "git diff --check -- frontend/src/lib/chunk-load-recovery.ts frontend/src/components/app-update-required.tsx frontend/src/__tests__/lib/chunk-load-recovery.test.ts frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+    stop_if:
+      - "自动退回会在根路由或同一构建间形成导航循环。"
+      - "需要修改 allowed_files 外的产品代码。"
+      - "指定测试或构建两次失败且没有明确修复方向。"
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/components/app-update-required.tsx
+        - frontend/src/lib/chunk-load-recovery.ts
+        - frontend/src/__tests__/lib/chunk-load-recovery.test.ts
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - frontend/public/locales/zh/translation.json
+      commands:
+        - cmd: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/lib/chunk-load-recovery.test.ts"
+          status: pass
+        - cmd: "corepack pnpm@11.5.0 --dir frontend build"
+          status: pass
+        - cmd: "git diff --check -- frontend/src/components/app-update-required.tsx frontend/src/lib/chunk-load-recovery.ts frontend/src/__tests__/lib/chunk-load-recovery.test.ts frontend/public/locales/en/translation.json frontend/public/locales/vi/translation.json frontend/public/locales/zh/translation.json"
+          status: pass
+      summary: "单次缓存规避刷新仍失败后，若当前不在项目列表则自动导航到 `/`；根路径自身失败时不再导航，避免循环。弹窗标题/说明改为准确描述页面 chunk 加载失败、自动重试与退回行为，并保留手动强制刷新。10 项恢复测试、完整构建和 diff check 通过。"
+      deviations: []
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+  - id: T006
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: low
+    objective: "只读复现并定位 T003 的前端构建失败，区分 T003 白名单内问题与工作区已有的白名单外变更，并给出不修改其他任务文件的后续选择。"
+    inputs:
+      - "T003 阻塞回执中的 pnpm build 命令与错误文件摘要"
+      - "当前 git status 与各错误文件相对 HEAD 的差异"
+      - "T003 新增的表演状态实现"
+    constraints:
+      - "只读诊断，不修改任何文件或 state.yaml。"
+      - "使用锁定的 pnpm 版本复现，记录完整诊断文件、行号、错误码与命令退出码。"
+      - "检查每个错误文件是否在 T003 allowed_files 内，且是否已有用户未提交/未跟踪内容；不要覆盖、暂存、还原或修改它们。"
+      - "确认 T003 白名单内是否仍有错误，以及是否有可信的定向类型验证方案。"
+      - "不要为让 build 通过而编辑其他任务或用户现有文件。"
+    expected_output:
+      - "完整构建诊断和精确错误定位"
+      - "按 T003 白名单内外分类的错误归属证据"
+      - "是否能在不触碰现有用户差异的情况下继续验证 T003 的决定建议"
+      - "建议后续最大安全 Worker 或 Judge 任务"
+    receipt:
+      result: done
+      summary: "使用锁定的 pnpm 11.5.0 复现前端构建失败，退出码 2。错误涉及五组 T003 白名单外文件，T003 白名单文件未出现在 TypeScript 诊断中。白名单内两个定向 Vitest 文件通过；单独的 tsc --noEmit 没有检查项目，因为它未使用项目构建配置，不能作为类型验证证据。工作区显示字符表演改动及其他 ingest/prototype 改动均未提交或未跟踪。建议先由 T007 Judge 审查阻塞边界，再决定能否继续独立的视频时间轴或 3D 预览切片；不应声称完整构建通过。"
+      evidence:
+        - path: docs/goals/character-expression-control/state.yaml
+          detail: "T003 allowed_files 为 canvasNodes.ts、characterPerformance.ts、CharacterPerformanceEditor.tsx、VideoNode.tsx、ImageGenNode.tsx、三语翻译文件及两个 character-performance 测试文件。T003 stop_if 明确要求遇到 allowlist 外问题时停止。"
+        - path: "corepack pnpm@11.5.0 --dir frontend build"
+          detail: "复现失败，退出码 2。错误：video-reshoot-timeline.test.tsx:251、252 TS2339；IdentityLookDesign.tsx:148、165、204 TS2367，149、166、204、300 TS2339；visual-look.tsx:35、51、67、83、102、113、156、169、178、188、209 TS6133；prototypes/xialiao-desk/AnnotatedDesk.tsx:11、DialogueDesk.tsx:15、InspectorDesk.tsx:11 TS2322；desk.ts:128 TS2550；views.tsx:58、166、167 TS2322；characters.lazy.tsx:210、1190、1204、1208、1448、1469 TS6133。"
+        - path: "git status --short"
+          detail: "错误文件中可直接确认的现存未跟踪内容包括 frontend/src/prototypes/xialiao-desk/；目标目录本身也作为未跟踪 GoalBuddy 状态出现。总状态显示 ingest、prototype 等工作区改动。"
+        - path: "git status --short -- frontend/src/features/canvas frontend/src/prototypes frontend/src/routes/prototypes.xialiao-desk.tsx"
+          detail: "canvasNodes.ts、ImageGenNode.tsx、VideoNode.tsx 为已修改；表演组件目录、characterPerformance.ts、prototypes 目录和 prototype 路由为未跟踪，属于 T003 allowlist 内新增内容或白名单外 prototype 工作区内容。"
+        - path: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          detail: "退出码 0；2 个测试文件、4 项测试通过。"
+        - path: "corepack pnpm@11.5.0 --dir frontend exec tsc --build --pretty false --force"
+          detail: "退出码 2，复现了相同的白名单外 TypeScript 错误，没有 T003 白名单文件诊断。"
+        - path: "corepack pnpm@11.5.0 --dir frontend exec tsc --noEmit --pretty false"
+          detail: "退出码 0 且无输出；此调用没有项目构建配置参数，不能证明白名单代码通过项目级类型检查。"
+        - path: "git diff --check -- frontend/src/features/canvas/domain/canvasNodes.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/src/features/canvas/nodes/VideoNode.tsx"
+          detail: "退出码 0；仅验证这三份已跟踪差异无空白错误，不是 TypeScript 验证。"
+        - path: frontend/src/features/canvas/domain/characterPerformance.ts
+          detail: "检索确认状态格式化与 identity 关联逻辑位于此白名单文件；图索引报告新建文件 not_tracked，已有修改文件 metadata_changed，因此源文件覆盖不完整，未依赖图索引得出类型结论。"
+      facts:
+        - claim: "复现的 TypeScript 诊断均来自 T003 allowed_files 之外的路径，没有白名单内文件的诊断。"
+          evidence: "state.yaml 的 allowed_files 与构建完整输出逐项比对。"
+        - claim: "当前白名单内可可信运行的定向验证是 T003 指定的两个 Vitest 文件；两文件共 4 项通过。"
+          evidence: "锁定 pnpm 11.5.0 定向 Vitest 命令退出码 0。"
+        - claim: "工作区有未提交或未跟踪的 ingest/prototype 内容；prototype 目录本身未跟踪。"
+          evidence: "git status --short 与路径限定状态。"
+        - claim: "无法仅凭当前状态断言每个构建错误文件都是工作区改动：部分错误文件不在 status 输出中，可能是 HEAD 上的代码；prototype/xialiao-desk 路径则确认为未跟踪。"
+          evidence: "路径限定 git status 输出。"
+        - claim: "T003 仍缺浏览器保存重载及静帧/视频请求 payload 证据；定向测试不能替代这些验收。"
+          evidence: "T003 receipt 的 remaining_blockers 与 verify 条款。"
+      contradictions:
+        - claim: "T003 阻塞回执把剩余 TypeScript 错误归于白名单外文件；本次复现支持该分类，但不能证明这些错误全部来自工作区已有变更。"
+          evidence: "诊断路径与 allowed_files 对照；git status 仅确认其中 prototype 路径为未跟踪，其他错误文件状态有的未显示差异。"
+      ambiguity_requiring_judge:
+        - "T007 Judge 应判断：在白名单 Vitest 通过但项目构建仍被其他文件阻断的情况下，是否可保留 T003 blocked 并授权进入 T004 视频时间轴切片。"
+        - "若要继续，Judge 需给出不依赖整体 build 成功的可信定向类型验证方式，或明确由谁、在哪个独立任务中处理其他类型错误；不得把 tsc --noEmit 的空跑结果当成类型通过。"
+        - "T005 3D 预览按现有计划必须顺序实施，建议等待 Judge 明确 T003 阻塞边界及 T004/T005 任务契约后再派发。"
+      commands:
+        - command: "sed -n '1,240p' docs/goals/character-expression-control/state.yaml"
+          exit_code: 0
+          purpose: "读取任务板及 T003 allowlist、验证和阻塞回执。"
+        - command: "git status --short"
+          exit_code: 0
+          purpose: "只读检查工作区未提交与未跟踪路径。"
+        - command: "git diff -- frontend"
+          exit_code: 0
+          purpose: "只读确认现存前端差异范围；输出较长，未用于判断具体改动内容。"
+        - command: "corepack pnpm@11.5.0 --dir frontend build"
+          exit_code: 2
+          purpose: "用锁定版本复现构建错误。"
+        - command: "corepack pnpm@11.5.0 --dir frontend exec tsc --noEmit --pretty false"
+          exit_code: 0
+          purpose: "探查简单 noEmit 调用；因未加载项目配置，不构成有效类型验证。"
+        - command: "git status --short -- frontend/src/features/canvas frontend/src/prototypes frontend/src/routes/prototypes.xialiao-desk.tsx"
+          exit_code: 0
+          purpose: "只读核对目标实现与 prototype 工作区路径状态。"
+        - command: "git diff --numstat -- frontend/src/features/canvas/domain/canvasNodes.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/domain/characterPerformance.ts frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx"
+          exit_code: 0
+          purpose: "检查白名单改动路径；未跟踪文件不会出现在该统计中。"
+        - command: "corepack pnpm@11.5.0 --dir frontend exec tsc --build --pretty false --force"
+          exit_code: 2
+          purpose: "项目模式复现 TypeScript 诊断。"
+        - command: "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          exit_code: 0
+          purpose: "运行 T003 指定的定向测试。"
+        - command: "git diff --check -- frontend/src/features/canvas/domain/canvasNodes.ts frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/src/features/canvas/nodes/VideoNode.tsx"
+          exit_code: 0
+          purpose: "检查已跟踪白名单差异的空白格式。"
+        - command: "rg -n \"characterPerformance|CharacterPerformanceEditor|performance\" frontend/src/features/canvas/domain/characterPerformance.ts frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx frontend/src/features/canvas/nodes/VideoNode.tsx frontend/src/features/canvas/nodes/ImageGenNode.tsx frontend/src/__tests__/features/canvas/character-performance*.ts*"
+          exit_code: 0
+          purpose: "确认目标功能符号落点，供后续定向验证评估。"
+      note_needed: false
+  - id: T007
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "审查 T006 诊断与 T003 回执，决定阻塞构建的处理边界及何时可继续视频时间轴切片。"
+    inputs:
+      - "T003 与 T006 回执"
+      - "用户现有工作区差异归属证据"
+      - "Goal Oracle 与 T003 验收要求"
+    constraints:
+      - "只审查，不修改实现或用户现有差异。"
+      - "不得以跳过或隐藏白名单外类型错误的方式声称完整构建通过。"
+      - "若 T003 核心行为由定向测试充分覆盖，可批准其以 blocked 状态保留并继续独立的安全工作；若否，提出精确修复方案和文件范围。"
+      - "视频时间轴和 3D 预览仍须顺序实施。"
+    expected_output:
+      - "对 T003 完成/阻塞状态的判断"
+      - "可执行的后续 Worker 契约，或明确的剩余阻塞"
+      - "如何保留用户已有改动并完成目标 Oracle 的证据计划"
+    receipt:
+      result: done
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T003 保持 blocked：定向测试通过可作为阶段实现证据，但构建失败和浏览器验收缺失仍是阻塞，不能记为完整交付。可顺序启动 T004；若锁定版本完整构建仍被板外诊断阻断，必须如实保留阻塞，不能跳过构建门禁。先完成 T004，再处理独立构建归属任务并解除门禁，然后进入 T005。T005 使用无外部资产的程序化 PlayCanvas 头部；管理员策略阻止浏览器验收时只记录阻塞，不换自动化途径冒报成功。"
+      worker_package:
+        objective: "在前序状态模型上完成按镜头和身份隔离的视频表情关键帧、插值及时间戳提示词接入。"
+        allowed_files:
+          - frontend/src/features/canvas/domain/canvasNodes.ts
+          - frontend/src/features/canvas/domain/characterPerformance.ts
+          - frontend/src/features/canvas/domain/characterPerformanceTimeline.ts
+          - frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx
+          - frontend/src/features/canvas/nodes/VideoNode.tsx
+          - frontend/src/__tests__/features/canvas/character-performance-timeline.test.ts
+          - frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx
+        verify:
+          - "corepack pnpm@11.5.0 --dir frontend exec vitest run src/__tests__/features/canvas/character-performance-timeline.test.ts src/__tests__/features/canvas/character-performance-requests.test.tsx"
+          - "corepack pnpm@11.5.0 --dir frontend build"
+          - "浏览器验收：确认多身份关键帧可编辑，保存并重载后仍绑定原镜头和身份，且视频提交请求中的关键帧按时间顺序序列化。若管理员策略阻止浏览器操作，记录该阻塞，不以其他自动化方式替代验收。"
+        stop_if:
+          - "请求接口或模型不支持该视频路径，且没有可验证的提示词适配方案。"
+          - "需要修改 allowlist 外的文件。"
+          - "完整构建失败：记录完整诊断并保留任务阻塞，不跳过构建门禁，也不修改诊断涉及的白名单外文件。"
+          - "管理员策略阻止浏览器验收：保留缺失证据，不得声称端到端验收通过。"
+          - "同一验证失败两次且没有明确修复方向。"
+          - "实现破坏按镜头与身份隔离、关键帧时间顺序、既有身份外观语义、参考图顺序或模型参考图上限。"
+      evidence:
+        - "T003 回执记录基础按镜头和身份的表演状态、静帧及视频描述接入已实现；锁定版定向 Vitest 为 2 个文件、4 项通过，locale JSON 解析和 git diff --check 通过。它仍因完整构建失败和浏览器证据缺失而 blocked。"
+        - "T006 使用 corepack pnpm@11.5.0 复现构建退出码 2；报告的诊断不涉及 T003 allowlist 文件，但不能断言所有错误均来自工作区改动。`tsc --noEmit` 未加载项目配置，不是可信的类型验证。"
+        - "T002 计划中 T004 文件清单为：frontend/src/features/canvas/domain/canvasNodes.ts、frontend/src/features/canvas/domain/characterPerformance.ts、frontend/src/features/canvas/domain/characterPerformanceTimeline.ts、frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx、frontend/src/features/canvas/nodes/VideoNode.tsx、frontend/src/__tests__/features/canvas/character-performance-timeline.test.ts、frontend/src/__tests__/features/canvas/character-performance-requests.test.tsx；本契约按原清单逐项照录。"
+        - "T005 计划边界：frontend/src/features/canvas/preview/CharacterFacePreview.tsx、frontend/src/features/canvas/preview/characterFaceScene.ts、frontend/src/features/canvas/components/CharacterPerformanceEditor.tsx、frontend/src/__tests__/features/canvas/character-face-preview.test.tsx。复用已依赖的 PlayCanvas，以自行编写的无外部资产程序化简化头部替代未确认授权的头模；眉、眼睑、嘴、下颌控制须有可观察响应，明确标注“通用控制预览，不代表最终角色”。"
+        - "T005 是非平凡 UI 工作，开始前须阅读 `12ui-design` skill 和仓库 `DESIGN.md`。若 skill 所需设计工具无法按环境策略使用，应如实记录阻塞。"
+        - "当前证据缺少浏览器保存/重载、图像和视频实际请求记录、时间轴浏览器验收及 3D 控件响应验收；生成模型精确执行表演仍不能据此主张。"
+      subgoal_contract: null
+      parallel_safety:
+        parallel_workers_safe: false
+        reason: "state.yaml 限制 max_write_workers 为 1；T004 与 T005 都会改 CharacterPerformanceEditor.tsx，且 T005 的交付依赖前序状态模型。按 T004、构建门禁归属处理、T005 的顺序推进。"
+      blocked_tasks:
+        - "T003：维持 blocked，直至项目构建门禁和缺失的浏览器验收得到处理；不能把定向测试单独视为完成。"
+      missing_evidence:
+        - "T003 浏览器编辑、保存并重载、图像和视频实际请求 payload 证据。"
+        - "T004 多身份关键帧时间顺序进入视频请求的浏览器证据，以及完整构建通过证据。"
+        - "T005 眉、眼、嘴控制触发模型响应的浏览器证据；若管理员策略阻止浏览器操作，必须保留此项缺失。"
+        - "既有角色脸图、三视图、九宫格和参考图顺序/数量限制在端到端流程中保持有效的验收证据。"
+        - "构建诊断各文件的准确归属及可安全修复范围；T006 已说明错误不能全部归因于工作区变更。"
+      required_board_updates:
+        - "保持 T003 status: blocked，不把其回执改写为完成。"
+        - "将本回执中的 T004 objective、allowed_files、verify、stop_if 写入对应任务后再派发。"
+        - "为构建错误另立独立的归属核对与门禁处理任务；先确认文件状态和所有权，再精确确定可修改范围。不得覆盖、回退或擅改现有 ingest、locale、prototype 等未提交或未跟踪差异。"
+        - "T004 完成后再派发 T005，写入上述四个 allowlist 路径、PlayCanvas 程序化替代方案、设计 skill 与 DESIGN.md 前置要求，以及浏览器证据受管理员策略阻止时的诚实记录条件。"
+        - "保留完整构建命令作为门禁；若错误仍位于任务 allowlist 外，记录阻塞并转由独立任务处理，不得通过跳过构建或修改未经授权的文件宣称通过。"
+  - id: T031
+    type: pm
+    assignee: PM
+    status: active
+    objective: "改善实时人头清晰度并改为脸部特写，核实与参考图片的一致性边界。"
+    inputs:
+      - "用户要求高精度、减少脖子以下部分并突出脸部，已要求继续。"
+    constraints:
+      - "仅修改预览与相机，保留现有生成请求和镜头状态协议。"
+      - "不能把细分低模或静态图片声称为参考图对应的高精度可驱动模型。"
+      - "必须观察脸部变形，不能以标签或姿态变化代替。"
+    allowed_files:
+      - frontend/src/features/canvas/reference/xiaoluo/components/ThreeMannequinViewport.tsx
+      - frontend/src/features/canvas/reference/xiaoluo/utils/facePreviewGeometry.ts
+      - frontend/src/__tests__/features/canvas/face-preview-geometry.test.ts
+      - docs/goals/character-expression-control/notes/T031-face-preview.md
+    verify:
+      - "定向几何及角色表演测试、TypeScript、前端构建"
+      - "浏览器面部近景和连续情绪切换截图"
+    stop_if:
+      - "必须购买或需要私有资产时记录范围，继续完成可独立的取景改进。"
+    receipt: null
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: high
+    objective: "最终审查是否完整满足角色表演控制台的端到端用户结果。"
+    inputs:
+      - "所有已完成任务回执"
+      - "最终浏览器演示、重载对比与图像/视频请求证据"
+      - "最后一次相关验证记录与当前差异"
+    constraints:
+      - "只审查，不实现。"
+      - "仍有必要 Worker 任务排队或执行时拒绝完成。"
+      - "仍有安全的本地工作未完成时拒绝完成。"
+      - "核对身份外观兼容、按镜头/身份持久化、图像和视频请求接入、通用 3D 预览及授权边界。"
+      - "只有回执和可复现证据完整映射到 Oracle 时才报告 full_outcome_complete: true。"
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "缺失证据或残余限制"
+      - "若未完成则建议的下一任务"
+    receipt: null
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []

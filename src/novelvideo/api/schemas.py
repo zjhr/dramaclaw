@@ -127,6 +127,62 @@ class IngestStart(BaseModel):
     spine_template: Optional[Literal["drama", "narrated"]] = None
 
 
+class IngestRepair(BaseModel):
+    filename: str
+    spine_template: Literal["drama", "narrated"] = "drama"
+    restart: bool = False
+    scene_header: str = ""
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+
+
+class ManuscriptCharacterMapping(BaseModel):
+    original: str = Field(min_length=1, max_length=100)
+    aliases: list[str] = Field(default_factory=list, max_length=20)
+    replacement: str = Field(default="", max_length=100)
+    replacement_aliases: list[str] = Field(default_factory=list, max_length=20)
+    gender: Literal["male", "female", "animal", "unknown"] = "unknown"
+    selected: bool = False
+
+
+class IngestManuscriptAction(BaseModel):
+    filename: str
+    action: Literal[
+        "hook",
+        "wash",
+        "cast_preview",
+        "cast_apply",
+        "gender_preview",
+        "gender_apply",
+        "imitate",
+        "adapt",
+    ]
+    spine_template: Literal["drama", "narrated"] = "drama"
+    style: str = "default"
+    mappings: list[ManuscriptCharacterMapping] = Field(default_factory=list, max_length=200)
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+
+
+class SaveManuscriptImitation(BaseModel):
+    filename: str
+    content: str = Field(min_length=1, max_length=2_000_000)
+    spine_template: Literal["drama", "narrated"] = "drama"
+    suffix: str = Field(default="深挖仿写", max_length=40)
+    target_template: Literal["drama", "narrated", ""] = ""
+    validate: bool = True
+
+
+class IngestWriteFirst(BaseModel):
+    kind: Literal["novel", "drama"] = "drama"
+    premise: str = Field(min_length=1, max_length=2000)
+    lead: str = Field(default="", max_length=200)
+    count: str = Field(default="", max_length=40)
+    skills: list[str] = Field(default_factory=list, max_length=20)
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+    filename: str = Field(default="", max_length=200)
+    episode: int = Field(default=0, ge=0, le=2000)
+    note: str = Field(default="", max_length=2000)
+
+
 # ── 角色 ──────────────────────────────────────────────────────────────────────
 
 
@@ -1869,6 +1925,46 @@ class FreezoneVideoReshootSuggestPromptRequest(BaseModel):
 
 class FreezoneVideoReshootSuggestPromptData(BaseModel):
     """提示词推荐结果。"""
+
+    prompt: str
+
+
+VideoContinueDirection = Literal[
+    "auto",
+    "plot",
+    "emotion",
+    "action",
+    "camera",
+    "environment",
+    "dialogue",
+    "ending",
+]
+
+
+class FreezoneVideoContinueSuggestPromptRequest(BaseModel):
+    """画布视频节点「向后延长」的提示词推荐请求。
+
+    与重拍推荐的三点区别：抽的是**整片采样帧 + 片尾锚点帧**（续写要知道这条片子
+    在演什么，只给片尾一帧模型会换人换场）；`duration_seconds` 是用户设定的生成段
+    时长，直接约束模型写几个动作节拍；`direction` 是用户选的发展方向。
+    """
+
+    source_url: str = Field(description="待分析的源视频静态地址")
+    end_seconds: float = Field(
+        gt=0.0, le=86400.0, description="片尾锚点秒数，必须落在片内"
+    )
+    duration_seconds: int = Field(
+        default=5, ge=1, le=600, description="续写段的目标时长（秒），用于约束动作节拍数量"
+    )
+    direction: VideoContinueDirection = Field(
+        default="auto", description="发展方向：剧情推进 / 情绪递进 / 动作爆发等"
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id")
+    node_id: str = Field(default="", description="可选：来源节点 id")
+
+
+class FreezoneVideoContinueSuggestPromptData(BaseModel):
+    """延长提示词推荐结果。"""
 
     prompt: str
 

@@ -37,8 +37,56 @@ export interface UploadResult {
   total_chars?: number;
   billable_chars?: number;
   count?: number;
+  episode?: number;
   chapters?: Chapter[];
   format_check?: FormatCheck;
+}
+
+export interface ManuscriptCharacterMapping {
+  original: string;
+  aliases: string[];
+  replacement: string;
+  replacement_aliases: string[];
+  gender: "male" | "female" | "animal" | "unknown";
+  selected: boolean;
+}
+
+export interface ManuscriptActionRequest {
+  filename: string;
+  action:
+    | "hook"
+    | "wash"
+    | "cast_preview"
+    | "cast_apply"
+    | "gender_preview"
+    | "gender_apply"
+    | "imitate"
+    | "adapt";
+  spine_template: SpineTemplate;
+  style?: string;
+  mappings?: ManuscriptCharacterMapping[];
+  reasoning_effort?: "none" | "low" | "medium" | "high";
+}
+
+export interface ManuscriptActionResult {
+  action: ManuscriptActionRequest["action"];
+  working_filename?: string;
+  mappings?: ManuscriptCharacterMapping[];
+  content?: string;
+  upload?: UploadResult;
+  calls?: string[];
+}
+
+export interface WriteFirstRequest {
+  kind: "novel" | "drama";
+  premise: string;
+  lead: string;
+  count: string;
+  skills: string[];
+  reasoning_effort?: "none" | "low" | "medium" | "high";
+  filename?: string;
+  episode?: number;
+  note?: string;
 }
 
 interface ChaptersResult {
@@ -154,6 +202,129 @@ export function useKnowledgeGraph(project: string, enabled = true) {
         .json<OkResponse<KnowledgeGraphSnapshot>>(),
     enabled: !!project && enabled,
     staleTime: 30_000,
+  });
+}
+
+export interface ManuscriptRepairResult {
+  original_filename: string;
+  working_filename: string;
+  chapter_number: number;
+  chunk_index: number;
+  chunk_count: number;
+  chapter_count: number;
+  completed_chapters: number[];
+  done: boolean;
+  needs_choice?: boolean;
+  choices?: string[];
+  calls?: string[];
+  format_check?: FormatCheck;
+  upload?: UploadResult;
+}
+
+export function useRepairManuscript(project: string) {
+  return useMutation({
+    mutationFn: async (params: {
+      filename: string;
+      spine_template: SpineTemplate;
+      restart?: boolean;
+      scene_header?: string;
+      reasoning_effort?: "none" | "low" | "medium" | "high";
+    }) => {
+      const response = await jsonWithBackendError<
+        | (OkResponse<ManuscriptRepairResult> & { error?: string })
+        | (ErrorResponse & { data?: ManuscriptRepairResult })
+      >(
+        api.post(p`api/v1/projects/${project}/ingest/repair`, {
+          json: params,
+          timeout: 900_000,
+          throwHttpErrors: false,
+        }),
+      );
+      if (!response.ok) {
+        const failed = new Error(response.error || "repair failed") as Error & {
+          calls?: string[];
+        };
+        if (response.data?.calls?.length) {
+          failed.calls = response.data.calls;
+        }
+        throw failed;
+      }
+      return response;
+    },
+  });
+}
+
+export function useManuscriptAction(project: string) {
+  return useMutation({
+    mutationFn: async (params: ManuscriptActionRequest) => {
+      const response = await jsonWithBackendError<
+        | (OkResponse<ManuscriptActionResult> & { error?: string })
+        | (ErrorResponse & { data?: ManuscriptActionResult })
+      >(
+        api.post(p`api/v1/projects/${project}/ingest/manuscript-action`, {
+          json: params,
+          timeout: 1_800_000,
+          throwHttpErrors: false,
+        }),
+      );
+      if (!response.ok) {
+        const failed = new Error(response.error || "manuscript action failed") as Error & {
+          calls?: string[];
+        };
+        if (response.data?.calls?.length) failed.calls = response.data.calls;
+        throw failed;
+      }
+      return response;
+    },
+  });
+}
+
+export function useWriteFirst(project: string) {
+  return useMutation({
+    mutationFn: async (params: WriteFirstRequest) => {
+      const response = await jsonWithBackendError<
+        | (OkResponse<{ upload: UploadResult; quality_issues?: string[] }> & { error?: string })
+        | (ErrorResponse & { data?: { upload: UploadResult; quality_issues?: string[] } })
+      >(
+        api.post(p`api/v1/projects/${project}/ingest/write-first`, {
+          json: params,
+          timeout: 1_800_000,
+          throwHttpErrors: false,
+        }),
+      );
+      if (!response.ok || !response.data?.upload) {
+        throw new Error(response.error || "failed to write the first unit");
+      }
+      return response.data;
+    },
+  });
+}
+
+export function useSaveManuscriptImitation(project: string) {
+  return useMutation({
+    mutationFn: async (params: {
+      filename: string;
+      content: string;
+      spine_template: SpineTemplate;
+      suffix?: string;
+      target_template?: SpineTemplate | "";
+      validate?: boolean;
+    }) => {
+      const response = await jsonWithBackendError<
+        | (OkResponse<{ upload: UploadResult; import_started: false }> & { error?: string })
+        | (ErrorResponse & { data?: { upload: UploadResult; import_started: false } })
+      >(
+        api.post(p`api/v1/projects/${project}/ingest/manuscript-action/save-imitation`, {
+          json: params,
+          timeout: 60_000,
+          throwHttpErrors: false,
+        }),
+      );
+      if (!response.ok || !response.data?.upload) {
+        throw new Error(response.error || "failed to save imitation");
+      }
+      return response.data.upload;
+    },
   });
 }
 

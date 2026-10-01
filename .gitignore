@@ -48,6 +48,8 @@ scripts/incident_drills/.drill.local.env
 .obsidian/
 .serena
 .prototype-ui
+.codebase-memory
+
 # 用 `docs/*` 而非 `docs/`：`docs/` 会把 docs 目录本身排除，git 就不再往里看，
 # 下面两条 `!docs/goals/...` 放行规则永远匹配不到（GoalBuddy 看板与 notes 会静默消失）。
 docs/*

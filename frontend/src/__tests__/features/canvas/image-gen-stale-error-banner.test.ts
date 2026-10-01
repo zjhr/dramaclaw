@@ -26,12 +26,15 @@ const canvasStoreMock = vi.hoisted(() => {
       listeners.forEach((listener) => listener());
     },
   );
-  const reset = (nodeData: Record<string, unknown>) => {
+  const reset = (
+    nodeData: Record<string, unknown>,
+    nodes: Array<Record<string, unknown>> = [],
+  ) => {
     state = {
       ...actions,
       updateNodeData,
       nodeData,
-      nodes: [],
+      nodes,
       edges: [],
       activeOverlayNodeId: null,
     };
@@ -51,18 +54,36 @@ const canvasStoreMock = vi.hoisted(() => {
 
 vi.mock("@xyflow/react", () => ({
   Handle: () => null,
+  NodeToolbar: ({ children }: { children?: React.ReactNode }) => children ?? null,
   NodeResizeControl: ({ children }: { children?: React.ReactNode }) =>
     children ?? null,
   Position: { Left: "left", Right: "right" },
   useUpdateNodeInternals: () => vi.fn(),
   // 节点按 transform[2] 决定主体图喂原图还是降采样副本；这里固定在缩放 1，
   // 即「不是在细看单张图」那一档。
-  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
-    selector({ transform: [0, 0, 1] }),
+  useStore: (
+    selector: (state: {
+      transform: [number, number, number];
+      nodeLookup: Map<string, { internals: { z: number } }>;
+    }) => unknown,
+  ) => selector({ transform: [0, 0, 1], nodeLookup: new Map() }),
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => {
+      if (key === "node.performance.videoShotNumber") {
+        return `Video shot ${String(values?.number ?? "")}`;
+      }
+      const message = key === "node.performance.imageBindingSelected"
+        ? `Added: {{character}}'s emotion and facial state from “{{shot}}”.`
+        : key;
+      return Object.entries(values ?? {}).reduce(
+        (text, [name, value]) => text.split(`{{${name}}}`).join(String(value)),
+        message,
+      );
+    },
+  }),
 }));
 
 vi.mock("@/stores/canvasStore", async () => {
@@ -211,6 +232,209 @@ function staleErrorOffenders(source: string): string[] {
 }
 
 describe("stale generation-error banner", () => {
+  it("keeps optional shot-performance binding collapsed until explicitly opened", () => {
+    canvasStoreMock.reset(
+      {
+        displayName: "图片",
+        model: "test-model",
+        performanceShotNodeId: "video-1",
+      },
+      [
+        {
+          id: "video-1",
+          type: "videoNode",
+          data: {},
+        },
+      ],
+    );
+
+    function Harness() {
+      const data = useSyncExternalStore(
+        canvasStoreMock.subscribe,
+        () => canvasStoreMock.getState().nodeData as Record<string, unknown>,
+      );
+      return React.createElement(ImageGenNode, {
+        id: "image-1",
+        data,
+        selected: true,
+        width: 580,
+        height: 360,
+        type: "imageGenNode",
+        dragging: false,
+        zIndex: 0,
+        selectable: true,
+        deletable: true,
+        draggable: true,
+        isConnectable: true,
+        positionAbsoluteX: 0,
+        positionAbsoluteY: 0,
+      } as never);
+    }
+
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => render(React.createElement(Harness))).not.toThrow();
+      expect(canvasStoreMock.getState().nodes).toHaveLength(1);
+      const bindingTitle = screen.getByText("node.performance.imageBindingTitle");
+      const disclosure = bindingTitle.closest("details");
+      expect(disclosure).not.toHaveAttribute("open");
+      expect(screen.getByLabelText("node.performance.chooseReferencedCharacter")).not.toBeVisible();
+      fireEvent.click(bindingTitle);
+      expect(disclosure).toHaveAttribute("open");
+      const selector = screen.getByLabelText("node.performance.chooseReferencedCharacter");
+      expect(selector).toBeVisible();
+      expect(selector).toBeDisabled();
+      expect(screen.getByText("node.performance.noShotIdentities")).toBeInTheDocument();
+      expect(screen.queryByLabelText("node.performance.controls.brows")).not.toBeInTheDocument();
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(
+        /Maximum update depth exceeded|getSnapshot should be cached/i,
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("selects a character from shot groups and writes both IDs in one update", () => {
+    canvasStoreMock.reset(
+      { displayName: "静帧", model: "test-model" },
+      [
+        {
+          id: "video-1",
+          type: "videoNode",
+          data: {
+            displayName: "厨房争执",
+            identityCalls: [{ characterName: "林夏", identityId: "identity-linxia" }],
+          },
+        },
+        {
+          id: "video-2",
+          type: "videoNode",
+          data: {
+            identityCalls: [{ characterName: "阿景", identityId: "identity-ajing" }],
+          },
+        },
+        {
+          id: "video-3",
+          type: "videoNode",
+          data: {},
+        },
+      ],
+    );
+
+    function Harness() {
+      const data = useSyncExternalStore(
+        canvasStoreMock.subscribe,
+        () => canvasStoreMock.getState().nodeData as Record<string, unknown>,
+      );
+      return React.createElement(ImageGenNode, {
+        id: "image-1",
+        data,
+        selected: true,
+        width: 580,
+        height: 360,
+        type: "imageGenNode",
+        dragging: false,
+        zIndex: 0,
+        selectable: true,
+        deletable: true,
+        draggable: true,
+        isConnectable: true,
+        positionAbsoluteX: 0,
+        positionAbsoluteY: 0,
+      } as never);
+    }
+
+    render(React.createElement(Harness));
+    fireEvent.click(screen.getByText("node.performance.imageBindingTitle"));
+    const selectors = screen.getAllByLabelText("node.performance.chooseReferencedCharacter");
+    expect(selectors).toHaveLength(1);
+    const selector = selectors[0] as HTMLSelectElement;
+    expect(selector).toHaveValue("");
+    expect(screen.getByRole("group", { name: "厨房争执" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Video shot 2" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "林夏" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "阿景" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "node.performance.noCharactersInShot" })).toBeDisabled();
+    expect(screen.queryByText("video-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("identity-ajing")).not.toBeInTheDocument();
+
+    fireEvent.change(selector, {
+      target: { value: JSON.stringify(["video-2", "identity-ajing"]) },
+    });
+
+    expect(canvasStoreMock.getState().nodeData).toMatchObject({
+      performanceShotNodeId: "video-2",
+      performanceIdentityId: "identity-ajing",
+    });
+    expect(canvasStoreMock.updateNodeData).toHaveBeenCalledTimes(1);
+    expect(canvasStoreMock.updateNodeData).toHaveBeenLastCalledWith("image-1", {
+      performanceShotNodeId: "video-2",
+      performanceIdentityId: "identity-ajing",
+    });
+    expect(selector).toHaveValue(JSON.stringify(["video-2", "identity-ajing"]));
+    const bindingSummary = screen.getByRole("status");
+    expect(bindingSummary).toHaveTextContent("阿景");
+    expect(bindingSummary).toHaveTextContent("Video shot 2");
+    expect(bindingSummary).not.toHaveTextContent("identity-ajing");
+    expect(bindingSummary).not.toHaveTextContent("video-2");
+    expect(screen.getByText("node.performance.imageBindingEditElsewhere")).toBeInTheDocument();
+    expect(screen.queryByLabelText("node.performance.controls.brows")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "node.performance.clearImageBinding" }));
+
+    expect(canvasStoreMock.updateNodeData).toHaveBeenLastCalledWith("image-1", {
+      performanceShotNodeId: null,
+      performanceIdentityId: null,
+    });
+    expect(selector).toHaveValue("");
+    expect(screen.queryByRole("status")).not.toHaveTextContent("阿景");
+  });
+
+  it("restores a saved shot and character binding in the grouped selector", () => {
+    canvasStoreMock.reset(
+      {
+        displayName: "静帧",
+        model: "test-model",
+        performanceShotNodeId: "video-2",
+        performanceIdentityId: "identity-ajing",
+      },
+      [
+        { id: "video-1", type: "videoNode", data: { identityCalls: [{ characterName: "林夏", identityId: "identity-linxia" }] } },
+        { id: "video-2", type: "videoNode", data: { identityCalls: [{ characterName: "阿景", identityId: "identity-ajing" }] } },
+      ],
+    );
+
+    function Harness() {
+      const data = useSyncExternalStore(
+        canvasStoreMock.subscribe,
+        () => canvasStoreMock.getState().nodeData as Record<string, unknown>,
+      );
+      return React.createElement(ImageGenNode, {
+        id: "image-1",
+        data,
+        selected: true,
+        width: 580,
+        height: 360,
+        type: "imageGenNode",
+        dragging: false,
+        zIndex: 0,
+        selectable: true,
+        deletable: true,
+        draggable: true,
+        isConnectable: true,
+        positionAbsoluteX: 0,
+        positionAbsoluteY: 0,
+      } as never);
+    }
+
+    render(React.createElement(Harness));
+    fireEvent.click(screen.getByText("node.performance.imageBindingTitle"));
+    expect(screen.getByLabelText("node.performance.chooseReferencedCharacter")).toHaveValue(
+      JSON.stringify(["video-2", "identity-ajing"]),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("阿景");
+    expect(screen.getByRole("status")).toHaveTextContent("Video shot 2");
+  });
+
   it("removes the rendered failure banner when a history image is restored", () => {
     canvasStoreMock.reset({
       displayName: "图片",
