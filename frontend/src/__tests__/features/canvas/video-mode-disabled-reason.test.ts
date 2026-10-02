@@ -113,3 +113,57 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
     );
   });
 });
+
+describe("videoModeDisabledReason — 视频延长", () => {
+  const WITH_VIDEO_EXTEND = [...WITHOUT_VIDEO_EDIT, "video_extend"];
+
+  it("目录没声明 video_extend 时一律置灰", () => {
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.0",
+        { ...NONE, videos: 1 },
+        zhT,
+        WITHOUT_VIDEO_EDIT,
+      ),
+    ).toBe("该模型不支持「视频延长」");
+  });
+
+  it("恰好 1 个源视频、没有任何图片音频时可��", () => {
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.0",
+        { videos: 1, images: 0, audios: 0 },
+        zhT,
+        WITH_VIDEO_EXTEND,
+      ),
+    ).toBeNull();
+  });
+
+  it("源视频数量不为 1 时给出各自的提示", () => {
+    expect(
+      videoModeDisabledReason("videoExtend", "seedance-2.0", NONE, zhT, WITH_VIDEO_EXTEND),
+    ).toBe("需要连接视频节点（1个）");
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.0",
+        { videos: 2, images: 0, audios: 0 },
+        zhT,
+        WITH_VIDEO_EXTEND,
+      ),
+    ).toBe("「视频延长」仅支持连接 1 个源视频节点");
+  });
+
+  it("混进图片或音频素材时拒绝", () => {
+    for (const counts of [
+      { videos: 1, images: 1, audios: 0 },
+      { videos: 1, images: 0, audios: 1 },
+    ]) {
+      expect(
+        videoModeDisabledReason("videoExtend", "seedance-2.0", counts, zhT, WITH_VIDEO_EXTEND),
+      ).toBe("「视频延长」只接受源视频，请移除图片或音频素材");
+    }
+  });
+});

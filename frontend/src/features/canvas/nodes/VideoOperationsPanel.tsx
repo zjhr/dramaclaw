@@ -161,6 +161,7 @@ const MODE_TABS: ReadonlyArray<{ key: VideoGenMode; labelKey: string }> = [
   { key: "firstLastFrame", labelKey: "node.videoNode.tabs.firstLastFrame" },
   { key: "imageReference", labelKey: "node.videoNode.tabs.imageReference" },
   { key: "videoEdit", labelKey: "node.videoNode.tabs.videoEdit" },
+  { key: "videoExtend", labelKey: "node.videoNode.tabs.videoExtend" },
 ];
 
 // HappyHorse 的入口顺序：文生视频 → 首帧 → 图生视频 → 图片参考 → 视频编辑。
@@ -1259,6 +1260,21 @@ export function videoModeDisabledReason(
   t: TFn,
   supportedModes?: string[],
 ): string | null {
+  // 全能参考、视频编辑和视频延长都会消费上游视频；后两种模式在进入通用素材
+  // 守卫前分别校验自己的输入数量和模型能力。
+  if (mode === "videoExtend") {
+    if (!isVideoModeSupportedByModel("videoExtend", { apiModel: modelId ?? undefined, supportedModes })) {
+      return t("node.videoOps.modeDisabled.modelNoVideoExtend");
+    }
+    if (upstreamCounts.videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
+    if (upstreamCounts.videos > 1) {
+      return t("node.videoOps.modeDisabled.videoExtendSingleVideo");
+    }
+    if (upstreamCounts.images > 0 || upstreamCounts.audios > 0) {
+      return t("node.videoOps.modeDisabled.videoExtendSourceOnly");
+    }
+    return null;
+  }
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
   //   文生视频  — 仅无上游时可用
   //   首帧/图生视频 — 仅上游正好 1 张图片时可用

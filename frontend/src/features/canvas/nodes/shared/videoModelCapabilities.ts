@@ -590,8 +590,14 @@ export function videoSubmitMediaRejectionReason(
   model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
-  if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
+  if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit" && mode !== "videoExtend") {
     return "node.videoModel.reason.videoUnsupported";
+  }
+  if (
+    mode === "videoExtend" &&
+    (counts.videos !== 1 || counts.images > 0 || counts.audios > 0)
+  ) {
+    return "node.videoModel.reason.videoExtendSourceOnly";
   }
   const videoEditAcceptsAudio =
     mode === "videoEdit" &&

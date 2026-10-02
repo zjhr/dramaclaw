@@ -6647,7 +6647,8 @@
         "firstFrame": "首帧",
         "firstLastFrame": "首尾帧",
         "imageReference": "图片参考",
-        "videoEdit": "视频编辑"
+        "videoEdit": "视频编辑",
+        "videoExtend": "视频延长"
       },
       "placeholder": "根据文字描述生成视频。",
       "referenceDocument": {
@@ -6872,7 +6873,8 @@
         "grokImageLimit": "Grok Video Channel 最多支持 1 张首帧和 7 张参考图",
         "maxImages": "该模型最多支持 {{count}} 张图片素材",
         "maxVideos": "该模型最多支持 {{count}} 个视频素材",
-        "maxAudios": "该模型最多支持 {{count}} 个音频素材"
+        "maxAudios": "该模型最多支持 {{count}} 个音频素材",
+        "videoExtendSourceOnly": "「视频延长」只接受源视频，请移除图片或音频素材"
       }
     },
     "scriptNode": {
@@ -7176,7 +7178,10 @@
         "videoUpstreamAllRefOrEdit": "上游含视频素材时只能用「全能参考」或「视频编辑」",
         "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
-        "moreThanTwoImages": "上游图片超过 2 张时不可用"
+        "moreThanTwoImages": "上游图片超过 2 张时不可用",
+        "modelNoVideoExtend": "该模型不支持「视频延长」",
+        "videoExtendSingleVideo": "「视频延长」仅支持连接 1 个源视频节点",
+        "videoExtendSourceOnly": "「视频延长」只接受源视频，请移除图片或音频素材"
       }
     },
     "threeDWorld": {

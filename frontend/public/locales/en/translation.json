@@ -6647,7 +6647,8 @@
         "firstFrame": "First Frame",
         "firstLastFrame": "First/Last Frame",
         "imageReference": "Image Reference",
-        "videoEdit": "Video Edit"
+        "videoEdit": "Video Edit",
+        "videoExtend": "Video extend"
       },
       "placeholder": "Describe the video to generate.",
       "referenceDocument": {
@@ -6872,7 +6873,8 @@
         "grokImageLimit": "Grok Video Channel supports at most 1 first frame and 7 reference images",
         "maxImages": "This model supports at most {{count}} image assets",
         "maxVideos": "This model supports at most {{count}} video assets",
-        "maxAudios": "This model supports at most {{count}} audio assets"
+        "maxAudios": "This model supports at most {{count}} audio assets",
+        "videoExtendSourceOnly": "Video extend takes a source video only; remove images or audio"
       }
     },
     "scriptNode": {
@@ -7176,7 +7178,10 @@
         "videoUpstreamAllRefOrEdit": "With video upstream, only “All reference” or “Video edit” are available",
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
-        "moreThanTwoImages": "Unavailable with more than 2 upstream images"
+        "moreThanTwoImages": "Unavailable with more than 2 upstream images",
+        "modelNoVideoExtend": "This model does not support Video extend",
+        "videoExtendSingleVideo": "Video extend accepts exactly one source video",
+        "videoExtendSourceOnly": "Video extend takes a source video only; remove images or audio"
       }
     },
     "threeDWorld": {

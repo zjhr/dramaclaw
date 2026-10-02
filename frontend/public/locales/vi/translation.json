@@ -6551,7 +6551,8 @@
         "firstFrame": "Khung đầu",
         "firstLastFrame": "Khung đầu/cuối",
         "imageReference": "Ảnh tham chiếu",
-        "videoEdit": "Sửa video"
+        "videoEdit": "Sửa video",
+        "videoExtend": "Kéo dài video"
       },
       "placeholder": "Mô tả video bạn muốn tạo.",
       "referenceDocument": {
@@ -6776,7 +6777,8 @@
         "grokImageLimit": "Grok Video Channel hỗ trợ tối đa 1 khung đầu và 7 ảnh tham chiếu",
         "maxImages": "Model này hỗ trợ tối đa {{count}} asset ảnh",
         "maxVideos": "Model này hỗ trợ tối đa {{count}} asset video",
-        "maxAudios": "Model này hỗ trợ tối đa {{count}} asset âm thanh"
+        "maxAudios": "Model này hỗ trợ tối đa {{count}} asset âm thanh",
+        "videoExtendSourceOnly": "Kéo dài video chỉ nhận video nguồn, hãy bỏ ảnh hoặc âm thanh"
       }
     },
     "scriptNode": {
@@ -7080,7 +7082,10 @@
         "videoUpstreamAllRefOrEdit": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng” hoặc “Sửa video”",
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
-        "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
+        "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh",
+        "modelNoVideoExtend": "Mô hình này không hỗ trợ Kéo dài video",
+        "videoExtendSingleVideo": "Kéo dài video chỉ nhận đúng 1 nút video nguồn",
+        "videoExtendSourceOnly": "Kéo dài video chỉ nhận video nguồn, hãy bỏ ảnh hoặc âm thanh"
       }
     },
     "threeDWorld": {
