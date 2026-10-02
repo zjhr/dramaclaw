@@ -27,4 +27,13 @@ describe('availableVideoUpscaleResolutions', () => {
       .toEqual([]);
     expect(availableVideoUpscaleResolutions(null, false)).toEqual([]);
   });
+
+  it('offers every higher tier for the local engine, ignoring model capability', () => {
+    expect(availableVideoUpscaleResolutions(probe, false, 'local'))
+      .toEqual(['1080p', '2k', '4k']);
+    expect(availableVideoUpscaleResolutions({ ...probe, width: 1920, height: 1080 }, false, 'local'))
+      .toEqual(['2k', '4k']);
+    expect(availableVideoUpscaleResolutions({ ...probe, width: 3840, height: 2160 }, false, 'local'))
+      .toEqual([]);
+  });
 });

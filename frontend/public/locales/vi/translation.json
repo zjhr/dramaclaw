@@ -6500,12 +6500,19 @@
       "placeholder": "Thiết lập các tham số bên dưới để tạo video HD",
       "panel": {
         "title": "Upscale video",
+        "engine": "Động cơ xử lý",
+        "engineLocal": "Tăng cường cục bộ",
+        "engineModel": "Tăng cường bằng mô hình",
+        "engineLocalHint": "ffmpeg cục bộ: phóng cỡ, khử nhiễu và tăng nét. Miễn phí và xuất ngay.",
+        "engineModelHint": "Mô hình nâng cấp, tăng FPS và nội suy thông minh. Tính phí theo từng giai đoạn.",
         "resolution": "Độ phân giải",
         "frameInterpolation": "Nội suy khung hình",
         "frameInterpolationNone": "Không",
         "frameInterpolationLockedHint": "Bản cơ bản chỉ hỗ trợ chế độ không nội suy",
         "denoise": "Khử nhiễu",
         "denoiseNone": "Tắt",
+        "denoise1x": "Nhẹ",
+        "denoise2x": "Trung bình",
         "targetFps": "Tốc độ khung hình (tùy chọn)",
         "targetFpsAuto": "Tự động (FPS nguồn)",
         "slowdown": "Làm chậm video (tùy chọn)",
@@ -6520,7 +6527,8 @@
         "noHigherResolution": "Video nguồn đã là 4K; không có độ phân giải cao hơn",
         "noConfiguredResolution": "Mô hình hiện có không hỗ trợ độ phân giải cao hơn; hãy liên hệ quản trị viên để kiểm tra cấu hình",
         "probeError": "Không thể đọc thông số video nguồn: {{error}}",
-        "submit": "Tạo video HD"
+        "submit": "Tạo video HD",
+        "free": "Miễn phí"
       }
     },
     "videoNode": {

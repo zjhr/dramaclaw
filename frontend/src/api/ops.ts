@@ -279,6 +279,8 @@ export type FreezoneVideoUpscaleResolution = "1080p" | "2k" | "4k";
 export type FreezoneVideoTargetFps = "auto" | number;
 export type FreezoneVideoSlowdown = "auto" | "2x" | "3x" | "4x" | "5x";
 export type FreezoneVideoScene = "realistic" | "anime";
+export type FreezoneVideoUpscaleEngine = "local" | "model";
+export type FreezoneVideoDenoise = "none" | "1x" | "2x";
 
 export interface FreezoneVideoProbe {
   width: number;
@@ -292,6 +294,8 @@ export interface FreezoneVideoProbe {
 export interface FreezoneVideoUpscalePayload extends FreezoneNodeContext {
   /** Static URL of the source video to upscale. */
   sourceUrl: string;
+  engine?: FreezoneVideoUpscaleEngine;
+  denoiseStrength?: FreezoneVideoDenoise;
   resolution?: FreezoneVideoUpscaleResolution;
   targetFps?: FreezoneVideoTargetFps;
   slowdown?: FreezoneVideoSlowdown;
@@ -310,6 +314,8 @@ export async function submitFreezoneVideoUpscale(
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        engine: payload.engine ?? "local",
+        denoise_strength: payload.denoiseStrength ?? "1x",
         resolution: payload.resolution ?? "1080p",
         target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
         slowdown: payload.slowdown ?? "auto",
@@ -386,6 +392,8 @@ export async function quoteFreezoneVideoUpscale(
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        engine: payload.engine ?? "local",
+        denoise_strength: payload.denoiseStrength ?? "1x",
         resolution: payload.resolution ?? "1080p",
         target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
         slowdown: payload.slowdown ?? "auto",

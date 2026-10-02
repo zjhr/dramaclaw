@@ -1582,9 +1582,21 @@ class FreezoneVideoEraseRequest(BaseModel):
 
 
 class FreezoneVideoUpscaleRequest(BaseModel):
-    """视频增强请求。模型由媒体目录能力动态选择。"""
+    """视频增强请求。
+
+    `engine=local` 走本机 ffmpeg（缩放、降噪、锐化，不计费）。
+    `engine=model` 由媒体目录里声明了超分 / 帧率能力的模型处理。
+    """
 
     source_url: str = Field(description="待高清处理视频的静态地址")
+    engine: Literal["local", "model"] = Field(
+        default="local",
+        description="local=本机 ffmpeg，不计费；model=目录里的超分与帧率模型",
+    )
+    denoise_strength: Literal["none", "1x", "2x"] = Field(
+        default="1x",
+        description="仅 local 引擎使用。none 不降噪；1x 轻度；2x 中等",
+    )
     resolution: Literal["1080p", "2k", "4k"] = Field(
         default="1080p",
         description="目标清晰度档位。按长边缩放：1080p=1920，2k=2560，4k=3840",

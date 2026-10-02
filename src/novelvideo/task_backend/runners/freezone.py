@@ -877,6 +877,7 @@ async def _run_freezone_video_upscale_async(
         job_id=job_id,
         source_path=str(payload["source_path"]),
         resolution=str(payload.get("resolution") or "1080p"),
+        denoise_strength=str(payload.get("denoise_strength") or "1x"),
         target_fps=payload.get("target_fps"),
         smart_interpolation=bool(payload.get("smart_interpolation", True)),
         slowdown=str(payload.get("slowdown") or "auto"),

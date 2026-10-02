@@ -33,6 +33,7 @@ describe("quoteFreezoneVideoUpscale", () => {
 
     await expect(quoteFreezoneVideoUpscale("project-1", {
       sourceUrl: "/static/source.mp4",
+      engine: "model",
       resolution: "4k",
       targetFps: 60,
       slowdown: "2x",
@@ -46,6 +47,8 @@ describe("quoteFreezoneVideoUpscale", () => {
         method: "POST",
         json: {
           source_url: "/static/source.mp4",
+          engine: "model",
+          denoise_strength: "1x",
           resolution: "4k",
           target_fps: 60,
           slowdown: "2x",
@@ -54,6 +57,19 @@ describe("quoteFreezoneVideoUpscale", () => {
           face_enhance: true,
         },
       },
+    );
+  });
+
+  it("defaults to the local engine so an untouched payload stays free", async () => {
+    vi.mocked(apiCall).mockResolvedValueOnce({ cost: 0, display: "0" });
+
+    await quoteFreezoneVideoUpscale("project-1", { sourceUrl: "/static/source.mp4" });
+
+    expect(apiCall).toHaveBeenCalledWith(
+      "projects/project-1/freezone/video/upscale/quote",
+      expect.objectContaining({
+        json: expect.objectContaining({ engine: "local", denoise_strength: "1x" }),
+      }),
     );
   });
 });

@@ -7214,6 +7214,7 @@ def _start_freezone_video_upscale_task(
                 job_id=job_id,
                 source_path=str(source_path),
                 resolution=body.resolution,
+                denoise_strength=body.denoise_strength,
                 target_fps=body.target_fps,
                 smart_interpolation=body.smart_interpolation,
                 slowdown=body.slowdown,
@@ -10102,6 +10103,8 @@ async def _prepare_video_upscale(
     target_long_edge = VIDEO_UPSCALE_TARGET_LONG_EDGES[body.resolution]
     if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
         raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
+    if body.engine == "local":
+        return source_path, source_meta, {}, {}
 
     upscale = await _resolve_video_processing_model(
         "video_upscale",
@@ -10145,6 +10148,8 @@ async def freezone_video_upscale_quote(
     _source_path, _source_meta, _processing_models, billing = await _prepare_video_upscale(
         body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
     )
+    if body.engine == "local":
+        return {"ok": True, "data": {"cost": 0, "display": "0"}}
     quote = await get_credit_quote().generation_credit_quote(
         kind="feature", model="freezone.video_enhance", params=billing,
         quantity=1, product_surface="freezone",
@@ -10170,7 +10175,7 @@ async def freezone_video_upscale(
     body: FreezoneVideoUpscaleRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：目录驱动的视频超分、慢放与补帧流水线。"""
+    """视频处理：本机 ffmpeg，或目录驱动的超分、慢放与补帧流水线。"""
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
@@ -10191,13 +10196,15 @@ async def freezone_video_upscale(
                 payload={
                     "source_path": source_path.as_posix(),
                     "resolution": body.resolution,
+                    "engine": body.engine,
+                    "denoise_strength": body.denoise_strength,
                     "target_fps": body.target_fps,
                     "smart_interpolation": body.smart_interpolation,
                     "slowdown": body.slowdown,
                     "scene": body.scene,
                     "face_enhance": body.face_enhance,
                     "source_meta": source_meta,
-                    "billing": billing,
+                    **({"billing": billing} if billing else {}),
                     **processing_models,
                 },
             )

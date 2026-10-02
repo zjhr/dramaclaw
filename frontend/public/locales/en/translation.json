@@ -6596,12 +6596,19 @@
       "placeholder": "Configure the parameters below to generate the HD video",
       "panel": {
         "title": "Video Upscale",
+        "engine": "Processing engine",
+        "engineLocal": "Local enhance",
+        "engineModel": "Model enhance",
+        "engineLocalHint": "Local ffmpeg scaling, denoise and sharpen. Free and instant.",
+        "engineModelHint": "Model-driven upscale, FPS raise and smart interpolation. Charged per stage.",
         "resolution": "Resolution",
         "frameInterpolation": "Frame interpolation",
         "frameInterpolationNone": "None",
         "frameInterpolationLockedHint": "Base version supports no interpolation only",
         "denoise": "Denoise",
         "denoiseNone": "Off",
+        "denoise1x": "Light",
+        "denoise2x": "Medium",
         "targetFps": "Frame rate (optional)",
         "targetFpsAuto": "Adaptive (source FPS)",
         "slowdown": "Slow motion (optional)",
@@ -6616,7 +6623,8 @@
         "noHigherResolution": "The source is already 4K; no higher resolution is available",
         "noConfiguredResolution": "The available model does not support a higher resolution; ask an administrator to check its settings",
         "probeError": "Unable to inspect source video: {{error}}",
-        "submit": "Generate HD video"
+        "submit": "Generate HD video",
+        "free": "Free"
       }
     },
     "videoNode": {

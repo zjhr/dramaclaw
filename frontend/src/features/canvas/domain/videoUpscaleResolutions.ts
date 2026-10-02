@@ -13,9 +13,13 @@ const RESOLUTIONS = Object.keys(RESOLUTION_LONG_EDGE) as FreezoneVideoUpscaleRes
 export function availableVideoUpscaleResolutions(
   probe: FreezoneVideoProbe | null,
   needsFrameRate: boolean,
+  engine: 'local' | 'model' = 'model',
 ): FreezoneVideoUpscaleResolution[] {
   if (!probe) return [];
   const sourceLongEdge = Math.max(probe.width, probe.height);
+  if (engine === 'local') {
+    return RESOLUTIONS.filter((value) => RESOLUTION_LONG_EDGE[value] > sourceLongEdge);
+  }
   const upscaleOptions = new Set(probe.upscale_resolutions);
   const frameRateOptions = new Set(probe.frame_rate_resolutions);
   return RESOLUTIONS.filter((value) =>

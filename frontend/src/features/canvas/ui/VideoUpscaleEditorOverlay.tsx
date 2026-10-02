@@ -13,9 +13,11 @@ import {
   quoteFreezoneVideoUpscale,
   submitFreezoneVideoUpscale,
   type FreezoneVideoProbe,
+  type FreezoneVideoDenoise,
   type FreezoneVideoScene,
   type FreezoneVideoSlowdown,
   type FreezoneVideoTargetFps,
+  type FreezoneVideoUpscaleEngine,
   type FreezoneVideoUpscaleResolution,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
@@ -43,6 +45,8 @@ const TARGET_FPS_PRESETS = [10, 12, 20, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60
 
 interface PersistedFields {
   upscaleSourceUrl?: string;
+  upscaleEngine?: FreezoneVideoUpscaleEngine;
+  upscaleDenoise?: FreezoneVideoDenoise;
   upscaleResolution?: FreezoneVideoUpscaleResolution;
   upscaleTargetFps?: FreezoneVideoTargetFps;
   upscaleSlowdown?: FreezoneVideoSlowdown;
@@ -65,13 +69,15 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   } | null>(null);
   const [quoteError, setQuoteError] = useState('');
 
+  const engine = persisted.upscaleEngine ?? 'local';
+  const denoise = persisted.upscaleDenoise ?? '1x';
   const resolution = persisted.upscaleResolution ?? '1080p';
   const targetFps = persisted.upscaleTargetFps ?? 'auto';
   const slowdown = persisted.upscaleSlowdown ?? 'auto';
   const smartInterpolation = persisted.upscaleSmartInterpolation !== false;
   const scene = persisted.upscaleScene ?? 'realistic';
   const faceEnhance = persisted.upscaleFaceEnhance === true;
-  const needsFrameRate = targetFps !== 'auto' || slowdown !== 'auto';
+  const needsFrameRate = engine === 'model' && (targetFps !== 'auto' || slowdown !== 'auto');
 
   useEffect(() => {
     let active = true;
@@ -87,19 +93,23 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   }, [project, sourceUrl]);
 
   const availableResolutions = useMemo(
-    () => availableVideoUpscaleResolutions(probe, needsFrameRate),
-    [needsFrameRate, probe],
+    () => availableVideoUpscaleResolutions(probe, needsFrameRate, engine),
+    [engine, needsFrameRate, probe],
   );
 
   useEffect(() => {
     let active = true;
     setCreditQuote(null);
     setQuoteError('');
+    if (engine === 'local') {
+      setCreditQuote({ display: t('node.videoUpscale.panel.free') });
+      return () => { active = false; };
+    }
     if (!project || !sourceUrl || !probe || !availableResolutions.includes(resolution)) {
       return () => { active = false; };
     }
     void quoteFreezoneVideoUpscale(project, {
-      sourceUrl: sourceUrl.split('?')[0], resolution, targetFps, slowdown, smartInterpolation,
+      sourceUrl: sourceUrl.split('?')[0], engine, resolution, targetFps, slowdown, smartInterpolation,
       scene, faceEnhance,
     }).then((value) => {
       if (active) setCreditQuote(value);
@@ -107,7 +117,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
       if (active) setQuoteError(error instanceof Error ? error.message : String(error));
     });
     return () => { active = false; };
-  }, [availableResolutions, faceEnhance, probe, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, targetFps]);
+  }, [availableResolutions, engine, faceEnhance, probe, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, t, targetFps]);
 
   useEffect(() => {
     if (!availableResolutions.length || availableResolutions.includes(resolution)) return;
@@ -140,8 +150,8 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
     });
     try {
       const ref = await submitFreezoneVideoUpscale(project, {
-        sourceUrl: sourceUrl.split('?')[0], resolution, targetFps, slowdown, smartInterpolation, scene,
-        faceEnhance, canvasId, nodeId: node.id,
+        sourceUrl: sourceUrl.split('?')[0], engine, denoiseStrength: denoise, resolution, targetFps, slowdown,
+        smartInterpolation, scene, faceEnhance, canvasId, nodeId: node.id,
       });
       updateNodeData(node.id, generationTaskDescriptor(ref));
       const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
@@ -172,7 +182,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
     } finally {
       setIsSubmitting(false);
     }
-  }, [availableResolutions, creditQuote, faceEnhance, isSubmitting, node.id, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, t, targetFps, updateNodeData]);
+  }, [availableResolutions, creditQuote, denoise, engine, faceEnhance, isSubmitting, node.id, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, t, targetFps, updateNodeData]);
 
   const disabled = isSubmitting || !probe || !creditQuote || Boolean(probeError) || availableResolutions.length === 0;
   return (
@@ -180,6 +190,26 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
       <ZoomScaledToolbar origin="top center">
         <div className={`w-[440px] max-w-[calc(100vw-32px)] rounded-[var(--node-radius)] p-4 ${CANVAS_NODE_OPS_PANEL_CLASS}`} onClick={(event) => event.stopPropagation()}>
           <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('node.videoUpscale.panel.engine')}>
+              {(['local', 'model'] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={engine === value}
+                  onClick={() => updateNodeData(node.id, { upscaleEngine: value })}
+                  className={`h-9 rounded-lg border text-sm transition-colors ${
+                    engine === value
+                      ? 'border-[rgb(var(--accent-rgb))] bg-[rgb(var(--accent-rgb))]/15 text-text-dark'
+                      : 'border-white/15 bg-white/[0.04] text-text-muted hover:bg-white/[0.08]'
+                  }`}
+                >
+                  {t(value === 'local' ? 'node.videoUpscale.panel.engineLocal' : 'node.videoUpscale.panel.engineModel')}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-text-muted">
+              {t(engine === 'local' ? 'node.videoUpscale.panel.engineLocalHint' : 'node.videoUpscale.panel.engineModelHint')}
+            </p>
             <SelectRow
               label={t('node.videoUpscale.panel.resolution')}
               value={resolution}
@@ -187,17 +217,31 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
               onChange={(value) => setResolution(value as FreezoneVideoUpscaleResolution)}
               disabled={!availableResolutions.length}
             />
-            <SelectRow
-              label={t('node.videoUpscale.panel.targetFps')}
-              value={String(targetFps)}
-              options={[
-                { value: 'auto', label: t('node.videoUpscale.panel.targetFpsAuto') },
-                ...TARGET_FPS_PRESETS.map((value) => ({ value: String(value), label: `${value}fps` })),
-              ]}
-              onChange={(value) => updateNodeData(node.id, {
-                upscaleTargetFps: value === 'auto' ? 'auto' : Number(value),
-              })}
-            />
+            {engine === 'local' && (
+              <SelectRow
+                label={t('node.videoUpscale.panel.denoise')}
+                value={denoise}
+                options={[
+                  { value: 'none', label: t('node.videoUpscale.panel.denoiseNone') },
+                  { value: '1x', label: t('node.videoUpscale.panel.denoise1x') },
+                  { value: '2x', label: t('node.videoUpscale.panel.denoise2x') },
+                ]}
+                onChange={(value) => updateNodeData(node.id, { upscaleDenoise: value as FreezoneVideoDenoise })}
+              />
+            )}
+            {engine === 'model' && (
+              <SelectRow
+                label={t('node.videoUpscale.panel.targetFps')}
+                value={String(targetFps)}
+                options={[
+                  { value: 'auto', label: t('node.videoUpscale.panel.targetFpsAuto') },
+                  ...TARGET_FPS_PRESETS.map((value) => ({ value: String(value), label: `${value}fps` })),
+                ]}
+                onChange={(value) => updateNodeData(node.id, {
+                  upscaleTargetFps: value === 'auto' ? 'auto' : Number(value),
+                })}
+              />
+            )}
             <SelectRow
               label={t('node.videoUpscale.panel.slowdown')}
               value={slowdown}

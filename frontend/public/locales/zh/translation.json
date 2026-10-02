@@ -6596,12 +6596,19 @@
       "placeholder": "在下方配置参数生成高清视频",
       "panel": {
         "title": "视频高清",
+        "engine": "处理引擎",
+        "engineLocal": "本地增强",
+        "engineModel": "模型增强",
+        "engineLocalHint": "本机 ffmpeg 缩放、降噪与锐化，免费、即时出片。",
+        "engineModelHint": "走媒体模型超分、升帧与智能插帧，按阶段计费。",
         "resolution": "分辨率",
         "frameInterpolation": "补帧模式",
         "frameInterpolationNone": "不补帧",
         "frameInterpolationLockedHint": "基础版暂仅支持不补帧",
         "denoise": "降噪强度",
         "denoiseNone": "不降噪",
+        "denoise1x": "轻度",
+        "denoise2x": "中等",
         "targetFps": "视频帧数（可选）",
         "targetFpsAuto": "自适应（原帧数）",
         "slowdown": "视频放慢倍率（可选）",
@@ -6616,7 +6623,8 @@
         "noHigherResolution": "源视频已达到 4K，暂无更高可选分辨率",
         "noConfiguredResolution": "当前可用模型不支持更高的目标分辨率，请联系管理员检查模型配置",
         "probeError": "无法读取源视频参数：{{error}}",
-        "submit": "生成高清视频"
+        "submit": "生成高清视频",
+        "free": "免费"
       }
     },
     "videoNode": {

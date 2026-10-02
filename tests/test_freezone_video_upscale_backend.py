@@ -232,6 +232,7 @@ async def test_freezone_video_upscale_route_starts_task(
         project=project,
         body=freezone_routes.FreezoneVideoUpscaleRequest(
             source_url="/static/admin/58/freezone/_uploads/clip.mp4",
+            engine="model",
             resolution="2k",
             target_fps=60,
             smart_interpolation=False,
@@ -301,6 +302,7 @@ async def test_freezone_video_upscale_route_starts_task(
         project=project,
         body=freezone_routes.FreezoneVideoUpscaleRequest(
             source_url="/static/admin/58/freezone/_uploads/clip.mp4",
+            engine="model",
             resolution="2k",
             target_fps=60,
             smart_interpolation=False,
@@ -403,7 +405,67 @@ async def test_video_upscale_quote_rejects_unavailable_model_resolution_before_b
         await freezone_routes.freezone_video_upscale_quote(
             project="project",
             body=freezone_routes.FreezoneVideoUpscaleRequest(
-                source_url="/static/source.mp4", resolution="4k", target_fps=target_fps,
+                source_url="/static/source.mp4", engine="model",
+                resolution="4k", target_fps=target_fps,
             ),
             user={"id": "member-1"},
         )
+
+
+@pytest.mark.asyncio
+async def test_local_engine_skips_model_resolution_and_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """engine=local 走本机 ffmpeg：不解析模型、不报价、不带模型字段入队。"""
+
+    async def unexpected_model(mode: str, *, requester_user_id: str):
+        raise AssertionError(f"local engine must not resolve the {mode} model")
+
+    async def unexpected_quote(**kwargs):
+        raise AssertionError("local engine must not be billed")
+
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"mp4")
+
+    async def fake_probe(_source_path: str, **_kwargs):
+        return {"width": 1280, "height": 720, "fps": 24.0, "duration": 8.0}
+
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_video_processing_model", unexpected_model
+    )
+
+    from novelvideo import ports
+
+    monkeypatch.setattr(
+        ports, "get_credit_quote",
+        lambda: SimpleNamespace(generation_credit_quote=unexpected_quote),
+    )
+
+    async def fake_project(_project, _user, **_kwargs):
+        return (
+            SimpleNamespace(project_id="project", requester_user_id="user-1"),
+            "admin",
+            "project",
+            tmp_path,
+            str(tmp_path),
+        )
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_project)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda _url, _dir: source
+    )
+
+    body = freezone_routes.FreezoneVideoUpscaleRequest(
+        source_url="/static/admin/project/freezone/_uploads/clip.mp4",
+        denoise_strength="2x",
+        resolution="2k",
+    )
+
+    quote = await freezone_routes.freezone_video_upscale_quote(
+        project="project", body=body, user={"id": "member-1"}
+    )
+
+    assert quote["data"]["cost"] == 0
+    assert quote["data"]["display"] == "0"
