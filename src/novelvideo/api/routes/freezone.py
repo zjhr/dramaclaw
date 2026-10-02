@@ -6918,6 +6918,25 @@ def _reshoot_suggest_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_reshoot_suggest_prompt") / f"{job_id}.json"
 
 
+async def _continue_reference_image_limit(model: str | None) -> int:
+    """目标模型能吃几张参考图——读媒体模型目录，不在代码里写死数字。
+
+    目录里各家的 `referenceImageMax` 差一个数量级（seedance-2.0 是 9、
+    seedance-2.5 是 30、happyhorse-1.1 是 0），写死一个常数会让一半模型要么
+    收不下用户选的素材、要么白白拒掉。目录里没有该字段的模型一律按 0 处理。
+
+    字段在**条目顶层**，不在 `config` 里（那是网关侧的原始配置形状）。
+    """
+    if not model:
+        return 0
+    catalog = await _ee_media_model_catalog("video")
+    entry = _find_catalog_entry(catalog, str(model))
+    if entry is None:
+        return 0
+    limit = entry.get("referenceImageMax")
+    return int(limit) if isinstance(limit, (int, float)) and limit > 0 else 0
+
+
 def _continue_suggest_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_continue_suggest_prompt") / f"{job_id}.json"
 
@@ -9464,7 +9483,13 @@ async def freezone_video_keyframes(
         video_default=0,
         audio_default=0,
     )
-    frame_count = int(bool(body.first_frame_url)) + int(bool(body.last_frame_url))
+    # 首尾帧与用户参考图共用同一个图片预算：它们都会进 reference_items 一起送给
+    # 模型，分开计数会让「首帧 + N 张参考」绕过模型上限。
+    frame_count = (
+        int(bool(body.first_frame_url))
+        + int(bool(body.last_frame_url))
+        + len(body.image_urls)
+    )
     if frame_count > reference_limits["image"]:
         raise HTTPException(
             400,
@@ -9483,12 +9508,20 @@ async def freezone_video_keyframes(
         raise HTTPException(400, "first_frame_url could not be resolved")
     if body.last_frame_url and not last_path:
         raise HTTPException(400, "last_frame_url could not be resolved")
+    extra_paths = _resolve_url_list(project_dir, list(body.image_urls))
+    if body.image_urls and len(extra_paths) != len(body.image_urls):
+        missing = len(body.image_urls) - len(extra_paths)
+        raise HTTPException(400, f"{missing} image_urls could not be resolved")
 
     reference_items = []
     if first_path:
         reference_items.append({"type": "image", "path": first_path, "role": "首帧"})
     if last_path:
         reference_items.append({"type": "image", "path": last_path, "role": "尾帧"})
+    # 用户指定的参考素材排在首尾帧之后。首帧负责接缝（构图与光线），参考素材负责
+    # 「这个人/这个物该长什么样」——抽帧保证不了参照物齐全，两者分工不同。
+    for extra_path in extra_paths:
+        reference_items.append({"type": "image", "path": extra_path, "role": "参考图"})
 
     final_prompt = build_freezone_keyframe_video_prompt(
         user_prompt=body.prompt,
@@ -10277,6 +10310,22 @@ async def freezone_video_continue_suggest_prompt(
     if not source_path.exists():
         raise HTTPException(404, f"video source not found: {source_path}")
 
+    # 参考图上限按目标模型的目录值，不在这里写死：各家差一个数量级
+    # （seedance-2.0 给 9、seedance-2.5 给 30、happyhorse-1.1 给 0），认不出的
+    # 模型干脆不给参考图，比发一堆必然被丢掉的图好。
+    reference_paths = _resolve_url_list(project_dir, list(body.reference_image_urls))
+    if body.reference_image_urls and len(reference_paths) != len(
+        body.reference_image_urls
+    ):
+        missing = len(body.reference_image_urls) - len(reference_paths)
+        raise HTTPException(400, f"{missing} reference_image_urls could not be resolved")
+    max_references = await _continue_reference_image_limit(body.model)
+    if len(reference_paths) > max_references:
+        raise HTTPException(
+            400,
+            f"this model accepts at most {max_references} reference images",
+        )
+
     billable_chars = count_billable_text_chars("continue_suggest_prompt")
 
     job_id = _new_job_id()
@@ -10293,6 +10342,7 @@ async def freezone_video_continue_suggest_prompt(
             "duration_seconds": body.duration_seconds,
             "direction": body.direction,
             "model": body.model,
+            "reference_image_paths": list(reference_paths),
             "canvas_id": body.canvas_id,
             "node_id": body.node_id,
             "billing": freezone_image_reverse_prompt_task_billing(

@@ -365,6 +365,14 @@ export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   /** Static URL of the first frame. At least one of first/last must be set. */
   firstFrameUrl?: string | null;
   lastFrameUrl?: string | null;
+  /**
+   * 用户指定的参考图（角色/场景/道具），与首尾帧并列送模型。
+   *
+   * 首帧负责接缝（构图与光线），参考素材负责「这个人/物该长什么样」——抽帧保证
+   * 不了参照物齐全（角色可能中途出画）。数量上限由目标模型的 `referenceImageMax`
+   * 决定，后端会校验。
+   */
+  imageUrls?: string[];
   prompt?: string;
   cameraTemplateId?: string | null;
   marks?: FreezoneVideoMark[];
@@ -390,6 +398,7 @@ export async function submitFreezoneVideoKeyframes(
       method: "POST",
       json: {
         first_frame_url: payload.firstFrameUrl ?? null,
+        image_urls: payload.imageUrls ?? [],
         last_frame_url: payload.lastFrameUrl ?? null,
         prompt: payload.prompt ?? "",
         camera_template_id: payload.cameraTemplateId ?? null,
@@ -2194,6 +2203,8 @@ export interface FreezoneVideoContinueSuggestPromptPayload extends FreezoneNodeC
   direction: FreezoneVideoContinueDirection;
   /** 目标视频模型 id。各家时长档位不同，后端按它约束推荐措辞。 */
   model?: string;
+  /** 用户指定的参考图；与采样帧一起送视觉模型，抽不到的东西靠它补。 */
+  referenceImageUrls?: string[];
 }
 
 export async function submitFreezoneVideoContinueSuggestPrompt(
@@ -2210,6 +2221,7 @@ export async function submitFreezoneVideoContinueSuggestPrompt(
         duration_seconds: payload.durationSeconds,
         direction: payload.direction,
         model: payload.model ?? "",
+        reference_image_urls: payload.referenceImageUrls ?? [],
         ...nodeContextBody(payload),
       },
     },

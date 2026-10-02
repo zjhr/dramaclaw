@@ -155,6 +155,27 @@ def test_task_description_uses_dialect_structure() -> None:
     assert "【核心创意】" not in generic, "兜底不该冒充某个具体方言"
 
 
+def test_dialects_require_time_segmentation() -> None:
+    """每段过程描述必须按秒分段，短时长也不例外。
+
+    实测 12 秒时模型会写「0—3秒 / 3—6秒…」，6 秒时却整段连贯叙述、没有分段——
+    方言要求原文只说「按目标时长分段」，太含糊，短时长就被跳过了。改成硬格式
+    并给示例。
+    """
+    for model in ("agnes-video-2.5-flash", "seedance-2.0", "unknown-model"):
+        prompt = build_continue_prompt_task(
+            duration_seconds=6.0, direction="auto", frame_count=4, model=model
+        )
+        assert "分段" in prompt or "按秒推进" in prompt, (
+            f"{model} 的结构要求里没有时间分段"
+        )
+    agnes = build_continue_prompt_task(
+        duration_seconds=6.0, direction="auto", frame_count=4, model="agnes-video-2.5-flash"
+    )
+    # 带示例，避免只写「必须按秒分段」这种没有锚点的要求被当成建议。
+    assert "0—2秒，" in agnes
+
+
 def test_every_catalog_video_model_has_a_dialect() -> None:
     """目录里每个视频模型都要有结构定义，不能有落到空白的。"""
     catalog = json.loads(
@@ -257,6 +278,42 @@ def test_task_description_tells_model_reference_images_win() -> None:
         duration_seconds=8.0, direction="auto", frame_count=4
     )
     assert "用户指定的参考素材" not in without_refs
+
+
+def test_reference_image_limit_reads_the_catalog() -> None:
+    """参考图上限必须读模型目录，且字段在条目**顶层**而不是 config 里。
+
+    字段位置写错过一次：一开始从 `entry["config"]["referenceImageMax"]` 取，目录
+    条目根本没有 config 子键，于是所有模型一律返回 0——功能看着正常（界面不显示
+    参考行），实测才发现永远收不到素材。
+    """
+    import asyncio
+
+    from novelvideo.api.routes.freezone import _continue_reference_image_limit
+
+    async def main() -> dict[str, int]:
+        catalog = json.loads(
+            (
+                REPOSITORY_ROOT
+                / "src"
+                / "novelvideo"
+                / "official_media_models.json"
+            ).read_text(encoding="utf-8")
+        )
+        expected = {
+            key: (entry.get("config") or {}).get("referenceImageMax")
+            or entry.get("referenceImageMax")
+            or 0
+            for key, entry in catalog["mediaModels"].items()
+            if entry.get("mediaType") == "video"
+        }
+        return {key: await _continue_reference_image_limit(key) for key in expected}
+
+    resolved = asyncio.run(main())
+    assert any(value > 0 for value in resolved.values()), (
+        "所有模型都读到 0：多半又把 referenceImageMax 从 config 里取了"
+    )
+    assert all(value >= 0 for value in resolved.values())
 
 
 def test_task_description_adapts_to_target_model() -> None:

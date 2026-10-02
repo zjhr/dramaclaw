@@ -80,6 +80,36 @@ describe("video continue toolbar contract", () => {
     expect(ops).toContain("model?: string");
   });
 
+  it("lets the user pin reference images the sampler cannot guarantee", () => {
+    // 抽帧保证不了参照物齐全：角色可能中途出画、道具只在某个镜头出现过。
+    expect(source).toContain('data-testid="video-continue-reference-row"');
+    expect(source).toContain('data-testid="video-continue-reference-add"');
+    expect(source).toContain("AssetLibraryModal");
+    expect(source).toContain('allowedMedia={["image"]}');
+    // 上限读模型目录，不写死：各家差一个数量级（seedance 9/30、happyhorse 0）。
+    expect(source).toContain("match?.referenceImageMax");
+    // 目录里没配的模型整行不显示，而不是显示一个必然被拒的按钮。
+    expect(source).toContain("continueReferenceImageMax > 0 && (");
+  });
+
+  it("offers both a canvas picker and the asset library, deduped", () => {
+    // 画布总览是只读列表：画布目前是单选（store 只有 selectedNodeId），
+    // 要「点图即加入」就得改画布点击行为，那会连带影响选中/拖拽手感。
+    expect(source).toContain('data-testid="video-continue-reference-canvas"');
+    expect(source).toContain("CanvasImageOverview");
+    expect(source).toContain("AssetLibraryModal");
+    // 两个入口能选到同一张图，去重放在汇合处。
+    expect(source).toContain("!prev.includes(url)");
+  });
+
+  it("sends the reference images to both the suggestion and the generation", () => {
+    // 只给推荐用等于只治标：推荐写得再准，生成时仍会换脸。
+    expect(source).toContain("referenceImageUrls: continueReferenceImages");
+    expect(source).toContain("imageUrls: continueReferenceImages");
+    expect(ops).toContain("reference_image_urls: payload.referenceImageUrls ?? []");
+    expect(ops).toContain("image_urls: payload.imageUrls ?? []");
+  });
+
   it("shows the whole prompt in a dialog and copies it out", () => {
     // 推荐出来的提示词三四百字，面板里只有两行高——不给全文视图，用户
     // 无法确认送进模型的到底是哪一段。

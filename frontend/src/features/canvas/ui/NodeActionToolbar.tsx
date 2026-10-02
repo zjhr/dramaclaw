@@ -32,6 +32,7 @@ import {
   Grid3x3,
   Forward,
   GitBranch,
+  ImageDown,
   ImageUpscale,
   LayoutDashboard,
   LayoutGrid,
@@ -42,6 +43,7 @@ import {
   Package,
   Palette,
   PenLine,
+  Plus,
   RefreshCw,
   Rewind,
   RotateCw,
@@ -54,6 +56,7 @@ import {
   Users,
   Video as VideoIcon,
   Wand2,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFn } from "@/lib/i18n-types";
@@ -102,6 +105,8 @@ import { GROUP_COLOR_PRESETS } from "@/features/canvas/domain/groupColors";
 import { StoryboardGroupToolbar } from "@/features/canvas/ui/StoryboardGroupToolbar";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { requestVideoIdentityPanel } from "@/features/canvas/nodes/videoIdentityPanelRequest";
+import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
+import { CanvasImageOverview } from "@/features/canvas/ui/CanvasImageOverview";
 import { useCanvasProjectionStatus } from "@/features/freezone/projectionStatusStore";
 import {
   matteInWorker,
@@ -745,6 +750,25 @@ export const NodeActionToolbar = memo(
     const [continueDirection, setContinueDirection] =
       useState<FreezoneVideoContinueDirection>("auto");
     const [continuePrompt, setContinuePrompt] = useState("");
+    /**
+     * 用户指定的参考素材（角色/场景/道具）。
+     *
+     * 抽帧保证不了「参照物齐全」：角色可能中途出画、道具只在某个镜头出现过，
+     * 采样帧再密也赌不全。所以「该长什么样」交给用户选图，采样帧只负责交代
+     * 这条片子在演什么。上限读模型目录的 referenceImageMax（各家差一个数量级，
+     * 写死会让一半模型收不下），目录里没配的模型这一行整个不显示。
+     */
+    const [continueReferenceImages, setContinueReferenceImages] = useState<string[]>([]);
+    const [showContinueAssetPicker, setShowContinueAssetPicker] = useState(false);
+    const [showContinueCanvasOverview, setShowContinueCanvasOverview] = useState(false);
+    const continueReferenceImageMax = useMemo(() => {
+      if (!reshootModelId) return 0;
+      const match = reshootModels.models.find(
+        (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+      );
+      const limit = match?.referenceImageMax;
+      return typeof limit === "number" && limit > 0 ? limit : 0;
+    }, [reshootModels.models, reshootModelId]);
     // 提示词全文用弹层看。推荐出来的段落动辄三四百字，而面板只有一行半的高度，
     // 内嵌 textarea 只能看到末尾十几字——用户没法确认「生成的到底是不是这句」。
     const [continuePromptExpanded, setContinuePromptExpanded] = useState(false);
@@ -902,6 +926,7 @@ export const NodeActionToolbar = memo(
           // 目标模型决定推荐措辞：各家可用的时长档位与写法不同（Sora/Kling/
           // Runway 都把 5-10 秒当作一个完整场景）。认不出就传空串，后端走通用约束。
           model: reshootModelId || undefined,
+          referenceImageUrls: continueReferenceImages,
           canvasId: readUrl().canvas ?? undefined,
           nodeId: node.id,
         });
@@ -1023,6 +1048,8 @@ export const NodeActionToolbar = memo(
           prompt,
           // 只钉首帧：首尾帧端点允许「只提供首帧」，那边就是自由结尾 —— 正是续写。
           firstFrameUrl: uploaded.url,
+          // 生成的续写段也要认这些素材，否则推荐写得再准，生成时仍会换脸。
+          imageUrls: continueReferenceImages,
           aspectRatio,
           resolution:
             typeof node.data.resolution === "string" && node.data.resolution
@@ -3736,6 +3763,96 @@ export const NodeActionToolbar = memo(
                   );
                 })}
               </div>
+              {/* 参考素材：目录里没配 referenceImageMax 的模型整行不显示。 */}
+              {continueReferenceImageMax > 0 && (
+                <div
+                  className="mt-2"
+                  data-testid="video-continue-reference-row"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-text-dim">
+                      {t("nodeToolbar.video.continueReferenceLabel")}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={
+                        isContinuing ||
+                        continueReferenceImages.length >=
+                          continueReferenceImageMax
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setShowContinueAssetPicker(true);
+                      }}
+                      className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2 py-[2px] text-[11px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      data-testid="video-continue-reference-add"
+                    >
+                      <Plus className="h-3 w-3" />
+                      {t("nodeToolbar.video.continueReferenceAdd")}
+                    </button>
+                    {/* 画布总览：只读列表，不改画布点击行为。画布目前单选，
+                        要「点图即加」就得动选中/拖拽手感，这里不碰。 */}
+                    <button
+                      type="button"
+                      disabled={
+                        isContinuing ||
+                        continueReferenceImages.length >=
+                          continueReferenceImageMax
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setShowContinueCanvasOverview(true);
+                      }}
+                      className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2 py-[2px] text-[11px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      data-testid="video-continue-reference-canvas"
+                    >
+                      <ImageDown className="h-3 w-3" />
+                      {t("nodeToolbar.video.continueReferenceFromCanvas")}
+                    </button>
+                    <span className="ml-auto text-[11px] text-text-dim tabular-nums">
+                      {t("nodeToolbar.video.continueReferenceCount", {
+                        count: continueReferenceImages.length,
+                        max: continueReferenceImageMax,
+                      })}
+                    </span>
+                  </div>
+                  {continueReferenceImages.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {continueReferenceImages.map((url, index) => (
+                        <span
+                          key={url}
+                          className="group relative inline-block h-12 w-12 overflow-hidden rounded-md border border-white/15"
+                        >
+                          <img
+                            src={url}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            aria-label={t(
+                              "nodeToolbar.video.continueReferenceRemove",
+                            )}
+                            disabled={isContinuing}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setContinueReferenceImages((prev) =>
+                                prev.filter((_, i) => i !== index),
+                              );
+                            }}
+                            className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/85"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-1 text-[10px] leading-relaxed text-text-dim">
+                    {t("nodeToolbar.video.continueReferenceHint")}
+                  </p>
+                </div>
+              )}
               <textarea
                 value={continuePrompt}
                 onChange={(event) => {
@@ -3885,6 +4002,48 @@ export const NodeActionToolbar = memo(
                   </div>
                 </DialogContent>
               </Dialog>
+              {showContinueCanvasOverview && (
+                <CanvasImageOverview
+                  open
+                  selectedUrls={continueReferenceImages}
+                  remaining={
+                    continueReferenceImageMax - continueReferenceImages.length
+                  }
+                  onClose={() => setShowContinueCanvasOverview(false)}
+                  onConfirm={(urls) =>
+                    setContinueReferenceImages((prev) => [...prev, ...urls])
+                  }
+                />
+              )}
+              {/* 参考素材选材：复用项目已有的素材库，不新造上传控件。 */}
+              {showContinueAssetPicker && (
+                <AssetLibraryModal
+                  mode="pick"
+                  open
+                  project={readUrl().project ?? null}
+                  allowedMedia={["image"]}
+                  maxSelectable={
+                    continueReferenceImageMax - continueReferenceImages.length
+                  }
+                  onClose={() => setShowContinueAssetPicker(false)}
+                  onConfirm={(selections) => {
+                    // 两个入口能选到同一张图，去重要在这里做一次，否则缩略图
+                    // 会出现两张一样的、还会白占一个上限名额。
+                    setContinueReferenceImages((prev) => [
+                      ...prev,
+                      ...selections
+                        .map((item) => item.url)
+                        .filter(
+                          (url): url is string =>
+                            typeof url === "string" &&
+                            url.length > 0 &&
+                            !prev.includes(url),
+                        ),
+                    ]);
+                    setShowContinueAssetPicker(false);
+                  }}
+                />
+              )}
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className="text-[11px] text-text-dim">
                   {isSuggestingContinuePrompt

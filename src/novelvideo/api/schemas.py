@@ -1275,6 +1275,14 @@ class FreezoneKeyframeVideoRequest(BaseModel):
         default=None,
         description="尾帧参考图静态地址，可为空；与首帧至少提供一个",
     )
+    image_urls: list[str] = Field(
+        default_factory=list,
+        description=(
+            "额外的参考图静态地址（角色/场景/道具），与首尾帧并列。"
+            "数量上限由目标模型的 referenceImageMax 决定；传了就会按 image_reference "
+            "协议一并送模型，生成结果才认这些素材，而不只是把提示词里的文字当描述"
+        ),
+    )
     prompt: str = Field(default="", description="用户补充视频描述，可为空")
     camera_template_id: Optional[str] = Field(
         default=None,
@@ -1962,6 +1970,14 @@ class FreezoneVideoContinueSuggestPromptRequest(BaseModel):
     model: str = Field(
         default="",
         description="目标视频模型 id。各家可用时长档位不同，推荐时按它约束时长写法",
+    )
+    reference_image_urls: list[str] = Field(
+        default_factory=list,
+        description=(
+            "用户指定的参考图静态地址（角色/场景/道具）。抽帧保证不了参照物齐全——"
+            "角色可能中途出画、道具只在某个镜头出现过——所以把「该长什么样」"
+            "交给用户指定的素材来锁，数量上限由目标模型的 referenceImageMax 决定"
+        ),
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id")
     node_id: str = Field(default="", description="可选：来源节点 id")

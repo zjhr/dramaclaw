@@ -1592,6 +1592,10 @@ async def _run_freezone_video_continue_suggest_prompt_async(
     duration_seconds = float(payload.get("duration_seconds") or 5.0)
     direction = str(payload.get("direction") or "auto")
     model = str(payload.get("model") or "")
+    # 用户指定的参考素材路径，由路由按模型目录校验过数量上限。
+    reference_image_paths = [
+        Path(str(item)) for item in (payload.get("reference_image_paths") or [])
+    ]
     _update(
         ctx,
         "freezone_video_continue_suggest_prompt",
@@ -1623,6 +1627,7 @@ async def _run_freezone_video_continue_suggest_prompt_async(
         duration_seconds=duration_seconds,
         direction=direction,
         model=model,
+        reference_image_paths=reference_image_paths,
     )
     out = (
         outputs_dir(project_dir, "freezone_video_continue_suggest_prompt")
