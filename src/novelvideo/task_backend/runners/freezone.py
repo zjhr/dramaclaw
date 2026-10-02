@@ -98,6 +98,11 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_video_upscale": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
     ),
+    # 片段重拍把源片切段后送视频模型重出，带 model/backend/请求 schema，属网关出网。
+    # 切段与合帧是 leaf 内部的前后处理，不改变这个分类。
+    "run_freezone_video_reshoot": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
+    ),
     "run_freezone_gen": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
     ),

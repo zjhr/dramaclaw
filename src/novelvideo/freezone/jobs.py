@@ -1573,6 +1573,7 @@ async def run_freezone_video_reshoot(
     camera_template_id: Optional[str] = None,
     max_duration_seconds: int = 0,
     progress_callback: Optional[Any] = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> tuple[Path, Path, dict]:
     """视频片段重拍：抽区间首尾帧 -> 首尾帧模式重生成 -> 三段拼接回原片。
 
@@ -1588,6 +1589,14 @@ async def run_freezone_video_reshoot(
     demuxer 接受）自动降级 Level 2 音轨 `aac` 重编码，`meta["concat_retry"]`
     记录走了哪级。
     """
+    # 这条链路把抽出的首尾帧送视频模型重生成，属网关出网（FREEZONE_LEAF_EGRESS
+    # 里判为 EG-18b NETWORK）。leaf 边界按契约收 egress_context 做授权判定：
+    # 显式传错类型必须当场炸，缺省回落到环境里的组织上下文。
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+
     if not shutil.which("ffmpeg"):
         raise RuntimeError("ffmpeg not found on PATH; install via brew/apt")
     if not shutil.which("ffprobe"):
@@ -1671,6 +1680,7 @@ async def run_freezone_video_reshoot(
             backend=gen_backend,
             model_params=model_params,
             request_schema=request_schema,
+            egress_context=egress_context,
         )
         generated = outputs_dir(project_dir, "freezone_video_gen") / f"{job_id}_gen.mp4"
         if not generated.exists():
@@ -2267,6 +2277,7 @@ async def run_freezone_video_gen(
     gen_mode: Optional[str] = None,
     model_params: Optional[dict[str, Any]] = None,
     request_schema: Optional[dict[str, Any]] = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     """Freezone 文生视频。
 
@@ -2275,7 +2286,15 @@ async def run_freezone_video_gen(
     - prompt + 角色参考图
     - 首帧 / 尾帧参考
     - 原生音频开关（由具体模型决定）
+
+    `egress_context` 由上游 leaf（如片段重拍）传下来：这个函数自己出网调模型，
+    组织级上下文要在这里再判一次，不能只靠调用方的边界校验。
     """
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+
     out = outputs_dir(project_dir, "freezone_video_gen") / f"{job_id}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -2296,14 +2315,20 @@ async def run_freezone_video_gen(
     ]
     from novelvideo.freezone.video_node import is_freezone_seedance2_backend
 
+    # 与 run_freezone_gen 同一口径：组织上下文下不采信调用方给的后端串，
+    # 改走 request-scoped 的 newapi 出网路径（组织出网闸门据此判定）。
+    effective_backend = backend
+    if egress_context is not None and egress_context.is_organization:
+        effective_backend = parse_newapi_video_backend(model or "") or backend
+
     video_gen = create_video_generator(
-        backend=backend,
+        backend=effective_backend,
         resolution=resolution,
         generate_audio=generate_audio,
         model_params=model_params,
         request_schema=request_schema,
     )
-    if backend == "seedance_2":
+    if effective_backend == "seedance_2":
         result = await video_gen.generate(
             prompt=prompt,
             output_path=str(out),
@@ -2333,9 +2358,9 @@ async def run_freezone_video_gen(
             first_image_ref = next((ref for ref in references if ref.type == "image"), None)
         if (
             (first_image_ref is None or not first_image_ref.path)
-            and not str(backend).startswith("huimeng_")
-            and not parse_newapi_video_backend(backend)
-            and not is_freezone_seedance2_backend(backend)
+            and not str(effective_backend).startswith("huimeng_")
+            and not parse_newapi_video_backend(effective_backend)
+            and not is_freezone_seedance2_backend(effective_backend)
         ):
             raise RuntimeError(
                 f"backend {backend} requires a first-frame image reference"

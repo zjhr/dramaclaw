@@ -2240,12 +2240,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "imageReference": "image_reference",
             "allReference": "all_reference",
             "videoEdit": "video_edit",
-<<<<<<< HEAD
-=======
             "videoExtend": "video_extend",
             "videoUpscale": "video_upscale",
             "videoFrameRate": "video_frame_rate",
->>>>>>> 678a4279 (feat(video): add model-backed enhancement pipeline (#716))
         }.get(str(mode or "").strip(), str(mode or "").strip())
 
         if normalized_mode == "text_to_video":
@@ -2334,9 +2331,6 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         if file_urls and link_urls:
             raise ValueError("reference_file and reference_link are mutually exclusive")
 
-<<<<<<< HEAD
-        if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
-=======
         if normalized_mode in {
             "image_reference",
             "all_reference",
@@ -2345,7 +2339,6 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "video_upscale",
             "video_frame_rate",
         }:
->>>>>>> 678a4279 (feat(video): add model-backed enhancement pipeline (#716))
             if image_urls:
                 metadata["reference_images"] = image_urls
             if video_urls:
