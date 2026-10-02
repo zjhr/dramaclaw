@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import {
   fetchFreezoneTextEnhanceResult,
@@ -63,6 +65,7 @@ export function usePromptEnhance(
 ) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { t } = useTranslation();
 
   const run = useCallback(
     async (
@@ -93,13 +96,15 @@ export function usePromptEnhance(
         const result = await fetchFreezoneTextEnhanceResult(projectId, ref.job_id);
         if (result.enhanced_text) onEnhanced(result.enhanced_text);
       } catch (error) {
+        // 静默失败会让用户以为强化成功却什么都没变。
         console.error("[prompt-enhance] failed", error);
+        toast.error(t("node.reshoot.enhanceFailed"));
       } finally {
         setBusy(false);
         setOpen(false);
       }
     },
-    [nodeId, onEnhanced],
+    [nodeId, onEnhanced, t],
   );
 
   return { open, setOpen, busy, run };

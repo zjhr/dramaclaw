@@ -7405,7 +7405,8 @@
       "generating": "Reshooting…",
       "noResult": "The reshoot task returned no result",
       "suggestDetached": "The node is no longer on the canvas; the suggestion was discarded",
-      "suggestEmpty": "The suggestion service returned no prompt"
+      "suggestEmpty": "The suggestion service returned no prompt",
+      "enhanceFailed": "Prompt enhancement failed. Please try again."
     },
     "videoGreybox": {
       "nodeTitle": "Depth video",

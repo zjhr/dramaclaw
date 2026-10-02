@@ -678,6 +678,26 @@ _FREEZONE_PROMPT_STRENGTH_HINTS: dict[str, str] = {
 }
 
 
+# 强化结果里出现这些开头，说明模型把思考过程当成了成品提示词。
+_ENHANCE_REASONING_PREFIXES = (
+    "let me",
+    "i need to",
+    "i will",
+    "first,",
+    "okay,",
+    "thinking:",
+    "reasoning:",
+)
+
+
+def _looks_like_enhance_reasoning(text: str) -> bool:
+    """判断强化结果是不是模型的思考过程而不是重写后的提示词。"""
+    head = text.strip().lower()[:200]
+    if not head:
+        return False
+    return head.startswith(_ENHANCE_REASONING_PREFIXES)
+
+
 def build_freezone_prompt_enhance_task(
     *,
     text: str,
@@ -751,10 +771,15 @@ async def enhance_freezone_prompt(
     enhanced_text = str(result.enhanced_text or "").strip()
     if not enhanced_text:
         raise ValueError("prompt enhancement returned empty output")
-    return (
-        enhanced_text,
-        [str(item).strip() for item in result.changes if str(item).strip()],
-    )
+    changes = [str(item).strip() for item in result.changes if str(item).strip()]
+    # 部分渠道会忽略 reasoning_effort=none，把思考过程写回 enhanced_text，
+    # 而 changes 留空。这里按 ingest/manuscript_repair.clean_model_text 的同一
+    # 口径拒绝：宁可报错让用户重试，也不把思路说明当成提示词回填进节点。
+    if not changes and _looks_like_enhance_reasoning(enhanced_text):
+        raise ValueError(
+            "prompt enhancement returned reasoning instead of a rewritten prompt"
+        )
+    return (enhanced_text, changes)
 
 
 async def generate_freezone_text(

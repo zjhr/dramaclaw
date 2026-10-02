@@ -7405,7 +7405,8 @@
       "generating": "重拍中…",
       "noResult": "重拍任务没有返回结果",
       "suggestDetached": "节点已不在画布上，推荐结果已丢弃",
-      "suggestEmpty": "推荐服务没有返回提示词"
+      "suggestEmpty": "推荐服务没有返回提示词",
+      "enhanceFailed": "强化提示词失败，请重试"
     },
     "videoGreybox": {
       "nodeTitle": "深度视频",

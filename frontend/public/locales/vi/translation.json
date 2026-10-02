@@ -7309,7 +7309,8 @@
       "generating": "Đang quay lại…",
       "noResult": "Tác vụ quay lại không trả về kết quả",
       "suggestDetached": "Node không còn trên canvas, kết quả gợi ý đã bị bỏ",
-      "suggestEmpty": "Dịch vụ gợi ý không trả về lời nhắc"
+      "suggestEmpty": "Dịch vụ gợi ý không trả về lời nhắc",
+      "enhanceFailed": "Cường cường câu lệnh thất bại, vui lòng thử lại"
     },
     "videoGreybox": {
       "nodeTitle": "Video độ sâu",
