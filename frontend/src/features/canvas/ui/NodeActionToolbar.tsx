@@ -3814,7 +3814,10 @@ export const NodeActionToolbar = memo(
                       key={value}
                       type="button"
                       aria-pressed={continueEntry === value}
-                      disabled={disabled}
+                      // 用 aria-disabled 而不是 disabled：原生 disabled 会把 click
+                      // 事件整个吞掉，用户点下去什么反馈都没有，就不知道该去找谁配。
+                      // 视觉上照样灰着，语义上也照样是禁用的。
+                      aria-disabled={disabled}
                       title={disabled ? t("nodeToolbar.video.continueQuickUnavailable") : undefined}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -3825,7 +3828,7 @@ export const NodeActionToolbar = memo(
                         setContinueEntry(value);
                       }}
                       data-testid={`video-continue-entry-${value}`}
-                      className={`nodrag h-8 rounded-lg border text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                      className={`nodrag h-8 rounded-lg border text-[12px] transition-colors aria-disabled:cursor-not-allowed aria-disabled:opacity-45 ${
                         continueEntry === value
                           ? "border-[rgb(var(--accent-rgb))] bg-[rgb(var(--accent-rgb))]/15 text-text-dark"
                           : "border-white/15 bg-white/[0.04] text-text-muted hover:bg-white/[0.08]"
