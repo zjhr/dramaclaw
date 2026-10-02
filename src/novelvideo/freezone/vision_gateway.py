@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+from novelvideo.model_transport_compat import run_with_transport_compat
 from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
 
 FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS = 300.0
@@ -252,16 +253,28 @@ async def call_freezone_vision_model(
         output_type=str,
         name="Freezone Vision Analyzer",
     )
-    result = await agent.run(
-        [
-            prompt,
-            *[
-                BinaryContent(data=image.data, media_type=image.media_type)
-                for image in images
-            ],
-        ]
-    )
-    text = str(result.output or "").strip()
+    request_content = [
+        prompt,
+        *[
+            BinaryContent(data=image.data, media_type=image.media_type)
+            for image in images
+        ],
+    ]
+
+    async def call(mode: bool) -> str:
+        # 走兼容层：先按缓存偏好发（无偏好则先非流式），遇到空响应这类传输层
+        # 失败自动切另一种方式。详见 model_transport_compat 的模块说明。
+        if mode:
+            async with agent.run_stream(request_content) as stream:
+                return str(await stream.get_output())
+        result = await agent.run(request_content)
+        return str(result.output or "")
+
+    text = (await run_with_transport_compat(
+        capability="vision",
+        model_name=model,
+        call=call,
+    )).strip()
     if not text:
         raise RuntimeError("视觉模型返回空内容")
     return model, text

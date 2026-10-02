@@ -26,7 +26,7 @@ describe("video continue toolbar contract", () => {
     expect(source).toContain("continueMaxSeconds");
     // 越界时既不提交也不推荐，并报出该模型的真实上下限。
     expect(source).toContain("continueDurationOutOfRange");
-    expect(source).toContain("if (!continueDurationValid) return;");
+    expect(source).toContain("options?.reuseSeconds === undefined && !continueDurationValid");
     const submitBlock = source.slice(
       source.indexOf("data-testid=\"video-continue-submit\"") - 700,
       source.indexOf("data-testid=\"video-continue-submit\""),
@@ -70,6 +70,46 @@ describe("video continue toolbar contract", () => {
     expect(source).toContain("setContinuePromptSource(");
     expect(source).toContain("const continuePromptStale =");
     expect(source).toContain("continuePromptStale");
+  });
+
+  it("sends the target model so the suggestion respects that model's limits", () => {
+    // 各家可用时长档位不同（Sora/Kling/Runway 都把 5-10 秒当作一个完整场景），
+    // 不告诉后端目标模型，推荐就只能是模型无关的散文。
+    expect(source).toContain("model: reshootModelId || undefined");
+    expect(ops).toContain('model: payload.model ?? ""');
+    expect(ops).toContain("model?: string");
+  });
+
+  it("shows the whole prompt in a dialog and copies it out", () => {
+    // 推荐出来的提示词三四百字，面板里只有两行高——不给全文视图，用户
+    // 无法确认送进模型的到底是哪一段。
+    expect(source).toContain('data-testid="video-continue-prompt-expand"');
+    expect(source).toContain('data-testid="video-continue-prompt-dialog"');
+    expect(source).toContain('data-testid="video-continue-prompt-full"');
+    expect(source).toContain('data-testid="video-continue-prompt-copy"');
+    expect(source).toContain("navigator.clipboard");
+    // 空提示词时不该给一个打开空窗的按钮。
+    const expandAnchor = source.indexOf('data-testid="video-continue-prompt-expand"');
+    expect(source.slice(expandAnchor - 700, expandAnchor)).toContain(
+      "disabled={continuePrompt.trim().length === 0}",
+    );
+  });
+
+  it("offers a retry that reuses the failed continuation node", () => {
+    // 延长节点是 referenceOnly + 空 prompt，节点面板的「重新生成」永远被
+    // submitDisabled 拦死。重试必须挂在源节点工具栏上，并且复用那个失败节点，
+    // 不新建——否则每次失败都会在画布上留一个空壳。
+    expect(source).toContain('data-testid="video-continue-retry"');
+    expect(source).toContain("isContinuationNode !== true");
+    expect(source).toContain("continuationRetryPrompt");
+    expect(source).toContain("reuseNodeId: continuationRetryNodeId ?? undefined");
+    // 旧失败节点没存提示词：退回打开面板重做，不拿空提示词跑一次必败的任务。
+    expect(source).toContain("if (!continuationRetryPrompt) {");
+    expect(source).toContain("setShowContinuePanel(true);");
+    // 复用时不再连边（那条溯源边建节点时就有了）。
+    expect(source).toContain("if (!reuseNodeId) addEdge(node.id, continuationNodeId);");
+    // 失败时把重试素材写在节点上，成功路径不写。
+    expect(source).toContain("continuationRetryPrompt: prompt");
   });
 
   it("exposes the continue suggestion on its own endpoint and task type", () => {

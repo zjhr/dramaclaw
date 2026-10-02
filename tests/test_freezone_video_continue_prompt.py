@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -18,7 +19,9 @@ from pathlib import Path
 import pytest
 
 from novelvideo.freezone.continue_prompt import (
+    DIALECT_STRUCTURE_HINTS,
     VIDEO_CONTINUE_DIRECTIONS,
+    resolve_continue_dialect,
     build_continue_prompt_task,
     normalize_video_continue_direction,
     suggest_continue_prompt_from_frames,
@@ -130,16 +133,149 @@ def test_task_description_carries_duration_direction_and_anchor() -> None:
     assert "4" in prompt
 
 
-def test_beat_plan_scales_with_duration() -> None:
-    """时长变了，动作节拍数量也得跟着变，否则 12 秒的活会被塞进一个动作。"""
-    short = build_continue_prompt_task(
-        duration_seconds=3.0, direction="auto", frame_count=2
+def test_task_description_uses_dialect_structure() -> None:
+    """输出结构必须来自目标模型的方言，不是手写规则清单。
+
+    之前这里堆了十几条祈使句（Sora/Runway 各一句），模型只认真执行最后几条，
+    产出退化成散文。改成「规定输出长什么样」后才拿到结构化结果。
+    """
+    agnes = build_continue_prompt_task(
+        duration_seconds=12.0, direction="auto", frame_count=4, model="agnes-video-2.5-flash"
     )
-    long = build_continue_prompt_task(
-        duration_seconds=12.0, direction="auto", frame_count=2
+    assert "## 输出结构" in agnes
+    assert "【核心创意】" in agnes and "【画面过程描述】" in agnes
+    minimax = build_continue_prompt_task(
+        duration_seconds=12.0, direction="auto", frame_count=4, model="MiniMax-H3"
     )
-    assert "一个完整动作" in short
-    assert "3 个递进的动作节拍" in long
+    assert "integrated_multimodal_description:" in minimax
+    generic = build_continue_prompt_task(
+        duration_seconds=12.0, direction="auto", frame_count=4, model=None
+    )
+    assert "## 输出结构" in generic, "认不出模型也要有结构要求"
+    assert "【核心创意】" not in generic, "兜底不该冒充某个具体方言"
+
+
+def test_every_catalog_video_model_has_a_dialect() -> None:
+    """目录里每个视频模型都要有结构定义，不能有落到空白的。"""
+    catalog = json.loads(
+        (REPOSITORY_ROOT / "src" / "novelvideo" / "official_media_models.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    missing = [
+        key
+        for key, entry in catalog["mediaModels"].items()
+        if entry.get("mediaType") == "video"
+        and resolve_continue_dialect(key) not in DIALECT_STRUCTURE_HINTS
+    ]
+    assert not missing, f"这些模型没有输出结构定义：{missing}"
+
+
+def test_task_description_keeps_continuity_constraints() -> None:
+    """续写专有约束与方言无关，换模型时它们必须还在。"""
+    prompt = build_continue_prompt_task(
+        duration_seconds=12.0, direction="auto", frame_count=4
+    )
+    assert "## 续写专有约束" in prompt
+    # 这四条来自官方指南共性，且每一条都对应过一次实测失败。
+    assert "第一帧就是锚点帧" in prompt
+    assert "不要重复时长" in prompt, "实测产出过「12秒，……」这种废话开头"
+    # 防编光源被单列成「输出格式」的一部分：埋在约束清单里时模型会跳过它，
+    # 实测同一段视频连续产出 6 次画面里不存在的红光。
+    assert "## 光线可追溯" in prompt
+    assert "必须能指到画面里的具体来源" in prompt
+
+
+def test_task_description_requires_role_identifiers() -> None:
+    """角色必须有区分标识，否则提示词里角色匿名、生成时互相漂移。
+
+    规则一度写成「不要用文字重新描述外貌」，模型理解成「连颜色词都不能写」，
+    产出「白衣身影」「另一人」——提示词本身就没法区分谁是谁。
+    """
+    prompt = build_continue_prompt_task(
+        duration_seconds=12.0, direction="auto", frame_count=4
+    )
+    assert "区分角色要写标识" in prompt
+    assert "蓝衣人" in prompt, "要给出可照抄的示例，否则模型不知道要写到什么粒度"
+    assert "不要写完整外貌清单" in prompt, "但完整外貌清单仍要禁止，否则模型改人"
+
+
+def test_detail_budget_scales_with_duration() -> None:
+    """细度按时长给，不写死字数。
+
+    之前是「长度 80-150 字」，实测 12 秒场景写 200 字仍欠细：动作链只有三步，
+    缺起势发力惯性收势；项目图库同长度成品单镜有 10+ 个连续动作。
+    """
+    # 字数是**区间上限**，不是「上下」——实测「250 字上下」被读成尽量多写，
+    # 同一场景产出 690 字。用「控制在 X-Y 字」并加「写完即止」。
+    expectations = {
+        4.0: ("2 个动作", "100-140 字"),
+        8.0: ("3 个动作", "160-200 字"),
+        12.0: ("4 个动作", "220-280 字"),
+        15.0: ("5 个动作", "300-360 字"),
+    }
+    for seconds, (actions, words) in expectations.items():
+        prompt = build_continue_prompt_task(
+            duration_seconds=seconds, direction="auto", frame_count=4
+        )
+        assert actions in prompt, f"{seconds} 秒应当给「{actions}」"
+        assert words in prompt, f"{seconds} 秒应当给「{words}」上限"
+        # 动作要写全四个阶段，否则模型会用形容词把长度填满而不是展开动作。
+        assert "起势、发力、惯性与收势" in prompt
+        assert "写完即止" in prompt, "没有这句模型会当配额往多了写"
+
+
+def test_reverse_section_is_capped() -> None:
+    """反向段最多 3 条、60 字以内。
+
+    实测一度铺到 8 条，把「不要切镜」这类真正的约束稀释掉了。
+    """
+    prompt = build_continue_prompt_task(
+        duration_seconds=12.0, direction="auto", frame_count=4
+    )
+    assert "## 反向段限长" in prompt
+    assert "最多 3 条" in prompt
+
+
+def test_task_description_has_no_hardcoded_length_cap() -> None:
+    """旧的「80-150 字」硬上限已被细度预算取代，别再回来。"""
+    for seconds in (4.0, 12.0):
+        prompt = build_continue_prompt_task(
+            duration_seconds=seconds, direction="auto", frame_count=4
+        )
+        assert "80-150" not in prompt
+
+
+def test_task_description_tells_model_reference_images_win() -> None:
+    """用户指定的参考素材优先于锚点帧——抽帧保证不了参照物齐全。"""
+    with_refs = build_continue_prompt_task(
+        duration_seconds=8.0, direction="auto", frame_count=4, reference_image_count=2
+    )
+    assert "用户指定的参考素材" in with_refs
+    assert "与素材冲突的外貌" in with_refs, "冲突时要以素材为准，否则加素材没意义"
+    without_refs = build_continue_prompt_task(
+        duration_seconds=8.0, direction="auto", frame_count=4
+    )
+    assert "用户指定的参考素材" not in without_refs
+
+
+def test_task_description_adapts_to_target_model() -> None:
+    """各家可用时长档位不同（agnes 6/8/10/12、Sora 4/8/12/16/20、Veo 4/6/8），
+    认得模型就按它的档位约束，认不出才回落通用句。"""
+    agnes = build_continue_prompt_task(
+        duration_seconds=8.0, direction="auto", frame_count=4, model="agnes-video-2.5-flash"
+    )
+    seedance = build_continue_prompt_task(
+        duration_seconds=8.0, direction="auto", frame_count=4, model="seedance-2.0"
+    )
+    unknown = build_continue_prompt_task(
+        duration_seconds=8.0, direction="auto", frame_count=4, model=None
+    )
+    assert "6/8/10/12 秒档位" in agnes
+    assert "2.0 系列" in seedance
+    # 兜底不能把某一家的档位写死进去。
+    assert "6/8/10/12" not in unknown
+    assert "整秒" in unknown
 
 
 # 抽帧 ------------------------------------------------------------------------

@@ -1959,6 +1959,10 @@ class FreezoneVideoContinueSuggestPromptRequest(BaseModel):
     direction: VideoContinueDirection = Field(
         default="auto", description="发展方向：剧情推进 / 情绪递进 / 动作爆发等"
     )
+    model: str = Field(
+        default="",
+        description="目标视频模型 id。各家可用时长档位不同，推荐时按它约束时长写法",
+    )
     canvas_id: str = Field(default="", description="可选：来源画布 id")
     node_id: str = Field(default="", description="可选：来源节点 id")
 

@@ -101,6 +101,7 @@ import {
 import { GROUP_COLOR_PRESETS } from "@/features/canvas/domain/groupColors";
 import { StoryboardGroupToolbar } from "@/features/canvas/ui/StoryboardGroupToolbar";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { requestVideoIdentityPanel } from "@/features/canvas/nodes/videoIdentityPanelRequest";
 import { useCanvasProjectionStatus } from "@/features/freezone/projectionStatusStore";
 import {
   matteInWorker,
@@ -148,6 +149,11 @@ import {
   VideoReshootTimeline,
 } from "@/features/canvas/ui/VideoReshootTimeline";
 import { EnhancePromptDialog } from "@/features/canvas/nodes/EnhancePromptDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   dialectForVideoModel,
   usePromptEnhance,
@@ -739,6 +745,68 @@ export const NodeActionToolbar = memo(
     const [continueDirection, setContinueDirection] =
       useState<FreezoneVideoContinueDirection>("auto");
     const [continuePrompt, setContinuePrompt] = useState("");
+    // 提示词全文用弹层看。推荐出来的段落动辄三四百字，而面板只有一行半的高度，
+    // 内嵌 textarea 只能看到末尾十几字——用户没法确认「生成的到底是不是这句」。
+    const [continuePromptExpanded, setContinuePromptExpanded] = useState(false);
+    /**
+     * 失败续写的重试素材：从**当前节点的下游**里找那个挂掉的续写节点。
+     *
+     * 挂在源节点的工具栏上而不是失败节点自己身上：失败节点是 referenceOnly +
+     * 空 prompt，工具栏在它身上根本不会给出生成入口，按钮挂过去等于没挂。
+     */
+    const nodesForRetry = useCanvasStore((state) => state.nodes);
+    const edgesForRetry = useCanvasStore((state) => state.edges);
+    const continuationRetry = useMemo(() => {
+      const children = new Set(
+        edgesForRetry
+          .filter((edge) => edge.source === node.id)
+          .map((edge) => edge.target),
+      );
+      for (const candidate of nodesForRetry) {
+        if (!children.has(candidate.id)) continue;
+        const data = candidate.data as {
+          isContinuationNode?: unknown;
+          videoUrl?: unknown;
+          isGenerating?: unknown;
+          generationError?: unknown;
+          continuationRetryPrompt?: unknown;
+          continuationRetrySeconds?: unknown;
+          continuationRetryDirection?: unknown;
+        };
+        if (data.isContinuationNode !== true) continue;
+        // 成功的续写节点不需要重试；还在跑的也不能打断。
+        if (typeof data.videoUrl === "string" && data.videoUrl) continue;
+        if (data.isGenerating === true) continue;
+        if (typeof data.generationError !== "string" || !data.generationError) {
+          continue;
+        }
+        // 提示词可能是空串：本次改动之前失败的续写节点根本没存过它（那时提示词
+        // 只活在工具栏的局部 state 里）。这时不给「一键重试」而是把延长面板打开，
+        // 让用户重推一次——总比一条死路强。
+        const retryPrompt =
+          typeof data.continuationRetryPrompt === "string"
+            ? data.continuationRetryPrompt
+            : "";
+        return {
+          nodeId: candidate.id,
+          prompt: retryPrompt,
+          seconds:
+            typeof data.continuationRetrySeconds === "number"
+              ? data.continuationRetrySeconds
+              : null,
+          direction:
+            typeof data.continuationRetryDirection === "string"
+              ? (data.continuationRetryDirection as FreezoneVideoContinueDirection)
+              : null,
+        };
+      }
+      return null;
+    }, [edgesForRetry, node.id, nodesForRetry]);
+    const continuationRetryAvailable = continuationRetry !== null;
+    const continuationRetryNodeId = continuationRetry?.nodeId ?? null;
+    const continuationRetryPrompt = continuationRetry?.prompt ?? "";
+    const continuationRetrySeconds = continuationRetry?.seconds ?? null;
+    const continuationRetryDirection = continuationRetry?.direction ?? null;
     // 当前框里这段提示词是**按什么设定**推出来的（手动写的记 null）。改时长或改
     // 方向之后这段就名不副实了，用它判断该不该提醒用户重推一次。
     const [continuePromptSource, setContinuePromptSource] = useState<{
@@ -831,6 +899,9 @@ export const NodeActionToolbar = memo(
           endSeconds: continueAnchor.end,
           durationSeconds: continueDurationSeconds,
           direction: continueDirection,
+          // 目标模型决定推荐措辞：各家可用的时长档位与写法不同（Sora/Kling/
+          // Runway 都把 5-10 秒当作一个完整场景）。认不出就传空串，后端走通用约束。
+          model: reshootModelId || undefined,
           canvasId: readUrl().canvas ?? undefined,
           nodeId: node.id,
         });
@@ -865,18 +936,30 @@ export const NodeActionToolbar = memo(
       continueDurationValid,
       isSuggestingContinuePrompt,
       node,
+      reshootModelId,
       reshootVideoUrl,
       t,
     ]);
 
-    const handleVideoContinue = useCallback(async () => {
+    const handleVideoContinue = useCallback(
+      async (options?: { reuseNodeId?: string; reusePrompt?: string; reuseSeconds?: number; reuseDirection?: FreezoneVideoContinueDirection }) => {
       if (!isVideoNode(node)) return;
       const videoUrl = reshootVideoUrl;
       if (!videoUrl || continueAnchor === null || isContinuing) return;
-      if (continuePrompt.trim().length === 0) return;
+      const prompt = (options?.reusePrompt ?? continuePrompt).trim();
+      if (prompt.length === 0) return;
       // 时长写死在输入框里，越界时后端会静默夹到模型上下限，用户看到的成片长度
       // 就不是自己填的那个数。与其事后发现，不如在这里就当没填。
-      if (!continueDurationValid) return;
+      const retrySeconds = options?.reuseSeconds ?? null;
+      const durationSeconds =
+        retrySeconds !== null &&
+        Number.isInteger(retrySeconds) &&
+        retrySeconds >= continueMinSeconds &&
+        retrySeconds <= continueMaxSeconds
+          ? retrySeconds
+          : continueDurationSeconds;
+      if (options?.reuseSeconds === undefined && !continueDurationValid) return;
+      const direction = options?.reuseDirection ?? continueDirection;
       const projectId = readUrl().project;
       if (!projectId) {
         console.error("[video-continue] no project in URL");
@@ -887,27 +970,40 @@ export const NodeActionToolbar = memo(
           ? node.data.previewImageUrl
           : null;
       const aspectRatio = continueAspectRatio(node.data);
-      const continuationNodeId = addNode(
-        CANVAS_NODE_TYPES.video,
-        findNodePosition(node.id, 580, 380),
-        {
-          displayName: t("nodeToolbar.video.continueTitle"),
-          videoUrl: null,
-          previewImageUrl,
-          aspectRatio,
-          // 与重拍/greybox 同：产物由工具栏直接提交，抑制底部生成面板。
-          referenceOnly: true,
-          // 溯源标志：让「源视频 → 续写片段」这条入边按溯源边处理，不被素材上限拒掉
-          // （agnes 系 referenceVideoMax=0，照那张表算这条边会被静默丢弃）。
-          isContinuationNode: true,
-          isGenerating: true,
-        } as unknown as Parameters<typeof addNode>[2],
-      );
+      // 重试时复用那个失败节点：用户已经填过一次提示词、选过一次方向，
+      // 再让他重来一遍等于让失败的成本翻倍。
+      const reuseNodeId = options?.reuseNodeId ?? null;
+      const continuationNodeId =
+        reuseNodeId ??
+        addNode(
+          CANVAS_NODE_TYPES.video,
+          findNodePosition(node.id, 580, 380),
+          {
+            displayName: t("nodeToolbar.video.continueTitle"),
+            videoUrl: null,
+            previewImageUrl,
+            aspectRatio,
+            // 与重拍/greybox 同：产物由工具栏直接提交，抑制底部生成面板。
+            referenceOnly: true,
+            // 溯源标志：让「源视频 → 续写片段」这条入边按溯源边处理，不被素材上限拒掉
+            //（agnes 系 referenceVideoMax=0，照那张表算这条边会被静默丢弃）。
+            isContinuationNode: true,
+            isGenerating: true,
+          } as unknown as Parameters<typeof addNode>[2],
+        );
       // 显式来源边：续写片段是从这条视频续出来的，画布上要看得出来。
-      addEdge(node.id, continuationNodeId);
+      if (!reuseNodeId) addEdge(node.id, continuationNodeId);
       setSelectedNode(continuationNodeId);
       setShowContinuePanel(false);
       setIsContinuing(true);
+      if (reuseNodeId) {
+        // 重试同一个节点：清掉上一次的失败痕迹，再进入生成态。
+        updateNodeData(reuseNodeId, {
+          isGenerating: true,
+          generationError: null,
+          generationErrorDetails: null,
+        });
+      }
       try {
         // 抽尾帧。**不**走重拍那条链路：重拍是首尾帧锚定（把区间两端都钉死），
         // 拿它来续写只会得到「从几秒前那张图演到尾帧」的补段，不是往下续。
@@ -924,7 +1020,7 @@ export const NodeActionToolbar = memo(
           `continue-${stamp}.png`,
         );
         const ref = await submitFreezoneVideoKeyframes(projectId, {
-          prompt: continuePrompt.trim(),
+          prompt,
           // 只钉首帧：首尾帧端点允许「只提供首帧」，那边就是自由结尾 —— 正是续写。
           firstFrameUrl: uploaded.url,
           aspectRatio,
@@ -932,7 +1028,7 @@ export const NodeActionToolbar = memo(
             typeof node.data.resolution === "string" && node.data.resolution
               ? node.data.resolution
               : "720p",
-          durationSeconds: continueDurationSeconds,
+          durationSeconds,
           genMode: "firstFrame",
           model: typeof node.data.model === "string" ? node.data.model : undefined,
           canvasId: readUrl().canvas ?? undefined,
@@ -1021,18 +1117,28 @@ export const NodeActionToolbar = memo(
             isGenerating: false,
             generationError:
               error instanceof Error ? error.message : String(error),
+            // 把重试要用的输入留在节点上：失败节点自己是 referenceOnly + 空 prompt，
+            // 节点面板没有重试入口（会被 submitDisabled 拦死）。下次用户选中它，
+            // 工具栏从这里把提示词/时长/方向读回来直接重跑，不用重填一遍。
+            continuationRetryPrompt: prompt,
+            continuationRetrySeconds: durationSeconds,
+            continuationRetryDirection: direction,
           });
         }
       } finally {
         setIsContinuing(false);
       }
-    }, [
+    },
+    [
       addEdge,
       addNode,
       awaitTaskCompletion,
       continueAnchor,
       continueDurationSeconds,
       continueDurationValid,
+      continueDirection,
+      continueMinSeconds,
+      continueMaxSeconds,
       continuePrompt,
       findNodePosition,
       isContinuing,
@@ -3022,6 +3128,41 @@ export const NodeActionToolbar = memo(
                       )}
                       {t("nodeToolbar.video.continue")}
                     </UiChipButton>
+                    {/* 失败续写的重试入口。延长节点是 referenceOnly + 空 prompt，
+                        节点自带的「重新生成」永远被 submitDisabled 拦死；把重试
+                        放在源节点的工具栏上，用户选中失败节点再回到源节点就能一键重跑，
+                        提示词/时长/方向都从失败节点上读回来。 */}
+                    {continuationRetryAvailable && (
+                      <UiChipButton
+                        key="video-continue-retry"
+                        className={stubButtonClass}
+                        title={t("nodeToolbar.video.continueRetryHint")}
+                        data-testid="video-continue-retry"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          // 存不下提示词的旧失败节点：退回「打开面板重做」，
+                          // 而不是拿空提示词去跑一次必然失败的任务。
+                          if (!continuationRetryPrompt) {
+                            setShowContinuePanel(true);
+                            return;
+                          }
+                          void handleVideoContinue({
+                            reuseNodeId: continuationRetryNodeId ?? undefined,
+                            reusePrompt: continuationRetryPrompt,
+                            reuseSeconds: continuationRetrySeconds ?? undefined,
+                            reuseDirection:
+                              continuationRetryDirection ?? undefined,
+                          });
+                        }}
+                      >
+                        {isContinuing ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RotateCw className="h-3.5 w-3.5" />
+                        )}
+                        {t("nodeToolbar.video.continueRetry")}
+                      </UiChipButton>
+                    )}
                     <UiChipButton
                       key="video-identity-call"
                       className={stubButtonClass}
@@ -3029,9 +3170,7 @@ export const NodeActionToolbar = memo(
                       data-testid="video-node-identity-call-toggle"
                       onClick={(event) => {
                         event.stopPropagation();
-                        canvasEventBus.publish("video-node/identity-call", {
-                          nodeId,
-                        });
+                        requestVideoIdentityPanel(nodeId);
                       }}
                     >
                       <GitBranch className="h-3.5 w-3.5" />
@@ -3662,6 +3801,21 @@ export const NodeActionToolbar = memo(
                     ? t("nodeToolbar.video.continuePromptEnhanceRunning")
                     : t("nodeToolbar.video.continuePromptEnhance")}
                 </button>
+                {/* 看全文：面板里那两行只是入口，确认内容要点开这个。 */}
+                <button
+                  type="button"
+                  disabled={continuePrompt.trim().length === 0}
+                  title={t("nodeToolbar.video.continuePromptExpand")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setContinuePromptExpanded(true);
+                  }}
+                  className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="video-continue-prompt-expand"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                  {t("nodeToolbar.video.continuePromptExpand")}
+                </button>
               </div>
               <EnhancePromptDialog
                 open={continuePromptEnhance.open}
@@ -3685,6 +3839,52 @@ export const NodeActionToolbar = memo(
                   );
                 }}
               />
+              {/* 提示词全文：面板里只有两行高，推荐出来的三四百字看不清写到了什么。
+                  这里只读展示 + 一键复制，编辑仍在面板那个框里。 */}
+              <Dialog
+                open={continuePromptExpanded}
+                onOpenChange={setContinuePromptExpanded}
+              >
+                <DialogContent
+                  className="sm:max-w-[720px]"
+                  data-testid="video-continue-prompt-dialog"
+                >
+                  <DialogTitle className="flex flex-wrap items-center justify-between gap-3 pr-8">
+                    <span>
+                      {t("nodeToolbar.video.continuePromptExpandTitle")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void navigator.clipboard
+                          ?.writeText(continuePrompt)
+                          .then(() =>
+                            toast.success(
+                              t("nodeToolbar.video.continuePromptCopied"),
+                            ),
+                          )
+                          .catch(() =>
+                            toast.error(
+                              t("nodeToolbar.video.continuePromptCopyFailed"),
+                            ),
+                          );
+                      }}
+                      className="flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[12px] text-text-dark transition-colors hover:bg-white/15"
+                      data-testid="video-continue-prompt-copy"
+                    >
+                      <Copy className="h-3 w-3" />
+                      {t("nodeToolbar.video.continuePromptCopy")}
+                    </button>
+                  </DialogTitle>
+                  <div
+                    className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-white/10 bg-white/5 px-3 py-2 text-[13px] leading-relaxed text-text-dark"
+                    data-testid="video-continue-prompt-full"
+                  >
+                    {continuePrompt}
+                  </div>
+                </DialogContent>
+              </Dialog>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className="text-[11px] text-text-dim">
                   {isSuggestingContinuePrompt

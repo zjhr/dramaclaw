@@ -16,6 +16,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { VideoNode } from "@/features/canvas/nodes/VideoNode";
+import { requestVideoIdentityPanel } from "@/features/canvas/nodes/videoIdentityPanelRequest";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { useCanvasStore } from "@/stores/canvasStore";
 
@@ -75,7 +76,7 @@ function seedCanvas(deskData: Record<string, unknown>) {
   } as never);
 }
 
-function renderVideoNode() {
+function renderVideoNode(data: Record<string, unknown> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
@@ -84,7 +85,7 @@ function renderVideoNode() {
           id={VIDEO_ID}
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           {...({ type: CANVAS_NODE_TYPES.video, dragging: false, zIndex: 0 } as any)}
-          data={{}}
+          data={data}
           selected
         />
       </ReactFlowProvider>
@@ -120,6 +121,25 @@ describe("导演台节点作为视频节点的参考素材", () => {
     document.removeEventListener("wheel", canvasWheel);
     expect(wheel.defaultPrevented).toBe(false);
     expect(canvasWheel).not.toHaveBeenCalled();
+  });
+
+  it("高清视频节点点角色也会打开表演面板", async () => {
+    window.history.replaceState({}, "", "/projects/demo/freezone");
+    seedCanvas({});
+    renderVideoNode({ isUpscaleNode: true });
+
+    act(() => canvasEventBus.publish("video-node/identity-call", { nodeId: VIDEO_ID }));
+
+    expect(await screen.findByTestId("identity-call-panel")).toBeInTheDocument();
+  });
+
+  it("节点还没挂载时点角色，挂载后仍会打开", async () => {
+    window.history.replaceState({}, "", "/projects/demo/freezone");
+    seedCanvas({});
+    requestVideoIdentityPanel(VIDEO_ID);
+    renderVideoNode();
+
+    expect(await screen.findByTestId("identity-call-panel")).toBeInTheDocument();
   });
 
   it("videoUrl 被识别为 kind:'video'：chip 用 <video> 承载上游视频地址", async () => {

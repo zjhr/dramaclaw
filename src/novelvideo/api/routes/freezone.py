@@ -10292,6 +10292,7 @@ async def freezone_video_continue_suggest_prompt(
             "end_seconds": body.end_seconds,
             "duration_seconds": body.duration_seconds,
             "direction": body.direction,
+            "model": body.model,
             "canvas_id": body.canvas_id,
             "node_id": body.node_id,
             "billing": freezone_image_reverse_prompt_task_billing(

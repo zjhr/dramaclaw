@@ -327,6 +327,64 @@ Three bracketed sections, submitted together as one prompt:
 Fill every field of the requested schema. `changes` lists the structural elements you added or repaired, in the creator's language, at most six short items. Do not list unchanged original wording there.
 """
 
+class _TextRunOutcome:
+    """两条传输路径的返回形态归一：调用方一律读 `.output`。
+
+    流式路径只对 `output_type is str` 的 Agent 启用（结构化输出在流式下逐块吐
+    最终对象，字符串拼不出结果），那条路直接给出文本；非流式路径给 pydantic-ai
+    的 `AgentRunResult`。两者都包成 `.output` 一个属性，调用方不必知道走了哪条。
+    """
+
+    __slots__ = ("_response", "_text")
+
+    def __init__(self, *, response: Any = None, text: str = "") -> None:
+        self._response = response
+        self._text = text
+
+    @property
+    def output(self) -> Any:
+        if self._response is not None:
+            return self._response.output
+        return self._text
+
+
+async def run_agent_with_transport_compat(
+    agent: Agent,
+    payload: Any,
+    *,
+    capability: str,
+    model_name: str,
+) -> Any:
+    """跑一次 Agent 调用，自动在流式/非流式之间切换。
+
+    同一套提示词在本地网关的非流式通道上一次都没失败过，流式通道则会出现空流
+    （网关记 `stream ended: reason=eof`），客户端抛
+    `UnexpectedModelBehavior('… expected JSON data')`。反过来也有必须流式的渠道，
+    所以两种都试、记住哪种能用。机制见 `novelvideo.model_transport_compat`。
+
+    流式分支要把文本块拼起来再交给 pydantic-ai 解析输出类型：带结构化输出的
+    Agent（非 str 的 output_type）在流式下是逐块吐最终对象，直接取字符串会在
+    解析处失败，所以这里只在 `output_type is str` 时启用流式重试；结构化输出
+    本身对传输方式敏感度低，走非流式即可。
+    """
+    from novelvideo.model_transport_compat import run_with_transport_compat
+
+    supports_streaming = getattr(agent, "output_type", None) is str
+
+    async def call(mode: bool) -> Any:
+        if mode and supports_streaming:
+            async with agent.run_stream(payload) as stream:
+                return _TextRunOutcome(text=str(await stream.get_output()))
+        return _TextRunOutcome(response=await agent.run(payload))
+
+    outcome = await run_with_transport_compat(
+        capability=capability,
+        model_name=model_name,
+        call=call,
+    )
+    return outcome
+
+
 FREEZONE_NODE_TYPE_LABELS: dict[str, str] = {
     "generic": "通用提示词",
     "image": "图片节点提示词",
@@ -464,6 +522,36 @@ def resolve_freezone_text_writer_model() -> str:
     )
 
 
+def resolve_freezone_translation_model() -> str:
+    """翻译 Agent 的逻辑模型名，供传输偏好缓存分键用。"""
+    from novelvideo.config import get_newapi_text_model_name
+    from novelvideo.official_defaults import DEFAULT_FREEZONE_TRANSLATION_MODEL
+
+    return get_newapi_text_model_name(
+        "FREEZONE_TRANSLATION_MODEL", DEFAULT_FREEZONE_TRANSLATION_MODEL
+    )
+
+
+def resolve_freezone_prompt_enhance_model() -> str:
+    """提示词强化 Agent 的逻辑模型名，供传输偏好缓存分键用。"""
+    from novelvideo.config import get_newapi_text_model_name
+    from novelvideo.official_defaults import DEFAULT_FREEZONE_TEXT_WRITER_MODEL
+
+    return get_newapi_text_model_name(
+        "FREEZONE_PROMPT_ENHANCE_MODEL", DEFAULT_FREEZONE_TEXT_WRITER_MODEL
+    )
+
+
+def resolve_freezone_video_story_script_model() -> str:
+    """视频分镜 Agent 走视觉模型（见 create_freezone_video_story_script_agent 说明）。"""
+    from novelvideo.config import get_newapi_text_model_name
+    from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
+
+    return get_newapi_text_model_name(
+        "FREEZONE_VISION_MODEL", DEFAULT_FREEZONE_VISION_MODEL
+    )
+
+
 def resolve_freezone_story_script_model(model: str | None) -> dict[str, str]:
     model_text = str(model or "").strip()
     if not model_text:
@@ -555,7 +643,12 @@ async def translate_freezone_text(
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 
     with model_gateway_request_scope(egress_context):
-        response = await get_freezone_translation_agent().run(task)
+        response = await run_agent_with_transport_compat(
+            get_freezone_translation_agent(),
+            task,
+            capability="text-translate",
+            model_name=resolve_freezone_translation_model(),
+        )
     result = response.output
     target_language: Literal["zh", "en"] = result.target_language
     if target_language == result.source_language:
@@ -648,7 +741,12 @@ async def enhance_freezone_prompt(
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 
     with model_gateway_request_scope(egress_context):
-        response = await get_freezone_prompt_enhance_agent().run(task)
+        response = await run_agent_with_transport_compat(
+            get_freezone_prompt_enhance_agent(),
+            task,
+            capability="text-enhance",
+            model_name=resolve_freezone_prompt_enhance_model(),
+        )
     result = response.output
     enhanced_text = str(result.enhanced_text or "").strip()
     if not enhanced_text:
@@ -676,7 +774,12 @@ async def generate_freezone_text(
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 
     with model_gateway_request_scope(egress_context):
-        response = await get_freezone_text_writer_agent().run(clean_prompt)
+        response = await run_agent_with_transport_compat(
+            get_freezone_text_writer_agent(),
+            clean_prompt,
+            capability="text-writer",
+            model_name=resolve_freezone_text_writer_model(),
+        )
     generated_text = str(response.output or "").strip()
     if not generated_text:
         raise ValueError("text generation returned empty output")
@@ -849,7 +952,12 @@ async def generate_freezone_story_script(
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 
     with model_gateway_request_scope(egress_context):
-        response = await get_freezone_story_script_agent(model).run(task)
+        response = await run_agent_with_transport_compat(
+            get_freezone_story_script_agent(model),
+            task,
+            capability="text-story-script",
+            model_name=model,
+        )
     return response.output
 
 
@@ -949,8 +1057,11 @@ async def generate_freezone_story_script_with_vision(
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 
     with model_gateway_request_scope(egress_context):
-        response = await get_freezone_video_story_script_agent().run(
-            [task, *attachments]
+        response = await run_agent_with_transport_compat(
+            get_freezone_video_story_script_agent(),
+            [task, *attachments],
+            capability="text-video-story-script",
+            model_name=resolve_freezone_video_story_script_model(),
         )
     return response.output
 

@@ -116,6 +116,7 @@ import {
   useAlbumPendingTotal,
 } from "@/features/canvas/nodes/shared/albumPendingTotals";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { takePendingIdentityPanel } from "@/features/canvas/nodes/videoIdentityPanelRequest";
 import { useExternalFileHandoff } from "@/features/canvas/hooks/useExternalFileHandoff";
 import {
   extractUpstreamContent,
@@ -661,7 +662,7 @@ export const VideoNode = memo(
 
     // 镜头配方溯源面板：与生成历史一样只在节点选中时挂载，没选中就不发请求。
     const [showShotRecipePanel, setShowShotRecipePanel] = useState(false);
-    const recipeProjectId = useMemo(() => readUrl().project ?? "", []);
+    const recipeProjectId = readUrl().project ?? "";
     const flowTransform = useStore((state) =>
       showShotRecipePanel ? state.transform : null,
     );
@@ -1517,8 +1518,10 @@ export const VideoNode = memo(
     }, [id]);
 
     useEffect(() => {
+      if (takePendingIdentityPanel(id)) setShowShotRecipePanel(true);
       return canvasEventBus.subscribe("video-node/identity-call", ({ nodeId }) => {
         if (nodeId !== id) return;
+        takePendingIdentityPanel(id);
         setShowShotRecipePanel((open) => !open);
       });
     }, [id]);
@@ -3595,7 +3598,7 @@ export const VideoNode = memo(
           />
         )}
 
-        {showVideoOpsPanel && recipeProjectId && showShotRecipePanel && recipeDock && createPortal(
+        {selected && recipeProjectId && showShotRecipePanel && recipeDock && createPortal(
           <div
             className="nodrag nopan nowheel flex min-h-0 flex-col gap-2 overflow-hidden"
             style={{

@@ -2192,6 +2192,8 @@ export interface FreezoneVideoContinueSuggestPromptPayload extends FreezoneNodeC
   endSeconds: number;
   durationSeconds: number;
   direction: FreezoneVideoContinueDirection;
+  /** 目标视频模型 id。各家时长档位不同，后端按它约束推荐措辞。 */
+  model?: string;
 }
 
 export async function submitFreezoneVideoContinueSuggestPrompt(
@@ -2207,6 +2209,7 @@ export async function submitFreezoneVideoContinueSuggestPrompt(
         end_seconds: payload.endSeconds,
         duration_seconds: payload.durationSeconds,
         direction: payload.direction,
+        model: payload.model ?? "",
         ...nodeContextBody(payload),
       },
     },
