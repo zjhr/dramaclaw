@@ -12,6 +12,7 @@ from novelvideo.api.schemas import (
     FreezoneImageToVideoRequest,
     FreezoneKeyframeVideoRequest,
     FreezoneVideoEditRequest,
+    FreezoneVideoExtendRequest,
     FreezoneVideoGenRequest,
     FreezoneVideoOmniGenRequest,
 )
@@ -536,6 +537,83 @@ async def test_first_frame_mode_rejects_invalid_frame_combinations(
                 last_frame_url=last_url,
                 model="catalog-video",
                 gen_mode="firstFrame",
+            ),
+            {"username": "admin"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_video_extend_uses_source_video_auto_ratio_and_requested_duration(
+    monkeypatch, tmp_path: Path
+) -> None:
+    capabilities = _catalog("video_extend")
+    capabilities["referenceVideoMax"] = 1
+    captured = await _install_route_fakes(monkeypatch, tmp_path, capabilities)
+
+    await freezone_routes.freezone_video_extend(
+        "project",
+        FreezoneVideoExtendRequest(
+            video_url="https://example.com/source.mp4",
+            prompt="继续生成五秒，人物走出房门",
+            duration_seconds=7,
+            model="catalog-video",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["request_mode"] == "videoExtend"
+    assert captured["start"]["gen_mode"] == "video_extend"
+    assert captured["start"]["aspect_ratio"] == "auto"
+    assert captured["start"]["duration_seconds"] == 7
+    assert captured["start"]["reference_items"] == [
+        {
+            "type": "video",
+            "path": "https://example.com/source.mp4",
+            "role": "视频延长源",
+        }
+    ]
+    assert "视频延长要求" in captured["start"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_video_extend_rejects_model_without_the_capability(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """目录没声明 video_extend 就得拒绝——这正是前端能力探测依据的那份声明。"""
+
+    capabilities = _catalog("text_to_video")
+    capabilities["referenceVideoMax"] = 1
+    await _install_route_fakes(monkeypatch, tmp_path, capabilities)
+
+    with pytest.raises(HTTPException, match="does not support video_extend"):
+        await freezone_routes.freezone_video_extend(
+            "project",
+            FreezoneVideoExtendRequest(
+                video_url="https://example.com/source.mp4",
+                prompt="继续",
+                model="catalog-video",
+            ),
+            {"username": "admin"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_video_extend_rejects_model_that_takes_no_video_reference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """声明了能力但 referenceVideoMax=0 的目录配置同样跑不动，直接拒。"""
+
+    capabilities = _catalog("video_extend")
+    capabilities["referenceVideoMax"] = 0
+    await _install_route_fakes(monkeypatch, tmp_path, capabilities)
+
+    with pytest.raises(HTTPException, match="does not support video references"):
+        await freezone_routes.freezone_video_extend(
+            "project",
+            FreezoneVideoExtendRequest(
+                video_url="https://example.com/source.mp4",
+                prompt="继续",
+                model="catalog-video",
             ),
             {"username": "admin"},
         )

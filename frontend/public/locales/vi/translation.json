@@ -5800,6 +5800,12 @@
       "continuePromptPlaceholder": "Mô tả điều gì xảy ra tiếp theo",
       "continueCancel": "Huỷ",
       "continueSubmit": "Tạo",
+      "continueEntryLabel": "Cách kéo dài",
+      "continueEntryCraft": "Sáng tạo có hướng dẫn",
+      "continueEntryQuick": "Kéo dài nhanh",
+      "continueQuickHint": "Mô hình video tiếp nối thẳng từ khung hình cuối, không ghép nối. Nhanh hơn nhưng chất lượng phụ thuộc khả năng nối tiếp của mô hình.",
+      "continueQuickSubmit": "Kéo dài nhanh",
+      "continueQuickUnavailable": "Chưa có mô hình video hỗ trợ kéo dài. Hãy liên hệ quản trị viên để thiết lập.",
       "continuePollTimeout": "Tác vụ vẫn đang chạy — xem kết quả ở trung tâm tác vụ"
     },
     "audio": {

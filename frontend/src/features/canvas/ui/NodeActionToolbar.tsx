@@ -132,6 +132,7 @@ import {
   submitFreezoneAudioSeparate,
   submitFreezoneVideoGreybox,
   submitFreezoneVideoCompose,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoKeyframes,
   submitFreezoneVideoReshoot,
   uploadFreezoneImage,
@@ -164,7 +165,9 @@ import {
   usePromptEnhance,
   VIDEO_PROMPT_DIALECTS,
 } from "@/features/canvas/nodes/usePromptEnhance";
+import { isVideoModeSupportedByModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { buildGenerationErrorReport } from "@/features/canvas/application/generationErrorReport";
+import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { CreditCostPill } from "@/components/credits/credit-visual";
@@ -746,6 +749,25 @@ export const NodeActionToolbar = memo(
     // 「向后延长」：从片尾接着往下演，节点上放的是原片接到延长段之后的整段成片。
     // 面板问三件事——生成多久、往哪个方向演、写什么（或让它替我们写）。
     const [showContinuePanel, setShowContinuePanel] = useState(false);
+    /**
+     * 面板内两个入口的分段选择。
+     *
+     * `craft`（精细创作）是本地面板：自定义时长、8 个发展方向、参考素材、
+     * 提示词优化，走 keyframes 链路，不依赖网关的 video_extend 能力。
+     * `quick`（快速延长）走上游那条裸生成链路，只有目录显式声明了
+     * video_extend 的模型才可用。
+     */
+    const [continueEntry, setContinueEntry] = useState<"craft" | "quick">("craft");
+    const quickExtendAvailable = useMemo(
+      () =>
+        isVideoModeSupportedByModel("videoExtend", {
+          apiModel: reshootModelId || undefined,
+          supportedModes: reshootModels.models.find(
+            (option) => option.id === reshootModelId || option.apiModel === reshootModelId,
+          )?.supportedModes,
+        }),
+      [reshootModelId, reshootModels.models],
+    );
     const [continueDurationDraft, setContinueDurationDraft] = useState("5");
     const [continueDirection, setContinueDirection] =
       useState<FreezoneVideoContinueDirection>("auto");
@@ -1172,6 +1194,91 @@ export const NodeActionToolbar = memo(
       node,
       reshootVideoUrl,
       setSelectedNode,
+      t,
+      updateNodeData,
+    ]);
+
+    /**
+     * 快速延长：走上游的 /freezone/video/video-extend，模型自己接续源视频。
+     *
+     * 与精细创作的本质差别是不做前后拼接——延长段直接就是产物，成片质量取决于
+     * 模型的接续能力；精细创作那条链路把原片与延长段合成，兼容性更好但要等两次。
+     */
+    const handleVideoQuickExtend = useCallback(async () => {
+      if (!isVideoNode(node)) return;
+      const videoUrl = reshootVideoUrl;
+      const projectId = readUrl().project;
+      const prompt = continuePrompt.trim();
+      if (!videoUrl || !projectId || prompt.length === 0 || isContinuing) return;
+      if (!quickExtendAvailable) {
+        toast.error(t("nodeToolbar.video.continueQuickUnavailable"));
+        return;
+      }
+      // 工具栏不持有画质/音频开关，只借节点上的既有选择——这个入口是
+      // 「快速」的，不该在这里再给一份状态。
+      const nodeQuality = typeof node.data.quality === "string" ? node.data.quality : "";
+      const nodeGenerateAudio = node.data.generateAudio === true;
+      setIsContinuing(true);
+      const nodeId = node.id;
+      updateNodeData(nodeId, {
+        isGenerating: true,
+        generationStartedAt: Date.now(),
+        generationError: null,
+        generationTaskKey: null,
+        generationTaskType: null,
+        generationTaskJobId: null,
+      });
+      try {
+        const ref = await submitFreezoneVideoExtend(projectId, {
+          videoUrl,
+          prompt,
+          resolution: nodeQuality || undefined,
+          durationSeconds: continueDurationSeconds,
+          generateAudio: nodeGenerateAudio,
+          model: reshootModelId,
+          genMode: "videoExtend",
+          canvasId: readUrl().canvas ?? undefined,
+          nodeId,
+        });
+        updateNodeData(nodeId, generationTaskDescriptor(ref));
+        await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
+        const result = await fetchFreezoneJobResult(
+          projectId,
+          ref.task_type,
+          ref.job_id,
+        );        if (!result.url) throw new Error(t("node.reshoot.noResult"));
+        updateNodeData(nodeId, {
+          videoUrl: result.url,
+          isGenerating: false,
+          generationStartedAt: null,
+          generationError: null,
+          generationTaskKey: null,
+          generationTaskType: null,
+          generationTaskJobId: null,
+        });
+      } catch (error) {
+        updateNodeData(nodeId, {
+          isGenerating: false,
+          generationStartedAt: null,
+          generationError: error instanceof Error ? error.message : String(error),
+          generationTaskKey: null,
+          generationTaskType: null,
+          generationTaskJobId: null,
+        });
+      } finally {
+        setIsContinuing(false);
+      }
+    }, [
+      awaitTaskCompletion,
+      continueDurationSeconds,
+      continuePrompt,
+      isContinuing,
+      node,
+      quickExtendAvailable,
+      reshootModelId,
+      reshootVideoUrl,
       t,
       updateNodeData,
     ]);
@@ -3694,6 +3801,62 @@ export const NodeActionToolbar = memo(
               提交后直接出片。 */}
           {isVideoNode(node) && showContinuePanel && (
             <UiPanel className="nodrag mt-1.5 w-full min-w-[320px] animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-3 py-2.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none">
+              {/* 两个延长入口：精细创作走本地面板，快速延长走网关的 video_extend。
+                  快速延长没有对应模型时保留按钮但禁用，让功能位可见并提示去配置。 */}
+              <div className="mb-2 grid grid-cols-2 gap-1.5" role="group" aria-label={t("nodeToolbar.video.continueEntryLabel")}>
+                {([
+                  ["craft", t("nodeToolbar.video.continueEntryCraft")],
+                  ["quick", t("nodeToolbar.video.continueEntryQuick")],
+                ] as const).map(([value, label]) => {
+                  const disabled = value === "quick" && !quickExtendAvailable;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={continueEntry === value}
+                      disabled={disabled}
+                      title={disabled ? t("nodeToolbar.video.continueQuickUnavailable") : undefined}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (disabled) {
+                          toast.error(t("nodeToolbar.video.continueQuickUnavailable"));
+                          return;
+                        }
+                        setContinueEntry(value);
+                      }}
+                      data-testid={`video-continue-entry-${value}`}
+                      className={`nodrag h-8 rounded-lg border text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                        continueEntry === value
+                          ? "border-[rgb(var(--accent-rgb))] bg-[rgb(var(--accent-rgb))]/15 text-text-dark"
+                          : "border-white/15 bg-white/[0.04] text-text-muted hover:bg-white/[0.08]"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {continueEntry === "quick" ? (
+                /* 快速延长：只问提示词，其余走节点上的模型与时长设置。 */
+                <div className="space-y-2">
+                  <textarea
+                    value={continuePrompt}
+                    onChange={(event) => {
+                      setContinuePrompt(event.target.value);
+                      setContinuePromptSource(null);
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                    rows={3}
+                    placeholder={t("nodeToolbar.video.continuePromptPlaceholder")}
+                    data-testid="video-continue-quick-prompt"
+                    className="nodrag w-full resize-y rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] leading-relaxed text-text-main outline-none placeholder:text-text-dim focus:border-[rgb(var(--accent-rgb)/0.6)]"
+                  />
+                  <p className="text-[11px] leading-relaxed text-text-dim">
+                    {t("nodeToolbar.video.continueQuickHint")}
+                  </p>
+                </div>
+              ) : (
+                <>
               {/* 时长：滑杆给常用档，直接输入给精确值——两条路写同一个 draft，
                   所以自定义秒数和滑杆永远不会各说各话。 */}
               <div className="flex items-center gap-2">
@@ -4092,6 +4255,35 @@ export const NodeActionToolbar = memo(
                   </button>
                 </div>
               </div>
+              </>
+              )}
+              {continueEntry === "quick" && (
+                <div className="mt-2.5 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setShowContinuePanel(false);
+                    }}
+                    className="rounded-full border border-white/15 px-3 py-1 text-[12px] text-text-main transition-colors hover:bg-white/10"
+                  >
+                    {t("nodeToolbar.video.continueCancel")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isContinuing || continuePrompt.trim().length === 0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleVideoQuickExtend();
+                    }}
+                    className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[12px] text-text-main transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    data-testid="video-continue-quick-submit"
+                  >
+                    {isContinuing && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {t("nodeToolbar.video.continueQuickSubmit")}
+                  </button>
+                </div>
+              )}
             </UiPanel>
           )}
           {/* 片段重拍的时间轴：放在工具栏面板外面、竖排在其下方——面板本身是

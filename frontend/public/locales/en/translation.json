@@ -5896,6 +5896,12 @@
       "continuePromptPlaceholder": "Describe what happens next",
       "continueCancel": "Cancel",
       "continueSubmit": "Generate",
+      "continueEntryLabel": "Extension method",
+      "continueEntryCraft": "Guided",
+      "continueEntryQuick": "Quick extend",
+      "continueQuickHint": "The video model continues straight from the last frame without splicing. Faster, but quality depends on the model’s continuation ability.",
+      "continueQuickSubmit": "Quick extend",
+      "continueQuickUnavailable": "No video model with extension support is configured. Ask an administrator to set one up.",
       "continuePollTimeout": "The task is still running — check the task center for the result"
     },
     "audio": {

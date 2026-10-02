@@ -5896,6 +5896,12 @@
       "continuePromptPlaceholder": "描述接下来要发生什么",
       "continueCancel": "取消",
       "continueSubmit": "生成",
+      "continueEntryLabel": "延长方式",
+      "continueEntryCraft": "精细创作",
+      "continueEntryQuick": "快速延长",
+      "continueQuickHint": "由视频模型直接接续片尾生成，不做前后拼接；耗时短，质量取决于模型接续能力。",
+      "continueQuickSubmit": "快速延长",
+      "continueQuickUnavailable": "当前没有支持延长的视频模型，请联系管理员配置",
       "continuePollTimeout": "任务仍在后台执行，请到任务中心查看结果"
     },
     "audio": {

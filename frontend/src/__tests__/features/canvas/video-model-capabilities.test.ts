@@ -250,9 +250,9 @@ describe("isVideoModeSupportedByModel — mode gating by model", () => {
     for (const model of [HAPPYHORSE, SEEDANCE2_FAST, SEEDANCE10_PRO_FAST, SEEDANCE15_PRO]) {
       expect(isVideoModeSupportedByModel("videoExtend", model)).toBe(false);
     }
-    expect(isVideoModeSupportedByModel("videoExtend", { ...SEEDANCE2_FAST, supportedModes: ["text_to_video", "video_extend"] }))
+    expect(isVideoModeSupportedByModel("videoExtend", { apiModel: SEEDANCE2_FAST, supportedModes: ["text_to_video", "video_extend"] }))
       .toBe(true);
-    expect(isVideoModeSupportedByModel("videoExtend", { ...SEEDANCE2_FAST, supportedModes: ["text_to_video"] }))
+    expect(isVideoModeSupportedByModel("videoExtend", { apiModel: SEEDANCE2_FAST, supportedModes: ["text_to_video"] }))
       .toBe(false);
   });
 });

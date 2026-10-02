@@ -187,6 +187,7 @@ import {
   submitFreezoneVideoCompose,
   submitFreezoneVideoErase,
   submitFreezoneVideoEdit,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoGen,
   submitFreezoneVideoI2v,
   submitFreezoneVideoKeyframes,
@@ -2666,6 +2667,34 @@ export const VideoNode = memo(
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
+              canvasId,
+              nodeId: targetId,
+            });
+        } else if (genMode === "videoExtend") {
+          const upstream = collectUpstream();
+          const videoUrl =
+            upstream
+              .map((node) => referenceVideoUrl(node) ?? "")
+              .find((url) => url.length > 0) ?? "";
+          if (!videoUrl) {
+            console.warn("[video-node] videoExtend submit without upstream video");
+            updateNodeData(id, {
+              isGenerating: false,
+              generationStartedAt: null,
+            });
+            return;
+          }
+          doSubmit = (targetId) =>
+            submitFreezoneVideoExtend(projectId, {
+              videoUrl,
+              prompt: composedPrompt,
+              cameraTemplateId,
+              resolution: qualityToResolution(quality),
+              durationSeconds: durationClamped,
+              generateAudio,
+              model: selectedVideoModel?.catalogId ?? modelId,
+              genMode,
+              humanReview: supportsHumanReview && humanReview,
               canvasId,
               nodeId: targetId,
             });
