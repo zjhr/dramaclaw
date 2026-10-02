@@ -62,6 +62,7 @@ export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
   imageReference: "image_reference",
   allReference: "all_reference",
   videoEdit: "video_edit",
+  videoExtend: "video_extend",
 };
 
 /**
@@ -69,7 +70,12 @@ export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
  * 只计算本次请求的有效值，不覆盖节点中的比例，切回其它模式时可恢复用户选择。
  */
 export function videoModeForcesAutomaticAspectRatio(mode: VideoGenMode): boolean {
-  return mode === "firstFrame" || mode === "firstLastFrame" || mode === "videoEdit";
+  return (
+    mode === "firstFrame" ||
+    mode === "firstLastFrame" ||
+    mode === "videoEdit" ||
+    mode === "videoExtend"
+  );
 }
 
 export interface VideoKeyframeCandidate {
@@ -153,6 +159,8 @@ function videoModelIdOf(model: VideoModelRef): string | null | undefined {
  * - 非 HappyHorse：视频编辑是 HappyHorse 专属；全能参考与「真尾帧」首尾帧只有
  *   Seedance 2.0 后端支持（非 2.0 打 omni→400、首尾帧静默丢尾帧）；文生 / 首帧 /
  *   图片参考其余视频模型均支持。
+ * - 目录未返回 supportedModes 时沿用旧启发式；视频延长没有旧默认，只有后台显式
+ *   配置后才开放。
  */
 export function isVideoModeSupportedByModel(
   mode: VideoGenMode,
@@ -174,7 +182,7 @@ export function isVideoModeSupportedByModel(
   if (isSeedance1xVideoModel(modelId)) {
     return mode === "textToVideo" || mode === "firstFrame";
   }
-  if (mode === "videoEdit") return false;
+  if (mode === "videoEdit" || mode === "videoExtend") return false;
   if (mode === "allReference" || mode === "firstLastFrame") {
     return isSeedance2VideoModel(modelId);
   }

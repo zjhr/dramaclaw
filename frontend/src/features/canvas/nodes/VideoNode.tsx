@@ -308,6 +308,7 @@ const REFERENCE_CAPS_BY_MODE: Partial<
   imageToVideo: { image: 1, video: 0, audio: 0 },
   imageReference: { image: 9, video: 0, audio: 0 },
   videoEdit: { image: 5, video: 1, audio: 0 },
+  videoExtend: { image: 0, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
   firstLastFrame: { image: 2, video: 0, audio: 0 },
 };
@@ -451,6 +452,9 @@ function referenceCapsForMode(
 ): { image: number; video: number; audio: number } | null {
   const defaults = REFERENCE_CAPS_BY_MODE[mode];
   if (!defaults) return null;
+  // 延长只吃 1 个源视频，模型目录里的参考上限是给全能参考用的，
+  // 套上去反而会让 UI 放进来本该拒绝的素材。
+  if (mode === "videoExtend") return defaults;
   return {
     image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image,
     video: model?.referenceVideoMax ?? defaults.video,
@@ -794,6 +798,10 @@ export const VideoNode = memo(
       "videoEdit",
       selectedVideoModel,
     );
+    const supportsVideoExtend = isVideoModeSupportedByModel(
+      "videoExtend",
+      selectedVideoModel,
+    );
     const videoEditAcceptsAudio =
       supportsVideoEdit &&
       (referenceCapsForMode(selectedVideoModel, "videoEdit")?.audio ?? 0) > 0;
@@ -801,7 +809,11 @@ export const VideoNode = memo(
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
     const videoInputBilling = useMemo(() => {
-      if (genMode !== "allReference" && genMode !== "videoEdit") {
+      if (
+        genMode !== "allReference" &&
+        genMode !== "videoEdit" &&
+        genMode !== "videoExtend"
+      ) {
         return { present: false, ready: true, durationSeconds: 0 };
       }
       const ordered = sortUpstreamByReferenceOrder(
@@ -809,7 +821,7 @@ export const VideoNode = memo(
         data.referenceOrder,
       ).filter((node) => Boolean(referenceVideoUrl(node)));
       const limit =
-        genMode === "videoEdit"
+        genMode === "videoEdit" || genMode === "videoExtend"
           ? 1
           : (selectedVideoModel?.referenceVideoMax ?? 3);
       const videos = ordered.slice(0, Math.max(limit, 0));
@@ -1701,6 +1713,7 @@ export const VideoNode = memo(
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
       if (genMode === "videoEdit" && supportsVideoEdit) return;
+      if (genMode === "videoExtend" && supportsVideoExtend) return;
       if (!supportsAllReference) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
@@ -1711,6 +1724,7 @@ export const VideoNode = memo(
       isHappyHorseModel,
       supportsAllReference,
       supportsVideoEdit,
+      supportsVideoExtend,
       updateNodeData,
     ]);
 
@@ -2042,7 +2056,7 @@ export const VideoNode = memo(
     const hasPromptText =
       prompt.trim().length > 0 || upstreamTextJoined.length > 0;
     const hasRequiredMediaForMode =
-      genMode === "videoEdit"
+      genMode === "videoEdit" || genMode === "videoExtend"
         ? upstreamCounts.videos > 0
         : genMode === "allReference"
           ? upstreamCounts.images + upstreamCounts.videos + upstreamCounts.audios > 0 ||
@@ -2110,7 +2124,7 @@ export const VideoNode = memo(
           resolution: qualityToResolution(quality),
           pricing_quantity:
             Math.min(Math.max(count, 1), 4) *
-            (genMode === "videoEdit"
+            (genMode === "videoEdit" || genMode === "videoExtend"
               ? Math.max(Math.floor(videoInputBilling.durationSeconds), 1)
               : durationSec),
           operation: genMode,

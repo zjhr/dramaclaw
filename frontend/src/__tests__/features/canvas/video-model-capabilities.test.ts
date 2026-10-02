@@ -38,6 +38,7 @@ describe("视频模式有效比例", () => {
     ["firstFrame", true],
     ["firstLastFrame", true],
     ["videoEdit", true],
+    ["videoExtend", true],
     ["textToVideo", false],
     ["imageToVideo", false],
     ["imageReference", false],
@@ -243,6 +244,16 @@ describe("isVideoModeSupportedByModel — mode gating by model", () => {
     expect(isVideoModeSupportedByModel("videoEdit", HAPPYHORSE)).toBe(true);
     expect(isVideoModeSupportedByModel("videoEdit", SEEDANCE2_FAST)).toBe(false);
     expect(isVideoModeSupportedByModel("videoEdit", SEEDANCE10_PRO_FAST)).toBe(false);
+  });
+
+  it("视频延长默认不对任何模型开放，目录显式声明后才开", () => {
+    for (const model of [HAPPYHORSE, SEEDANCE2_FAST, SEEDANCE10_PRO_FAST, SEEDANCE15_PRO]) {
+      expect(isVideoModeSupportedByModel("videoExtend", model)).toBe(false);
+    }
+    expect(isVideoModeSupportedByModel("videoExtend", { ...SEEDANCE2_FAST, supportedModes: ["text_to_video", "video_extend"] }))
+      .toBe(true);
+    expect(isVideoModeSupportedByModel("videoExtend", { ...SEEDANCE2_FAST, supportedModes: ["text_to_video"] }))
+      .toBe(false);
   });
 });
 

@@ -223,8 +223,11 @@ export interface FreezoneVideoGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** Backend model id, e.g. huimeng_seedance20_fast / seedance_pro. */
   model?: string;
-  /** 文生视频入口的固定业务模式。 */
-  genMode: "textToVideo";
+  /**
+   * 走文生视频端点的业务模式。文生与视频延长共用这个入口：延长的关键帧由
+   * 上游节点面板提交，这个端点只负责无参考图的文字描述。
+   */
+  genMode: "textToVideo" | "videoExtend";
   /**
    * Real-person material review. Set `true` when the input contains real
    * human faces so the backend routes the job through the human-review path
