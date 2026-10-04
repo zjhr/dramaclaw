@@ -90,22 +90,21 @@ export default defineConfig(({ mode }) => {
         },
       },
       {
-        // Serve the vendored 3D director desk (frontend/public/director-desk)
-        // from `/director-desk/` in dev exactly like nginx does in production.
+        // Serve the vendored 3D director desk (frontend/public/director-desk-v2)
+        // from `/director-desk-v2/` in dev exactly like nginx does in production.
         //
         // Vite's public-dir middleware is constructed with `extensions: []`, so
         // it deliberately does NOT resolve a directory request to that
-        // directory's index.html; `/director-desk/` then falls through to the
+        // directory's index.html; `/director-desk-v2/` then falls through to the
         // SPA html fallback and the iframe loads the DramaClaw shell instead of
         // the director desk — the canvas node would sit at "connecting" forever
         // in dev while working fine in prod. The static middleware still serves
         // every file under the subpath, so only this one directory URL needs
         // rewriting.
-        // 同理覆盖 /monoform-desk/（并存的 MONOFORM 白模预演台，见其 UPSTREAM.md）。
         name: "vendored-desk-dev-subpath-index",
         apply: "serve",
         configureServer(server) {
-          const vendoredDesks = ["director-desk", "monoform-desk"];
+          const vendoredDesks = ["director-desk-v2"];
           server.middlewares.use((req, _res, next) => {
             const url = req.url ?? "";
             const [pathname, query] = url.split("?");

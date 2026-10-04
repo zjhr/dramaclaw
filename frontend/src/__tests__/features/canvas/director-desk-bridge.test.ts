@@ -8,9 +8,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DIRECTOR_DESK_MAX_PROTOCOL_VERSION,
   DIRECTOR_DESK_MESSAGE_TYPES,
+  DIRECTOR_DESK_MIN_PROTOCOL_VERSION,
   DIRECTOR_DESK_PROTOCOL_VERSION,
+  DIRECTOR_DESK_SUPPORTED_PROTOCOL_VERSIONS,
   createDirectorDeskBridge,
+  isDirectorDeskProtocolVersionSupported,
   isDirectorDeskResponsePayload,
   normalizeDirectorDeskCaptures,
   type DirectorDeskBridge,
@@ -267,9 +271,11 @@ describe("directorDeskBridge requestId 配对", () => {
       const { requestId } = (h.sent[0] as { payload: { requestId: string } }).payload;
       const assertion = expect(promise).rejects.toThrow(/timed out/);
 
-      // protocolVersion 缺失 / ok 不是 boolean / 失败却没有 error —— 都不算合法响应。
+      // protocolVersion 缺失 / 超出兼容窗口 / ok 不是 boolean / 失败却没有 error ——
+      // 都不算合法响应。注意越界样本取 3 而不是 2：v2 是子应用唯一会说的版本，落在
+      // v1..v2 窗口内，拿它当「非法」样本等于把兼容窗口测没了。
       h.emit({ type: DIRECTOR_DESK_MESSAGE_TYPES.response, payload: { requestId, action: "project.get", ok: true } });
-      h.emit({ type: DIRECTOR_DESK_MESSAGE_TYPES.response, payload: responsePayload({ requestId, protocolVersion: 2 }) });
+      h.emit({ type: DIRECTOR_DESK_MESSAGE_TYPES.response, payload: responsePayload({ requestId, protocolVersion: 3 }) });
       h.emit({ type: DIRECTOR_DESK_MESSAGE_TYPES.response, payload: responsePayload({ requestId, ok: false }) });
 
       await vi.advanceTimersByTimeAsync(20_000);
@@ -432,11 +438,27 @@ describe("directorDeskBridge 载荷校验", () => {
     expect(onCaptures).not.toHaveBeenCalled();
   });
 
-  it("isDirectorDeskResponsePayload 拒绝协议版本不同的响应", () => {
+  it("isDirectorDeskResponsePayload 拒绝协议版本越出兼容窗口的响应", () => {
     expect(isDirectorDeskResponsePayload(responsePayload())).toBe(true);
-    expect(isDirectorDeskResponsePayload(responsePayload({ protocolVersion: 2 }))).toBe(false);
+    // v2 是子应用唯一会说的版本，落在窗口内 —— 拒它等于把兼容窗口测没了。
+    expect(isDirectorDeskResponsePayload(responsePayload({ protocolVersion: 2 }))).toBe(true);
+    expect(isDirectorDeskResponsePayload(responsePayload({ protocolVersion: 3 }))).toBe(false);
     expect(isDirectorDeskResponsePayload(responsePayload({ requestId: "" }))).toBe(false);
     expect(isDirectorDeskResponsePayload(null)).toBe(false);
+  });
+
+  it("isDirectorDeskProtocolVersionSupported 卡的是窗口 v1..v2 的两条边界", () => {
+    expect(DIRECTOR_DESK_MIN_PROTOCOL_VERSION).toBe(1);
+    expect(DIRECTOR_DESK_MAX_PROTOCOL_VERSION).toBe(2);
+    expect(DIRECTOR_DESK_SUPPORTED_PROTOCOL_VERSIONS).toEqual([1, 2]);
+    expect(isDirectorDeskProtocolVersionSupported(1)).toBe(true);
+    expect(isDirectorDeskProtocolVersionSupported(2)).toBe(true);
+    expect(isDirectorDeskProtocolVersionSupported(0)).toBe(false);
+    expect(isDirectorDeskProtocolVersionSupported(3)).toBe(false);
+    // 只认整数：1.5 这种没法安全配对（旧字段可能已变语义），宁可丢弃走超时。
+    expect(isDirectorDeskProtocolVersionSupported(1.5)).toBe(false);
+    expect(isDirectorDeskProtocolVersionSupported("2")).toBe(false);
+    expect(isDirectorDeskProtocolVersionSupported(null)).toBe(false);
   });
 
   it("close 消息映射到 onClose", () => {

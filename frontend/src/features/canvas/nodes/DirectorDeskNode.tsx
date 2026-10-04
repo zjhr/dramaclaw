@@ -7,7 +7,6 @@ import {
   Download,
   Link2,
   Loader2,
-  MessagesSquare,
   Play,
   RefreshCw,
   Save,
@@ -45,7 +44,6 @@ import {
   CANVAS_NODE_INPUT_SURFACE_CLASS,
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
-import { DirectorDeskChatPanel } from './DirectorDeskChatPanel';
 import {
   applyDirectorSceneIntent,
   type DeskProject,
@@ -55,6 +53,7 @@ import { useViewerImmersiveBody } from '@/features/viewer-kit/useViewerImmersive
 import { EventBusContext } from '@/task-center/event-bus-context';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import {
   createDirectorDeskBridge,
   DIRECTOR_DESK_PROTOCOL_VERSION,
@@ -62,7 +61,19 @@ import {
   type DirectorDeskCapabilities,
   type DirectorDeskCapture,
   type DirectorDeskExportVideoResult,
+  type DirectorDeskProjectSaveRequest,
+  type DirectorDeskReadyInfo,
 } from './directorDeskBridge';
+import {
+  DIRECTOR_DESK_PANORAMA_MAX_BYTES,
+  DirectorDeskPanoramaError,
+  directorDeskV2IframeSrc,
+  getDirectorDeskV2Session,
+  markDirectorDeskV2SessionReady,
+  registerDirectorDeskV2Session,
+  subscribeDirectorDeskAgentEvents,
+} from './directorDeskV2Session';
+import type { DirectorDeskAiOp } from './directorDeskV2Session';
 
 type DirectorDeskNodeProps = NodeProps & {
   id: string;
@@ -84,14 +95,16 @@ export const DIRECTOR_DESK_READY_TIMEOUT_MS = 30_000;
 export type DirectorDeskConnectionState = 'idle' | 'connecting' | 'connected' | 'failed';
 
 /**
- * iframe 地址：`instanceId` 用画布 nodeId，导演台按它隔离 localStorage 场景，
- * 所以两个导演台节点互不覆盖对方的工程。`theme=dark` 与画布深色主题一致。
+ * iframe 地址：`node_id` 用画布 nodeId。子应用把它原样报回 `capabilities.get` 的回包，
+ * 宿主据此确认自己跟对了窗口 —— 工程按节点隔离就落在这条链上。
  *
  * 同源子路径部署，因此**不带** `hostOrigin` —— 导演台在该参数缺失时回落到它自己的
  * origin，与宿主 origin 相同；显式传反而会在换端口调试时引入跨 origin 复杂度。
+ *
+ * 路径常量与 v2 会话登记见 [[directorDeskV2Session]]。
  */
 export function directorDeskIframeSrc(nodeId: string): string {
-  return `/director-desk/?instanceId=${encodeURIComponent(nodeId)}&theme=dark`;
+  return directorDeskV2IframeSrc(nodeId);
 }
 
 /** 按导演台自己声明的 `actions` 判断某个受控接口能不能用，宿主不假设。 */
@@ -130,6 +143,14 @@ export function directorDeskArtifactUploadName(
   return `director-desk-${nodeId}-${kind}-${stamp}.${safeExtension}`;
 }
 
+/** 缩略图落库文件名（`preview` = 画布节点封面那张场景缩略图）。 */
+export function directorDeskPreviewUploadName(
+  nodeId: string,
+  stamp: number,
+): string {
+  return `director-desk-${nodeId}-preview-${stamp}.jpg`;
+}
+
 /**
  * 工程快照 JSON 的落库文件名。
  *
@@ -141,13 +162,6 @@ export function directorDeskProjectUploadName(nodeId: string, stamp: number): st
 }
 
 /**
- * AI 生成的背景没有画布上游边，而上游协议要求 `edgeId` / `sourceNodeId` 都非空
- * （`importHostPanorama` 四个字段缺一就 return，什么都不发生）。所以给一对**诚实**
- * 的标识：来源就是这个节点自己，边用一个固定标记。
- */
-export const DIRECTOR_DESK_AI_PANORAMA_EDGE = 'director-desk-ai';
-
-/**
  * 导演台把整份工程存在同源 localStorage 的这个键下，`<instanceId>` 就是画布节点 id
  * （iframe `?instanceId=` 传的那个）。宿主与 `/director-desk/` iframe 同源，共享同一
  * localStorage，所以父窗口直接读写这个键即可注入场景/运镜；写完 reload iframe 生效。
@@ -156,7 +170,18 @@ export const DIRECTOR_DESK_AI_PANORAMA_EDGE = 'director-desk-ai';
 export const directorDeskStorageKey = (nodeId: string): string =>
   `storyai-3d-director-desk-demo:${nodeId}`;
 
-/** 把 agent 产出的场景 intent 应用到 localStorage 工程；返回是否真的写入。 */
+/**
+ * 把 agent 产出的场景 intent 应用到 localStorage 工程；返回是否真的写入。
+ *
+ * ## 只服务 MONOFORM 分支（**v2 主链路不再走这里**）
+ *
+ * 这是 MONOFORM 白模台时代的注入胶水：v1 的工程存在同源 localStorage 的
+ * `storyai-3d-director-desk-demo:<nodeId>` 键下，父窗口直接改写再 reload iframe。
+ * v2 换了存储（IndexedDB + 上游自己的导入入口），且接口语义从「整体覆盖」变成
+ * 「施加增量操作」——继续用它会做两件错事：写一个没人读的键，以及抹掉用户手摆的东西。
+ * 保留不删：既有 MONOFORM 节点里已存的工程还要能打开（单向不可逆迁移），
+ * 且 `DirectorSceneCard` 的撤销快照与本函数成对使用。
+ */
 export function applyDirectorSceneToStorage(
   nodeId: string,
   intent: DirectorSceneIntent,
@@ -241,6 +266,24 @@ export const DIRECTOR_DESK_SNAPSHOT_MAX_BYTES = 5 * 1024 * 1024;
  */
 export const DIRECTOR_DESK_SAVE_TIMEOUT_MS = 5_000;
 
+/**
+ * 缩略图的最长边（像素）。
+ *
+ * 节点封面那格只有 ~200px 见方，960 是给高 DPI 与放大看留的余量；再大就只是让
+ * 画布存档里的 base64 前的 JPEG 更胖。上游 `capturePreview` 还会自己降采样。
+ */
+export const DIRECTOR_DESK_PREVIEW_SIZE = 640;
+
+/** 节点上显示的「agent 正在做什么」。只存够画一行字的东西，不留事件原文。 */
+export type DirectorDeskNodeActivity = {
+  kind: 'thinking' | 'text' | 'tool';
+  /** 仅 ``kind === 'tool'``：上游工具名，如 ``director_apply``。 */
+  name?: string;
+  /** 仅 ``kind === 'tool'``：这一调用是否还在跑。 */
+  running?: boolean;
+  at: number;
+};
+
 /** 存档引用里的时间戳（文件名形如 `…-project-<ms>.json`），取不到返回 null。 */
 export function directorDeskSnapshotSavedAt(projectRef: unknown): number | null {
   if (typeof projectRef !== 'string') return null;
@@ -304,6 +347,41 @@ export function summarizeDirectorDeskProject(
   };
 }
 
+/** 节点卡片上的场景概况。字段少而都是**导演台自己报的数**，不猜。 */
+export type DirectorDeskSceneStatus = {
+  /** 场景里的实体总数（角色 + 道具 + 机位 …）。 */
+  entities: number;
+  /** 摄影机数量。单独列是因为「摆机位」是这个节点的主要工作。 */
+  cameras: number;
+  /** 读到的那一刻。 */
+  at: number;
+};
+
+/**
+ * 从 `director_read` 的回包里读出场景概况。
+ *
+ * 读 `tool.call` 的回包而不是 `project.get`：前者是 v2 的工具面（子应用用
+ * `toolService` 跑，有 `revision` 守卫），后者是 v1 的接口，v2 的 `actions` 里根本没有。
+ * 形状不对一律返回 null —— 宁可节点上少显示一个数，也不要显示一个编出来的数。
+ */
+export function readDirectorDeskSceneStatus(
+  payload: unknown,
+): DirectorDeskSceneStatus | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const envelope = payload as Record<string, unknown>;
+  const result = (
+    typeof envelope.result === 'object' && envelope.result !== null
+      ? envelope.result
+      : envelope
+  ) as Record<string, unknown>;
+  const entities = Array.isArray(result.entities) ? result.entities : null;
+  if (!entities) return null;
+  const cameras = entities.filter(
+    (entity) => (entity as { kind?: unknown }).kind === 'camera',
+  ).length;
+  return { entities: entities.length, cameras, at: Date.now() };
+}
+
 /**
  * 上传后的项目内 URL → 画布节点字段里该存的值。带上 `?v=` 破缓存，否则用户在同一
  * 会话里重新导出、后端同名覆盖时，画布上看到的还是旧图。
@@ -311,6 +389,39 @@ export function summarizeDirectorDeskProject(
 export function directorDeskAssetUrl(url: string, stamp: number): string {
   const clean = url.split('?')[0];
   return clean ? withImageCacheBust(clean, stamp) : '';
+}
+
+/**
+ * 全景链路失败的本地化文案。
+ *
+ * 上游抛的是中文裸串（`service.ts` 的 `idle()` 与 `checkRevision`），en/vi 用户不该看到
+ * 它们。这里按 [[DirectorDeskPanoramaError]] 的分类选文案，只有兜底分支才带上原始原因。
+ */
+export function directorDeskPanoramaErrorText(
+  error: unknown,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (!(error instanceof DirectorDeskPanoramaError)) {
+    return t('node.directorDesk.panoramaFailed', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  switch (error.reason) {
+    case 'unreachable':
+      return t('node.directorDesk.panoramaDeskClosed');
+    case 'unsupported-media':
+      return t('node.directorDesk.panoramaUnsupportedMedia');
+    case 'too-large':
+      return t('node.directorDesk.panoramaTooLarge', {
+        limit: Math.round(DIRECTOR_DESK_PANORAMA_MAX_BYTES / (1024 * 1024)),
+      });
+    case 'busy':
+      return t('node.directorDesk.panoramaDeskBusy');
+    case 'unreachable-tool':
+      return t('node.directorDesk.panoramaDeskClosed');
+    default:
+      return t('node.directorDesk.panoramaFailed', { message: error.message });
+  }
 }
 
 /** 图片尺寸 → 比例字符串；量不出来时返回 null，交给节点自己回落到默认比例。 */
@@ -328,6 +439,8 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
+  // 导演台 AI 面板的「去设置页管理渠道」按钮最终落在这里。
+  const openSettingsDialog = useSettingsStore((state) => state.openSettings);
   // 一跳上游（按连线顺序、浅比较订阅）。导演台是「画布上的一个工作台」，上游接进来的
   // 图片要真的进到它的场景里，否则接进来的线就是死的 —— 用户会立刻感到割裂。
   const upstreamNodes = useUpstreamNodes(id);
@@ -363,30 +476,53 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const [aiBackgroundBusy, setAiBackgroundBusy] = useState(false);
   const [aiBackgroundAt, setAiBackgroundAt] = useState<number | null>(null);
   // AI 摆场景 / 生成运镜落地的时刻（工具栏胶囊反馈用）。
-  const [aiSceneAt, setAiSceneAt] = useState<number | null>(null);
   // 已经送进导演台的那张全景图（来源节点 + 地址）。用它避免每次重开都把用户在导演台
   // 里自己换的背景覆盖掉；只有上游真的换图时才重发。
   const sentPanoramaRef = useRef<string | null>(null);
+  /**
+   * 全景链路的反馈。**必须有**：v2 的全景要走三步工具调用，素材太大、格式不对、
+   * 导演台正在忙这三种情况都会真失败 —— 界面毫无反应的话用户只会以为功能坏了。
+   * `panoramaAppliedAt` 让成功也看得见（跟 AI 背景那条胶囊一个路数）。
+   */
+  const [panoramaNotice, setPanoramaNotice] = useState<string | null>(null);
+  const [panoramaAppliedAt, setPanoramaAppliedAt] = useState<number | null>(null);
   // 每次「重试」都换一个 key，强制 iframe 重新挂载重新握手。
   const [attempt, setAttempt] = useState(0);
-  // AI 助手侧栏默认收起：它是「需要时召出」的东西，常驻会白占 360px 的 3D 视野。
-  const [chatOpen, setChatOpen] = useState(false);
   /**
-   * 导演台的对话是**这个节点自己的**一段，与「项目助手」页互不可见 —— 在导演台里
-   * 聊的内容不会串进项目对话，项目对话也不会串进来。但 scope 里带着项目 id，
-   * 所以 agent 的工具照常拿得到项目上下文（能读上游节点、读剧集资产）。
+   * 统一循环改过场景之后，节点上要立刻看得见 —— 并且工程要落盘。
    *
-   * 项目 id 走 `readUrl()` 而不是 `useParams()`：画布节点不该依赖 router 上下文
-   * （节点在测试里是脱离 router 直接渲染的，`useParams` 会抛
-   * `Cannot read properties of null (reading 'isServer')`）。`readUrl` 就是仓库里
-   * 为「非 router 上下文」准备好的那条路。
+   * 这是主人说的「感觉像各自独立」里最扎手的一处：iframe 面板里一句「改一下机位」，
+   * 画布节点上什么都没发生（`directorProjectRef` 指向的还是改动前的存档），关窗时的
+   * 静默存档是唯一兜底，而用户在界面上分辨不出「没改」和「改了但没记」。
+   *
+   * 两个状态分开：胶囊立刻亮（反馈），落盘延后（一次任务可能几十个 apply，逐个上传
+   * 会把项目资产堆成垃圾）。落盘失败**不弹 toast** —— 用户没要求保存，替他报错只会
+   * 打断正在进行的对话；关窗时那次显式存档仍然会兜住。
    */
-  const chatScope = useMemo(() => {
-    const project = readUrl().project;
-    return project
-      ? { kind: 'directorDesk' as const, id: `${project}/${id}` }
-      : undefined;
-  }, [id]);
+  const [aiSceneAt, setAiSceneAt] = useState<number | null>(null);
+  /**
+   * agent 正在做什么。与 iframe 面板收到的是**同一批事件**（同一个
+   * `subscribeDirectorDeskAgentEvents`），只是这里画到节点上，让人一眼看出「我点的
+   * 就是这个框」。
+   */
+  const [aiActivity, setAiActivity] = useState<DirectorDeskNodeActivity | null>(
+    null,
+  );
+  /**
+   * 场景概况（几个实体、几个机位）与节点封面缩略图。
+   *
+   * 主人报「哪里体现节点变化」时，节点上只有一句静态文案、一个「打开」按钮，
+   * 0 张图 —— 导演台里发生的一切在画布上不留任何痕迹。这两个状态是补上那条痕迹：
+   * 缩略图是**当前取景**（子应用从自己的渲染画布截，宿主上传成项目资产），
+   * 概况是子应用自己 `director_read` 报出来的实体数。
+   *
+   * 都只在弹窗开着时刷新，且带去重（缩略图同尺寸不重传，概况同数量不重写节点）——
+   * 画布上挂着一堆导演台节点时，刷新一次不该把每个节点都标成「已修改」。
+   */
+  const [sceneStatus, setSceneStatus] = useState<DirectorDeskSceneStatus | null>(null);
+  const previewBusyRef = useRef(false);
+  const lastPreviewRef = useRef<string>('');
+  const sceneSaveTimerRef = useRef<number | null>(null);
 
   // 沉浸式独占键盘：弹窗打开期间画布的全局快捷键（Delete / Tab / M / 空格平移 …）
   // 必须让位，否则用户在导演台里按 WASD 会串到画布上。
@@ -425,21 +561,18 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   }, [id]);
 
   /**
-   * 工程快照回灌。协议 v1 **没有** `project.set` / 工程导入动作（受控接口只有
-   * `capabilities.get` / `project.get` / `timeline.get` / `export.frame` /
-   * `export.video` / `plugin.result.submit` / `plugin.results.list`），所以宿主
-   * 无法把 JSON 推送进导演台。能给的回灌动作就是 `session`：它让导演台按
-   * `instanceId` 激活它自己那份工程（存在它自己的 localStorage / IndexedDB 里）。
+   * 工程快照回灌（v2）。
    *
-   * 快照本身是**跨设备/清缓存后的持久备份**：拿 URL 到导演台首页的导入入口即可
-   * 还原整个工程（上游导入器接受新版外壳 JSON）。这一限制不通过 fork 上游来绕过。
+   * v1 没有 `project.set`，宿主只能发 `session` 让导演台激活它自己那份 localStorage。
+   * v2 换了存储：工程存在子应用的 IndexedDB 里，宿主拿不到也不该复述它的结构。所以
+   * 回灌走 `project.load` —— 宿主把节点 `directorProjectRef` 指向的 `.director` 文档
+   * 原文推过去，子应用喂给**它自己的**导入入口（`#project-file`），由上游负责校验、
+   * 模型预热与场景上下文切换。
    *
-   * 快照取不到（404/网络错误）时只提示、不阻断 —— 导演台自己的本地存档仍然可用。
+   * 快照取不到（404/网络错误）时只提示、不阻断 —— 用户还能继续用导演台的本地存档。
    */
   const restoreProjectSnapshot = useCallback(
     async (bridge: DirectorDeskBridge) => {
-      // 先激活实例：这是"同一节点重开回到同一工程"的机制（按 instanceId 隔离）。
-      bridge.sendSession(id, 'dark');
       const ref = typeof data.directorProjectRef === 'string' ? data.directorProjectRef : '';
       if (!ref) return;
       try {
@@ -449,6 +582,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         if (typeof snapshot !== 'object' || snapshot === null) {
           throw new Error('snapshot is not an object');
         }
+        await bridge.loadProject(JSON.stringify(snapshot));
         if (mountedRef.current) setSnapshotNotice(null);
       } catch {
         // 降级：不抛、不拦。用户还能继续用导演台（本地存档），只是提示他快照没了。
@@ -457,38 +591,72 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         }
       }
     },
-    [data.directorProjectRef, id, t],
+    [data.directorProjectRef, t],
   );
 
   /**
-   * 把上游接进来的图片送进导演台场景当全景图。
+   * 把上游接进来的图片接成导演台里的全景背景。
+   *
+   * **不是发一条 panorama 帧** —— v2 子应用的消息表只有 ready/request/response
+   * （`vendor/director-desk/src/host-bridge.ts:32-38`），那条帧在 v2 没有任何接收方。
+   * 真正生效的是会话上的三步工具链路，见 [[setDirectorDeskPanoramaBackground]]：
+   * 导入媒体 → 建 `visual-panorama` 内向球 → 给它加一层 unlit surface layer。
    *
    * 单独成一个 effect（而不是塞进 ready 回调）是为了让「上游换图」也生效 —— 用户在画布上
    * 换一张图、或者接上第一张图时，导演台里必须跟着变，否则连好的线是死的，这就是割裂感的
    * 来源。用 `sentPanoramaRef` 记住「已经送过哪一对（来源节点 + 地址）」：
    *   - 同一张图重开弹窗 → 不重发，避免覆盖用户在导演台里自己换过的背景；
    *   - 换了图 / 换了来源 → 重发。
+   *
+   * 失败一律说出来：全景链路有三处会真失败（素材太大、格式不支持、导演台正在忙），
+   * 静默失败等于让用户对着没变的画面猜。
    */
+  const applyPanorama = useCallback(
+    async (imageUrl: string, fileName: string): Promise<boolean> => {
+      const session = getDirectorDeskV2Session(id);
+      if (!session) {
+        setPanoramaNotice(t('node.directorDesk.panoramaDeskClosed'));
+        return false;
+      }
+      setPanoramaNotice(null);
+      try {
+        await session.setPanoramaBackground({ imageUrl, fileName });
+        if (mountedRef.current) setPanoramaAppliedAt(Date.now());
+        return true;
+      } catch (error) {
+        if (mountedRef.current) setPanoramaNotice(directorDeskPanoramaErrorText(error, t));
+        return false;
+      }
+    },
+    [id, t],
+  );
+
   useEffect(() => {
     if (connection !== 'connected') return;
-    const bridge = bridgeRef.current;
-    if (!bridge || !panoramaSource) return;
+    if (!panoramaSource) return;
     const key = `${panoramaSource.sourceNodeId}|${panoramaSource.imageUrl}`;
     if (sentPanoramaRef.current === key) return;
-    bridge.sendPanorama({
-      edgeId: `${panoramaSource.sourceNodeId}->${id}`,
-      sourceNodeId: panoramaSource.sourceNodeId,
-      imageUrl: panoramaSource.imageUrl,
-      fileName: panoramaSource.fileName,
-    });
     sentPanoramaRef.current = key;
-  }, [connection, id, panoramaSource]);
+    void applyPanorama(panoramaSource.imageUrl, panoramaSource.fileName);
+  }, [applyPanorama, connection, id, panoramaSource]);
 
-  const handleReady = useCallback(() => {
+  const handleReady = useCallback((info: DirectorDeskReadyInfo = {}) => {
     clearReadyTimer();
     const bridge = bridgeRef.current;
     if (!bridge) return;
+    // 子应用自报的 node_id 必须就是这个节点的。origin + contentWindow 只能证明「是我们
+    // 开的那扇 iframe」，证明不了「它以为自己是哪个节点」——而工程落盘是按 node_id
+    // 写进画布的，写错节点就是静默的数据损坏。子应用没报这个字段时不拦（向前兼容）。
+    if (info.nodeId && info.nodeId !== id) {
+      setConnection('failed');
+      setCapabilities(null);
+      updateNodeData(id, {
+        errorMessage: `director desk node mismatch: expected ${id}, got ${info.nodeId}`,
+      });
+      return;
+    }
     setConnection('connected');
+    markDirectorDeskV2SessionReady(id);
     // 能力必须问出来再用：导演台的 `actions` 才是可用接口的唯一事实来源。
     void bridge
       .getCapabilities()
@@ -510,31 +678,199 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   }, [clearReadyTimer, id, restoreProjectSnapshot, updateNodeData]);
 
   /**
-   * 关闭前把工程存成项目资产。`project.get` 拿深拷贝 → JSON Blob →
-   * `/freezone/upload`（和 3GS 那边传 frame_meta.json 同一条路径）。
-   * 只把**引用**写回节点 data，绝不把工程 JSON 本身写进画布。
+   * 关闭前的工程落盘（v2）。走子应用**自己的**保存流程：宿主发
+   * `tool.call {director_export, kind:'project'}`，子应用转手 `toolService`，后者最终
+   * 调 `window.directorDesktop.files('save-project', {name, content})`；宿主桥把它翻成
+   * 子 → 宿主的 `project.save`，真正的上传与节点字段写入在 `handleProjectSave` 里。
+   *
+   * 宿主**不**在这里自己序列化工程：v2 的工程结构由上游定义，宿主复述一遍就是第二份
+   * 会漂移的实现。节点 data 里只留引用（`directorProjectRef`），绝不存工程 JSON 本身。
    */
   const persistProjectSnapshot = useCallback(async () => {
     const bridge = bridgeRef.current;
     if (!bridge || !bridge.isReady()) return;
     const projectId = readUrl().project;
+    if (!projectId) throw new Error(t('node.directorDesk.noProject'));
+    await bridge.saveProject();
+  }, [t]);
+
+  /**
+   * 抓一张当前取景，存进节点封面。
+   *
+   * 走 `preview.capture`（v2 桥的新动作）：子应用从自己的渲染画布
+   * `toDataURL` 出一张降过采样的 JPEG，宿主上传成**项目资产**后只把 URL 写进节点
+   * —— 与截图回传、工程存档同一条落库路径，绝不把 base64 塞进画布 data（那是几 MB）。
+   *
+   * 失败**不弹提示**：缩略图是锦上添花，用户没要求它；一条每次都失败的红字只会在
+   * 节点上留噪声。抓不到就保留上一张。
+   */
+  const refreshScenePreview = useCallback(async () => {
+    const bridge = bridgeRef.current;
+    if (!bridge || !bridge.isReady() || previewBusyRef.current) return;
+    const projectId = readUrl().project;
     if (!projectId) return;
-    const snapshot = await bridge.getProject();
-    const json = JSON.stringify(snapshot);
-    if (json.length > DIRECTOR_DESK_SNAPSHOT_MAX_BYTES) {
-      throw new Error(t('node.directorDesk.snapshotTooLarge'));
-    }
+    previewBusyRef.current = true;
     const stamp = Date.now();
-    const uploaded = await uploadFreezoneImage(
-      projectId,
-      new Blob([json], { type: 'application/json' }),
-      directorDeskProjectUploadName(id, stamp),
-      { timeoutMs: false },
-    );
-    const ref = directorDeskAssetUrl(uploaded.url, stamp);
-    if (!ref) throw new Error(t('node.directorDesk.uploadFailed', { message: 'no url' }));
-    updateNodeData(id, { directorProjectRef: ref });
-  }, [id, t, updateNodeData]);
+    try {
+      const frame = await bridge.capturePreview({ size: DIRECTOR_DESK_PREVIEW_SIZE });
+      // 同一帧不重传：agent 连着 apply 时每一帧都可能一样，逐张上传会在项目资产里
+      // 堆出一串肉眼无法区分的封面。
+      const fingerprint = `${frame.width}x${frame.height}:${frame.dataUrl.length}`;
+      if (fingerprint === lastPreviewRef.current) return;
+      const uploaded = await uploadFreezoneImage(
+        projectId,
+        dataUrlToBlob(frame.dataUrl),
+        directorDeskPreviewUploadName(id, stamp),
+        { timeoutMs: false },
+      );
+      const assetUrl = directorDeskAssetUrl(uploaded.url, stamp);
+      if (!assetUrl || !mountedRef.current) return;
+      lastPreviewRef.current = fingerprint;
+      updateNodeData(id, { previewImageUrl: assetUrl });
+    } catch {
+      // 取不到就保留上一张封面：节点上已经有的东西不该被一次失败抹掉。
+    } finally {
+      previewBusyRef.current = false;
+    }
+  }, [id, updateNodeData]);
+
+  /**
+   * 读一次场景概况（实体数 / 机位数）。
+   *
+   * 只在数字真的变了时才 `setState`：agent 的读工具会返回同一份 entities，逐次
+   * setState 会让挂着的每个导演台节点不停重渲染。
+   */
+  const refreshSceneStatus = useCallback(async () => {
+    const session = getDirectorDeskV2Session(id);
+    if (!session || !session.isReady()) return;
+    try {
+      const payload = await session.callTool('director_read', { sections: ['entities'] });
+      const status = readDirectorDeskSceneStatus(payload);
+      if (!status || !mountedRef.current) return;
+      setSceneStatus((previous) =>
+        previous && previous.entities === status.entities && previous.cameras === status.cameras
+          ? previous
+          : status,
+      );
+    } catch {
+      // 读不到就是读不到，不在节点上编一个数出来。
+    }
+  }, [id]);
+
+  /**
+   * 弹窗一连上就取一次封面与场景概况。
+   *
+   * 封面延到 `connection === 'connected'` 之后：ready 之前子应用还没有渲染画布，
+   * `preview.capture` 只会拿到一句「渲染画布尚未就绪」。这一下也让「刚打开导演台
+   * 但什么都没改」的节点也有封面 —— 否则用户看到的仍是一张空卡片。
+   *
+   * **概况要再延后一点。** 它走的是 `tool.call{director_read}`，而 ready 之后的
+   * 第一个 `tool.call` 有既定归属（工程存档、全景导入都在等它）：插在前面会让
+   * 「宿主发出去的第一条工具调用是什么」变得不确定。2s 静默期与场景存档用的
+   * 那个是同一段 —— 那段时间里子应用已经建好场景、模型也还没开始改东西。
+   */
+  useEffect(() => {
+    if (connection !== 'connected') return undefined;
+    void refreshScenePreview();
+    const timer = window.setTimeout(() => void refreshSceneStatus(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [connection, refreshScenePreview, refreshSceneStatus]);
+
+  /**
+   * 统一循环改了场景 → 画布上看得见，并且工程跟着落盘。
+   *
+   * 订阅的是**与 iframe 面板同一批**事件（[[subscribeDirectorDeskAgentEvents]] 收到的是
+   * 后端 `ai_host.py` 那一个循环发出的），所以不管这句话是从画布侧面板还是从 iframe
+   * 面板说的，这里都会响应 —— 这正是「同一个助手」在节点这一侧的表现。
+   *
+   * 只认 `director_apply` 的成功收据：那是唯一会改工程的工具，其余都是读。
+   */
+  useEffect(() => {
+    const scheduleSceneSave = () => {
+      if (sceneSaveTimerRef.current !== null) clearTimeout(sceneSaveTimerRef.current);
+      // 延后落盘而不是立即：一次任务可能连续 apply 十几次，逐次上传会在项目资产里
+      // 堆出一串几乎一样的存档。静默期取 2s —— 够覆盖模型连着几轮工具调用。
+      sceneSaveTimerRef.current = window.setTimeout(() => {
+        sceneSaveTimerRef.current = null;
+        void persistProjectSnapshot().catch(() => undefined);
+      }, 2000);
+    };
+    const unsubscribe = subscribeDirectorDeskAgentEvents(id, (event) => {
+      const type = typeof event.type === 'string' ? event.type : '';
+      // 节点上显示「agent 正在做什么」—— 这一条不是新加的状态通道，而是把面板本来
+      // 就收到的那批事件也画到节点上。主人说的「导演台和画布节点像是独立的东西」，
+      // 有一半来自「节点是哑的」：面板里明明在跑，节点上却毫无动静。
+      if (type === 'start') setAiActivity({ kind: 'thinking', at: Date.now() });
+      else if (type === 'tool') {
+        const status = typeof event.status === 'string' ? event.status : '';
+        const name = typeof event.name === 'string' ? event.name : '';
+        setAiActivity(name ? { kind: 'tool', name, running: status === 'running', at: Date.now() } : null);
+      } else if (type === 'text') setAiActivity({ kind: 'text', at: Date.now() });
+      else if (type === 'done' || type === 'error') setAiActivity(null);
+      if (type !== 'tool' || event.name !== 'director_apply' || event.status !== 'completed') return;
+      if (mountedRef.current) setAiSceneAt(Date.now());
+      scheduleSceneSave();
+      // 场景真的变了 → 封面与概况跟着变。这两个一起排在存档之后：工程存成功，
+      // 画布上才有一份可以回灌的真相；先改封面后存档失败，会出现「看着变了、
+      // 重开又没了」的假象。
+      void persistProjectSnapshot()
+        .catch(() => undefined)
+        .then(() => {
+          void refreshSceneStatus();
+          void refreshScenePreview();
+        });
+    });
+    return () => {
+      unsubscribe();
+      if (sceneSaveTimerRef.current !== null) clearTimeout(sceneSaveTimerRef.current);
+    };
+  }, [id, persistProjectSnapshot, refreshScenePreview, refreshSceneStatus]);
+
+  /**
+   * 子应用请宿主落盘（`project.save`）。
+   *
+   * 两条分支：
+   *   * `project` —— 上传成项目资产，引用写回节点 data（「保存相对节点」的落点）。
+   *   * `export` —— 导出产物（批量交付面板）。本切片没有产物入库位，触发浏览器下载，
+   *     并如实告诉子应用「只是下载」。
+   */
+  const handleProjectSave = useCallback(
+    async (request: DirectorDeskProjectSaveRequest) => {
+      const projectId = readUrl().project;
+      if (request.kind === 'export') {
+        if (!request.bytes || !projectId) {
+          throw new Error(t('node.directorDesk.noProject'));
+        }
+        const blob = new Blob([request.bytes], {
+          type: request.mimeType || 'application/octet-stream',
+        });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = request.name;
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        return { saved: true, filename: request.name };
+      }
+      const content = request.content ?? '';
+      if (content.length > DIRECTOR_DESK_SNAPSHOT_MAX_BYTES) {
+        throw new Error(t('node.directorDesk.snapshotTooLarge'));
+      }
+      if (!projectId) throw new Error(t('node.directorDesk.noProject'));
+      const stamp = Date.now();
+      const uploaded = await uploadFreezoneImage(
+        projectId,
+        new Blob([content], { type: 'application/json' }),
+        directorDeskProjectUploadName(id, stamp),
+        { timeoutMs: false },
+      );
+      const ref = directorDeskAssetUrl(uploaded.url, stamp);
+      if (!ref) throw new Error(t('node.directorDesk.uploadFailed', { message: 'no url' }));
+      if (mountedRef.current) updateNodeData(id, { directorProjectRef: ref });
+      return { saved: true, url: ref, filename: request.name };
+    },
+    [id, t, updateNodeData],
+  );
 
   /**
    * 显式「保存工程」：用户看得见、点得动的那一个。
@@ -764,8 +1100,8 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   }, [id, t, updateNodeData]);
 
   // 回调走 ref 取最新闭包，桥只建一次，不随渲染重建监听。
-  const handlersRef = useRef({ handleReady, handleDeskClose, handleCaptures });
-  handlersRef.current = { handleReady, handleDeskClose, handleCaptures };
+  const handlersRef = useRef({ handleReady, handleDeskClose, handleCaptures, handleProjectSave });
+  handlersRef.current = { handleReady, handleDeskClose, handleCaptures, handleProjectSave };
 
   // 桥必须在 iframe 的文档开始执行之前就位，否则首帧 ready 会丢。
   //
@@ -779,11 +1115,26 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       if (!iframe) return undefined;
       const bridge = createDirectorDeskBridge({
         iframe,
-        onReady: () => handlersRef.current.handleReady(),
+        onReady: (info) => handlersRef.current.handleReady(info),
         onClose: () => handlersRef.current.handleDeskClose(),
         onCaptures: (captures) => handlersRef.current.handleCaptures(captures),
+        onProjectSave: (request) => handlersRef.current.handleProjectSave(request),
+        // AI 面板动作由节点会话转给 Python 后端。会话表是按 nodeId 存的，所以这里
+        // 在桥创建之后立刻能取到；取不到说明桥已被换掉，交给请求方报错。
+        onAgentRequest: async (op, payload) => {
+          const session = getDirectorDeskV2Session(id);
+          if (!session) throw new Error('导演台会话尚未就绪');
+          return session.requestAgent(op as DirectorDeskAiOp, payload);
+        },
+        // 导演台 AI 面板只留渠道选择器与极简新建；完整渠道管理跳 DramaClaw 设置页。
+        // 走 settingsStore 而不是事件总线：设置弹窗本来就由 header 渲染，store 是
+        // 它已有的跨组件通道，再开一条只能多一处真相。
+        onOpenHostSettings: () => {
+          openSettingsDialog();
+        },
       });
       bridgeRef.current = bridge;
+      const unregisterSession = registerDirectorDeskV2Session(id, { bridge });
 
       clearReadyTimer();
       readyTimerRef.current = setTimeout(() => {
@@ -793,11 +1144,12 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
 
       return () => {
         clearReadyTimer();
+        unregisterSession();
         bridge.dispose();
         if (bridgeRef.current === bridge) bridgeRef.current = null;
       };
     },
-    [clearReadyTimer],
+    [clearReadyTimer, id, openSettingsDialog],
   );
 
   /**
@@ -827,12 +1179,10 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         const url = directorDeskPanoUrlFromTask(event.task, id);
         if (!url) return;
         setAiBackgroundBusy(false);
-        setAiBackgroundAt(Date.now());
-        bridgeRef.current?.sendPanorama({
-          edgeId: DIRECTOR_DESK_AI_PANORAMA_EDGE,
-          sourceNodeId: id,
-          imageUrl: url,
-          fileName: t('node.directorDesk.assistantBackgroundName'),
+        // 全景真正落进场景要等三步工具调用跑完，所以「已更新」的时刻由链路自己报，
+        // 不在这里提前宣布 —— 提前宣布就是又一次「看起来成功、实际没生效」。
+        void applyPanorama(url, t('node.directorDesk.assistantBackgroundName')).then((applied) => {
+          if (applied && mountedRef.current) setAiBackgroundAt(Date.now());
         });
         return;
       }
@@ -847,7 +1197,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         );
       }
     });
-  }, [taskBus, id, t]);
+  }, [applyPanorama, taskBus, id, t]);
 
   // 弹窗关闭即卸载 iframe：3D 引擎不常驻，也不在后台空转。进行中的上传不会被取消
   // （产物已经落在项目里），但卸载后既不 setState 也不往画布上写节点。
@@ -869,25 +1219,20 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
     updateNodeData(id, { isOpen: true, errorMessage: null });
   }, [id, updateNodeData]);
 
-  /**
-   * 接住 agent 的场景/运镜 intent：写进导演台的 localStorage 工程，再 reload iframe
-   * 让它带着新场景重新起。写入是同源直接写（父窗口与 iframe 共享 localStorage），
-   * reload 靠 bump `attempt`（和「重试」同一条路径）。
+  /*
+   * 这里原来有一个 `handleDirectorScene`（画布侧把 dd-scene intent 翻译成
+   * `director_apply`）。**随侧栏一起移除了**：它唯一的调用点是那个侧栏，而那条侧栏
+   * 与 iframe 内的 AI 面板同时存在、抢同一份对话（主人报「还是有两个 AI 助手」）。
+   *
+   * 场景落地没有因此少一条路：iframe 面板里的 agent 直接调 `director_apply`，
+   * 走的就是后端那**一个**循环。节点侧照旧通过
+   * `subscribeDirectorDeskAgentEvents` 收 `director_apply` 的收据并刷新节点
+   * （见下面的 `scheduleSceneSave`），所以「画布上看得出变化」这一条仍然成立。
+   *
+   * MONOFORM 白模台那条通道（[[applyDirectorSceneToStorage]] → localStorage 整体覆盖）
+   * 保留在 {@link DirectorDeskChatPanel} 的 `monoform` 分支里，未删除；那条面板仍由
+   * [[MonoformDeskNode]] 挂着。
    */
-  const handleSceneIntent = useCallback(
-    (intent: DirectorSceneIntent) => {
-      const ok = applyDirectorSceneToStorage(id, intent, window.localStorage);
-      if (!ok) {
-        // 工程还没建（导演台没真正加载过），此时注入无处可落。
-        toast.error(t('node.directorDesk.assistantSceneUnavailable'));
-        return;
-      }
-      setAiSceneAt(Date.now());
-      setAttempt((value) => value + 1); // reload iframe → 导演台从 localStorage 读到新场景
-      toast.success(t('node.directorDesk.assistantSceneApplied'));
-    },
-    [id, t],
-  );
 
   const readProject = useCallback(() => {
     const bridge = bridgeRef.current;
@@ -949,27 +1294,6 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
     return null;
   }, [panoramaSource, upstreamHasText, t]);
 
-  /**
-   * 给 agent 看的**上游原始事实**（不是上面那个给用户看的本地化文案）。
-   * 产品边界是「agent 可以引用外部节点信息」—— 上游连线只有宿主知道，
-   * agent 拿不到画布，所以必须由这里随对话一起送过去。
-   */
-  // i18n-exempt-start — 这串进的是给 agent 的提示词（不是 UI），要保持语言稳定。
-  const chatUpstreamSummary = useMemo(() => {
-    const items = upstreamNodes.map((node) => {
-      const data = (node.data ?? {}) as Record<string, unknown>;
-      const name = String(data.displayName ?? node.id);
-      const kind =
-        typeof data.imageUrl === 'string' ? '图片'
-        : typeof data.videoUrl === 'string' ? '视频'
-        : typeof data.content === 'string' ? '文本'
-        : '素材';
-      return `${kind}「${name}」`;
-    });
-    return items.length ? items.join('、') : undefined;
-  }, [upstreamNodes]);
-  // i18n-exempt-end
-
   return (
     <div
       className="group relative h-full w-full overflow-visible"
@@ -1017,6 +1341,40 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
           )}
         </div>
 
+        {/*
+          节点卡上的状态条。主人报「哪里体现节点变化」时这里只有一个「打开」按钮 ——
+          导演台里摆了什么、agent 在不在跑、工程存没存，画布上一个字都看不到。
+
+          三段都是**导演台自己报的**：实体数来自 `director_read`，存档时间来自
+          ``directorProjectRef`` 的文件名时间戳，agent 状态来自与 iframe 面板同一批
+          事件。没有任何一段是宿主猜的 —— 猜出来的那段比空着更坏。
+        */}
+        <div className="flex min-h-[22px] items-center gap-1.5 border-t border-white/[0.06] px-2 py-1 text-[11px] leading-4 text-white/60">
+          {sceneStatus ? (
+            <span title={t('node.directorDesk.sceneStatusHint')}>
+              {t('node.directorDesk.sceneStatus', {
+                entities: sceneStatus.entities,
+                cameras: sceneStatus.cameras,
+              })}
+            </span>
+          ) : (
+            <span>{t('node.directorDesk.sceneStatusUnknown')}</span>
+          )}
+          {savedAt !== null && (
+            <span className="rounded-full bg-cyan-300/[0.12] px-1.5 text-[10px] text-cyan-200/90">
+              {t('node.directorDesk.projectArchivedShort')}
+            </span>
+          )}
+          {aiActivity && (
+            <span className="flex items-center gap-1 text-[10px] text-sky-200/90">
+              <Loader2 className="size-2.5 animate-spin" />
+              {aiActivity.kind === 'tool' && aiActivity.name
+                ? t('node.directorDesk.assistantActivityShort', { name: aiActivity.name })
+                : t('node.directorDesk.assistantBusyShort')}
+            </span>
+          )}
+        </div>
+
         <div className="flex items-center gap-2 border-t border-white/[0.06] px-2 py-1.5">
           <button
             type="button"
@@ -1034,6 +1392,12 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
               {t('node.directorDesk.hasVideo')}
             </span>
           )}
+          <span
+            role="status"
+            className="ml-auto flex items-center gap-1 text-[10px] leading-4 text-white/40"
+          >
+            {aiSceneAt !== null && t('node.directorDesk.sceneAppliedShort')}
+          </span>
         </div>
       </div>
 
@@ -1159,6 +1523,26 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
                     {upstreamMediaSummary}
                   </span>
                 )}
+                {/* 全景是否真的进了导演台场景。没有这条的话，导入失败与成功长得一模一样。 */}
+                {panoramaAppliedAt !== null && (
+                  <span
+                    role="status"
+                    className="flex items-center gap-1.5 rounded-full bg-emerald-300/[0.12] px-2 py-0.5 text-[12px] leading-5 text-emerald-200/90"
+                  >
+                    <Link2 className="size-3.5" />
+                    {t('node.directorDesk.panoramaApplied', {
+                      time: new Date(panoramaAppliedAt).toLocaleTimeString(undefined, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      }),
+                    })}
+                  </span>
+                )}
+                {panoramaNotice && (
+                  <span role="alert" className="text-[12px] leading-5 text-amber-300">
+                    {panoramaNotice}
+                  </span>
+                )}
                 {isImportingCaptures && (
                   <span className="flex items-center gap-1.5 text-[12px] leading-5 text-white/70">
                     <Loader2 className="size-3.5 animate-spin" />
@@ -1198,6 +1582,25 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
                     })}
                   </span>
                 )}
+                {aiActivity && (
+                  <span
+                    role="status"
+                    className="flex items-center gap-1.5 rounded-full bg-sky-300/[0.12] px-2 py-0.5 text-[12px] leading-5 text-sky-200/90"
+                  >
+                    {aiActivity.kind === 'tool' && aiActivity.running ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-3.5" />
+                    )}
+                    {aiActivity.kind === 'text'
+                      ? t('node.directorDesk.assistantActivityText')
+                      : aiActivity.kind === 'tool'
+                        ? t('node.directorDesk.assistantActivityTool', {
+                            name: aiActivity.name ?? '',
+                          })
+                        : t('node.directorDesk.assistantActivityThinking')}
+                  </span>
+                )}
                 {aiSceneAt !== null && (
                   <span className="flex items-center gap-1.5 rounded-full bg-violet-300/[0.12] px-2 py-0.5 text-[12px] leading-5 text-violet-200/90">
                     <Sparkles className="size-3.5" />
@@ -1227,30 +1630,26 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
                 )}
 
                 {/*
-                  AI 助手侧栏。挂的是项目级对话面板本体（不是另起一套），
-                  所以这里的对话与「项目助手」页是同一段上下文、同一份历史 ——
-                  导演台不是一个孤岛，它就是当前项目的一段工作。
+                  **这里不再挂 AI 助手侧栏。**
+                  它与 iframe 内的「AI」面板同时在，主人报的是「还是有两个 AI 助手」。
+                  那个侧栏在 director 引擎下并不走 agent 循环：`DirectorDeskChatPanel`
+                  的场景落地口是 `canApplyScene = engine === 'monoform'` 分支，
+                  director 引擎下那条 `onDirectorScene` 是宿主自己拼操作的另一条路 ——
+                  两个输入框抢同一份对话，用户看到的是两个助手各说各话。
+                  导演台的对话只剩 iframe 里的「AI」面板一个入口，那才是真跑
+                  `ai_host.py` 那一个循环的地方。
+
+                  `DirectorDeskChatPanel` 组件本身**没删**：MONOFORM 白模台
+                  （[[MonoformDeskNode]]）仍在用它，那边的「整体覆盖」场景落地语义
+                  只存在于那个面板里。
                 */}
-                <button
-                  type="button"
-                  onClick={() => setChatOpen((value) => !value)}
-                  aria-expanded={chatOpen}
-                  className={`ml-auto flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] leading-5 transition-colors ${
-                    chatOpen
-                      ? 'bg-cyan-300/[0.16] text-cyan-100 hover:bg-cyan-300/[0.24]'
-                      : 'bg-white/[0.08] text-white/85 hover:bg-white/[0.14]'
-                  }`}
-                >
-                  <MessagesSquare className="size-3.5" />
-                  {t('node.directorDesk.assistant')}
-                </button>
 
                 <button
                   type="button"
                   onClick={closeDesk}
                   disabled={isSavingProject}
                   aria-label={t('node.directorDesk.close')}
-                  className="flex items-center gap-1.5 rounded-md bg-white/[0.08] px-2.5 py-1 text-[12px] leading-5 text-white/85 transition-colors hover:bg-white/[0.14] disabled:opacity-50"
+                  className="ml-auto flex items-center gap-1.5 rounded-md bg-white/[0.08] px-2.5 py-1 text-[12px] leading-5 text-white/85 transition-colors hover:bg-white/[0.14] disabled:opacity-50"
                 >
                   <X className="size-3.5" />
                   {t('node.directorDesk.close')}
@@ -1299,28 +1698,6 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
                   </div>
                 )}
                 </div>
-
-                {/*
-                  对话栏。桌面端挤窄 3D 视野（导演台本身是响应式的，已在 390px 宽
-                  验证过），移动端整屏覆盖 —— 窄屏上并排会把 3D 挤没。
-                */}
-                {chatOpen && (
-                  /*
-                    `min-h-0` 不能省：这个 aside 是 flex column 容器，它的
-                    `min-height: auto` 会解析成**内容的最小高度** —— 消息一多，它就不再
-                    收缩到父行的高度，整个侧栏（连同最下面的输入框）被顶出视口外。
-                    实测症状：对话记录一堆，输入框消失，用户以为没地方打字。
-                    和 iframe 那层 `min-w-0` 是同一类坑，只是一个在横轴一个在纵轴。
-                  */
-                  <aside className="absolute inset-y-0 right-0 z-20 flex min-h-0 w-full max-w-[460px] flex-col border-l border-white/[0.08] bg-[#111111] lg:static lg:w-[440px] lg:max-w-none lg:bg-transparent">
-                    <DirectorDeskChatPanel
-                      scope={chatScope}
-                      upstreamSummary={chatUpstreamSummary}
-                      onRequestClose={() => setChatOpen(false)}
-                      onSceneIntent={handleSceneIntent}
-                    />
-                  </aside>
-                )}
               </div>
             </div>
           </DialogContent>

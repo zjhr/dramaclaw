@@ -95,7 +95,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     if item is None:
         raise ValueError(f"unknown DramaClaw tool: {name}")
     _schema, handler = item
-    text = handler(arguments or {})
+    # Handlers are synchronous `urllib` calls, so they must not run on the event
+    # loop: a director desk tool blocks until the browser canvas window answers,
+    # which is up to 75s here. Inlined it would freeze every other MCP request
+    # (including `tools/list`) for the whole duration.
+    text = await asyncio.to_thread(handler, arguments or {})
     return [types.TextContent(type="text", text=str(text or ""))]
 
 

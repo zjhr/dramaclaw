@@ -55,6 +55,19 @@ export interface DirectorDeskSkill {
 /**
  * 引擎标识：同一个对话面板服务两代导演台，各自能兑现的能力不同，所以基础层与
  * 可选技能都按 engine 分池 —— 提示词绝不能承诺另一个引擎做不到的事。
+ *
+ * ## 主链路已收敛到 `director`
+ *
+ * 所有默认值都是 `'director'`（本文件三处 + `DirectorDeskChatPanel` 两处），
+ * `DirectorDeskNode` 不传 engine，所以画布上的导演台节点走的就是 v2 引擎。
+ *
+ * `'monoform'` 分支**保留且可达**，不是死代码：
+ * - `MonoformDeskNode` 显式传 `engine="monoform"`，那是仍存在的独立节点；
+ * - dd-scene 的 MONOFORM 翻译层（[[applyDirectorSceneIntent]] → localStorage 整体覆盖）
+ *   与 v2 的增量翻译层（[[toDirectorOperations]] → `director_apply`）语义相反，
+ *     两边都必须留着；
+ * - `.director` 是**单向不可逆迁移**：既有 MONOFORM 节点里已存的工程只能靠这条分支打开。
+ * 所以撤出的是「默认位」，不是「代码」。
  */
 export type DirectorDeskEngine = 'director' | 'monoform';
 

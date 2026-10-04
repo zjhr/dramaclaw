@@ -12,7 +12,7 @@ import {
   type SpecMediaDetail,
 } from '@/features/superchat/superchat-panel';
 import { useSuperChat } from '@/features/superchat/use-superchat';
-import type { ChatMessage, ChatScope } from '@/features/superchat/types';
+import type { ChatAttachment, ChatMessage, ChatScope } from '@/features/superchat/types';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 import {
@@ -33,6 +33,10 @@ import {
   type DirectorDeskEngine,
 } from './directorDeskSkills';
 import { DirectorSceneCard } from './DirectorSceneCard';
+import {
+  getDirectorDeskV2Session,
+  subscribeDirectorDeskAgentEvents,
+} from './directorDeskV2Session';
 
 /**
  * 空态示例指令：出厂默认工程是空画布，面对一片空白用户不知道能说什么。
@@ -106,9 +110,20 @@ type DirectorDeskChatPanelProps = {
   onRequestClose?: () => void;
   /**
    * agent 在回复里产出 ```dd-scene``` 块时的回调（摆场景 / 生成运镜）。
-   * 由宿主节点接住 —— 只有它能写导演台的 localStorage 工程并 reload iframe。
+   *
+   * **MONOFORM 分支专用**：那边是「拿已有工程整体覆盖」，由宿主写 localStorage 再
+   * reload iframe。见 [[applyDirectorSceneIntent]]。
    */
   onSceneIntent?: (intent: DirectorSceneIntent) => void;
+  /**
+   * v2 导演台分支：拿到 dd-scene intent，由宿主翻译成 `director_apply` 的**增量操作**
+   * 并提交（[[toDirectorOperations]]）。语义与 {@link onSceneIntent} 相反 ——
+   * v2 不覆盖工程，只对当前工程施加一批操作，所以翻译需要宿主手里的 revision、
+   * 现有实体 id 与 production，这些面板都拿不到。
+   *
+   * 两者都在时按 engine 选：`director` 走这个，`monoform` 走 `onSceneIntent`。
+   */
+  onDirectorScene?: (intent: DirectorSceneIntent) => void;
   /**
    * 撤销上一次应用（回到那次 apply 之前的工程）。快照由宿主节点在 apply 前存下 ——
    * 只有它拿得到 iframe 里的工程。没有这个回调就不显示撤销按钮。
@@ -116,9 +131,20 @@ type DirectorDeskChatPanelProps = {
   onUndoScene?: () => void;
   /**
    * 引擎：决定 agent 拿到什么口径的上下文、菜单里有哪些技能、以及「生成背景」在不在。
-   * 默认 `director`（360 导演台）；MONOFORM 白模台传 `monoform`。
+   * 默认 `director`（v2 导演台）；MONOFORM 白模台传 `monoform`。
    */
   engine?: DirectorDeskEngine;
+};
+
+/** 表现层的完整入参 = 面板的公共入参 + 注入的对话状态。 */
+export type DirectorDeskChatSurfaceProps = DirectorDeskChatPanelProps & {
+  /**
+   * 对话状态。**由 {@link DirectorDeskChatPanel} 注入**，本组件自己不接任何传输层。
+   *
+   * 分成两半是为了让「同一份对话」这件事在结构上成立：`director` 引擎下注入的是导演台
+   * 统一循环（后端 `ai_host.py` 那份 `Conversation`），`monoform` 才是 Hermes WS。
+   */
+  chat: DirectorDeskChatState;
 };
 
 /**
@@ -187,20 +213,58 @@ const MONOFORM_NO_BACKGROUND = [
   '  用户让你换背景、生成场景图、换环境时，直接说不支持（这里做不到），不要调任何生成路由、不要假装做了。',
 ];
 
-/** 360 导演台（UE 人偶 + 运镜动画）的 dd-scene 词汇。 */
+/**
+ * v2 导演台（`mangfufu/director-desk`）的 dd-scene 词汇。
+ *
+ * 这里写的是**翻译层真正兑现得了的字段**，不是 v2 工具面的全集。翻译规则见
+ * [[toDirectorOperations]]：不认识 / 兑现不了的字段会被丢进 `dropped` 并在界面上
+ * 如实报出来，所以这里宁可少写，也不要写一个会被静默丢掉的能力。
+ */
+// i18n-exempt-start — 拼给模型的专业指令，语言必须稳定。
 const DIRECTOR_SCENE_LINES = [
-  '- 用户让你「摆场景 / 布置角色 / 设置运镜 / 生成动画」时，**不要调工具**，',
+  '- 用户让你「摆场景 / 布置角色 / 放道具 / 设置运镜」时，**不要调工具**，',
   '  而是在你的回复里输出一个 ```dd-scene 代码块（fenced），里面是一个 JSON：',
-  '    {"type":"director-desk-scene","characters":[...],"camera":{...}}',
-  '  characters 是数组，每个角色：{"pose":"...","at":[x,z],"facing":角度度数,"color":"#RRGGBB","name":"名字"}',
-  '    pose 可选内置姿势：stand/sit/walk/run/idle/wave/point/crouch/jump/t-pose。',
-  '    at 是地面坐标（米，x 左右、z 前后，镜头在 +z 方向）。facing（度）：0=面向镜头、90=朝画面右、-90=朝画面左、180=背对镜头；两人面对面让 facing 差 180°。都可省略。',
-  '    要更精细的自定义造型（张开双臂、仰头、指向…按逐骨骼角度现算）时，让用户选「角色调度走位」技能，那里有骨骼词汇。',
-  '  camera 是运镜：{"move":"orbit-left|orbit-right|dolly-in|dolly-out|pan-left|pan-right|static","duration":秒数}',
-  '  只摆场景就只给 characters，只运镜就只给 camera，两个都要就都给。宿主会把它应用到当前节点并刷新导演台。',
-  '  这套只摆内置人偶（mannequin）和相机轨迹，**不涉及真实模型/道具库**；做不到的（具体服装、表情、道具外观）就直说。',
-  '- 输出 dd-scene 块后用一句自然语言告诉用户你摆了什么，块本身用户看不到。',
+  '    {"type":"director-desk-scene","mode":"compose|edit","characters":[...],"objects":[...],"camera":{...}}',
+  '  用户说的是大白话（例如「一段唯美的爱情场景」）。他们不会写机位，你来当摄影指导。',
+  '  mode:"compose" 用于一段新演出；mode:"edit" 用于局部微调、保留现有姿态。',
+  '',
+  '① characters 数组 —— 角色（**纯增量**：没提到的对象原样保留，不要每次重摆全场）：',
+  '    {"name":"名字","at":[x,z],"facing":角度,"color":"#RRGGBB","pose":"...","controls":{...},"performance":[...],"lines":[...],"route":[[x,z],...],"routeDuration":秒,"start":秒,"target":"已有对象id"}',
+  '  - at 是站位（米，x 左右、z 前后）；facing（度）：0=面向镜头、90=朝画面右、-90=朝画面左、180=背对镜头；两人面对面让 facing 差 180°。',
+  '  - pose 只认这几个：idle / stand / sit / walk / run / crouch / wave（其余会被丢弃并告知你）。',
+  '  - controls 是逐骨骼角度（度，只写要动的）：{"leftArm.pitch":-40,"leftElbow.bend":30,"head.pitch":12}。',
+  '    关节只有这些：head / headYaw / torso / leftArm / rightArm / leftElbow / rightElbow / leftHip / rightHip / leftKnee / rightKnee。',
+  '    写别的关节名会被丢弃（不会写坏工程，但那一拍就没了）。',
+  '  - performance 是时间轴拍点：{"t":秒,"controls":{...}}，至少两拍，相邻拍之间由引擎平滑过渡。',
+  '  - route 是走位路点（≥2 个），角色会沿路径走过去；routeDuration 是走完的秒数（默认 5）。',
+  '  - **改一个已存在的角色时加 "target"**：填它上一轮的 name 对应的对象 id（形如 "dd-char1"）。',
+  '    给了 target 就只改这个对象、其余原样保留；不给 target 一律当作**新增**角色。',
+  '  - 有对白时给说话的角色写 lines:[{"text":"台词","start":秒,"end":秒}]。一人说完再接下一人，两句不要重叠。',
+  '    台词会变成导演台时间轴上的**剧情备注轨道**（点开可看台词、情绪、动作），视口里会跟着角色头顶出现气泡。',
+  '    没有对白就不要写 lines。没有口型。',
+  '',
+  '② objects 数组 —— 道具 / 粗模（可选，静态摆放）：',
+  '    {"type":"table","at":[x,z],"rotationY":角度,"y":高度,"scale":[x,y,z],"color":"#RRGGBB","name":"名字","target":"已有对象id"}',
+  '  - type 只认这些（写别的会被丢弃并告知你）：box / sphere / cylinder / plane / arch / stairs / door / table / chair / sofa / tree / vehicle。',
+  '  - 通常只给 type 和 at 就够；不给 scale 用该资产的默认尺寸。物品是**静态摆放**，要动请用角色的 route 或相机运镜。',
+  '  - **不支持**：灰度高度地形（depthMesh）、外部 GLB 直接摆、换装、表情、手指级造型。做不到就直说。',
+  '',
+  '③ camera —— 运镜（摆了人就必须给）：',
+  '    {"move":"dolly-in|dolly-out|orbit-left|orbit-right|pan-left|pan-right|crane-up|crane-down|rail-left|rail-right|zoom-in|zoom-out|handheld|pov|over-shoulder|static","size":"close|medium|wide|full","height":"eye|low|high","focus":"角色名或id","duration":秒,"start":秒}',
+  '  - size 是景别：close 近景 / medium 中景（默认）/ wide 全景 / full 远景。height 是机位高度，默认平视。',
+  '  - focus 指定镜头跟着谁（填角色 name 或 id）；镜头会对着角色的眼睛，并跟着走动的角色。',
+  '  - 顶层 duration 是整段演出共用秒数（≤60），运镜的 start + duration 不要超出它。',
+  '',
+  '④ 时间轴：performance.t、route 的 start、camera.start、lines 的 start/end 全部是同一时间轴的绝对秒数。',
+  '',
+  '**改场景前先看「导演台当前场景」**：那是实时状态。用户说「再近一点」「把他挪到左边」这类话时，',
+  '基于现状**只改他提到的那部分**（用 target），而不是重摆全场 —— 重摆会把用户手摆的东西也一起没掉。',
+  '',
+  '⚠️ JSON 必须**写完整**：第一个字符是 {，最后一个字符是最外层的 }。漏掉收尾整块就作废，用户只会看到「场景块解析失败」。',
+  '- 翻译层兑现不了的字段会被丢弃，并在界面上明确告诉你丢了什么 —— 收到这种提示就改用能兑现的写法，不要重复输出同一段。',
+  '- 输出 dd-scene 块后用一句自然语言告诉用户你摆了什么、镜头怎么动，块本身用户看不到。',
 ];
+// i18n-exempt-end
 
 /**
  * MONOFORM 的 dd-scene 词汇。三块：characters（人）+ objects（物品/粗模）+ camera（运镜），
@@ -328,7 +392,36 @@ export function stripDirectorDeskAgentContext(text: string): string {
 }
 
 /**
- * 导演台专用的 AI 助手面板。
+ * 面板只消费这一份对话状态，**不关心它是谁给的**。
+ *
+ * 方案 3：画布侧面板在 `director` 引擎下不再自己跑 agent，它与 iframe 面板共用后端
+ * `ai_host.py` 的那一个循环 —— 所以这里的 `messages` 就是那份 `Conversation`，不是
+ * Hermes WS 的另一份历史。MONOFORM 引擎仍然走 `useSuperChat`（白模台没有那 18 个工具）。
+ */
+export interface DirectorDeskChatState {
+  connected: boolean;
+  /** 正在连。统一循环里它等价于「后端会话还没握手」，与 WS 的 connecting 同义。 */
+  connecting: boolean;
+  historyReady: boolean;
+  busy: boolean;
+  error: string | null;
+  messages: ChatMessage[];
+  streamText: string;
+  activeTurnId: string | null;
+  pinnedIds: Set<string>;
+  /**
+   * 送一条用户原话。第二个参数沿用 superchat 的附件位（导演台不用，恒空）；
+   * 第三个是**只给模型看的上下文**，不进入共享历史。
+   */
+  send: (text: string, attachments?: ChatAttachment[], context?: string) => boolean;
+  appendNotification: (text: string) => void;
+  abort: () => void;
+  deleteMessage: (id: string) => void;
+  togglePin: (id: string) => void;
+}
+
+/**
+ * 导演台专用 AI 助手面板的表现层。
  *
  * **为什么不是直接挂 `SuperChatPanel`**：那个面板是项目助手的门面，标题「虾导」、
  * 空态「可以询问项目进度…」、占位「说出要推进的分集、画面、配音或成片任务」全是
@@ -336,29 +429,25 @@ export function stripDirectorDeskAgentContext(text: string): string {
  * 背景、读上游节点…）就得往那个 135KB 的共享组件里塞 `if (scope.kind === ...)`。
  *
  * 所以这里**只复用不该重写的那部分**：
- * - `useSuperChat` —— WS 协议、重连、scope、本地缓存。它是 scope 感知的，照传即可。
  * - `MessageBubble` —— 消息渲染（含 ui_spec / 媒体卡 / 工具消息）。它已经导出了。
  *
  * 文案、布局、以及将来的导演台专属交互，全部长在这个文件里，改这里不会碰到项目助手。
  */
-export function DirectorDeskChatPanel({
+export function DirectorDeskChatSurface({
   scope,
   upstreamSummary,
   sceneSummary,
   onRequestClose,
   onSceneIntent,
+  onDirectorScene,
   onUndoScene,
   engine = 'director',
-}: DirectorDeskChatPanelProps) {
+  chat,
+}: DirectorDeskChatSurfaceProps) {
   const { t } = useTranslation();
-  const displayName = useAuthStore((state) => state.displayName);
   // scope.id 形如 `<project>/<node>` —— 技能选择按**节点**记忆，取后半段。
   // 没有 scope（理论上不会，宿主总是给）时退化成空串，键仍然合法、只是所有节点共用一个。
   const scopeNodeId = scope?.id?.split('/')[1] ?? '';
-  const chat = useSuperChat({
-    displayName: displayName || 'SuperTale',
-    scope,
-  });
   const [draft, setDraft] = useState('');
   const [media, setMedia] = useState<SpecMediaDetail | null>(null);
   // 消息详情（完整结构 + raw JSON）—— 覆盖式展示，窄栏里也放得下。
@@ -404,6 +493,30 @@ export function DirectorDeskChatPanel({
    */
   const [autoApply, setAutoApply] = useState(readStoredAutoApply);
 
+  /**
+   * 把一份 dd-scene intent 交给当前引擎对应的通道。
+   *
+   * 这是**收敛到 v2 的那一步**：`director` 引擎优先走 `onDirectorScene`
+   * （宿主翻译成 `director_apply` 增量操作）。画布上的导演台节点
+   * （[[DirectorDeskNode]]）一定提供它，所以主链路是 v2。
+   *
+   * `director` 引擎下若**只**给了旧的 `onSceneIntent`，退回它 —— 那是 MONOFORM 的
+   * 「整体覆盖」语义，撤掉它会让还没迁过来的宿主静默收不到场景（比语义错更糟）。
+   * 迁移完成的宿主不该再只传 `onSceneIntent`；这条回退是兼容垫片，不是推荐用法。
+   */
+  const applyScene = useCallback(
+    (intent: DirectorSceneIntent) => {
+      if (engine === 'monoform') onSceneIntent?.(intent);
+      else (onDirectorScene ?? onSceneIntent)?.(intent);
+    },
+    [engine, onDirectorScene, onSceneIntent],
+  );
+
+  /** 当前引擎是否有一条能真正落地的通道。没有就不显示「清空」等写入口。 */
+  const canApplyScene = engine === 'monoform'
+    ? Boolean(onSceneIntent)
+    : Boolean(onDirectorScene ?? onSceneIntent);
+
   const toggleAutoApply = useCallback(() => {
     setAutoApply((prev) => {
       const next = !prev;
@@ -425,16 +538,16 @@ export function DirectorDeskChatPanel({
       return;
     }
     setResetArmed(false);
-    onSceneIntent?.({ type: DIRECTOR_SCENE_INTENT_TYPE, reset: true });
-  }, [onSceneIntent, resetArmed]);
+    applyScene({ type: DIRECTOR_SCENE_INTENT_TYPE, reset: true });
+  }, [applyScene, resetArmed]);
 
   /** 点选一条灵感提案 —— 走 dd-scene 同一条注入通道，并给卡片标记已应用。 */
   const pickProposal = useCallback(
     (key: string, proposal: DirectorProposal) => {
-      onSceneIntent?.(proposal.scene);
+      applyScene(proposal.scene);
       setAppliedProposals((prev) => new Set(prev).add(key));
     },
-    [onSceneIntent],
+    [applyScene],
   );
 
   /**
@@ -493,7 +606,7 @@ export function DirectorDeskChatPanel({
    */
   const processedSceneMsgRef = useRef<string | null>(null);
   useEffect(() => {
-    if (chat.busy || !onSceneIntent) return;
+    if (chat.busy || !canApplyScene) return;
     // 「允许改动画面」关掉时：不解析、不注入，**也不标哨兵** —— 用户把开关打回来时，
     // 最近那条带场景的回复仍应当能被补上（所以这里直接 return，不动 processedSceneMsgRef）。
     if (!autoApply) return;
@@ -529,34 +642,39 @@ export function DirectorDeskChatPanel({
       processedSceneMsgRef.current = m.id;
       // 记下是哪条消息落的画面 —— 只有它的卡片显示「已应用/撤销」。
       setAppliedSceneMsgId(m.id);
-      onSceneIntent(intent);
+      applyScene(intent);
       return;
     }
-  }, [chat.messages, chat.busy, onSceneIntent, t, autoApply, activeSkill]);
+  }, [applyScene, canApplyScene, chat.messages, chat.busy, t, autoApply, activeSkill]);
 
   const canSend = chat.connected && draft.trim().length > 0;
   /**
-   * 发送时把导演台上下文作为 `transportText` 一起送出 —— 用户看到的仍是自己那句话，
-   * agent 拿到的是「上下文 + 用户原话」。
+   * 发送时把导演台上下文作为**只给模型看的附加上下文**一起送出。
+   *
+   * 刻意不塞进 `prompt`（用户原话）里：统一循环的对话历史被 iframe 与画布两个入口共用，
+   * 上下文混进去会让两边都看到 `[导演台上下文]…` 这种内部文本 —— 旧 Hermes 链路正是
+   * 靠渲染层剥它才没露馅的（[[stripDirectorDeskAgentContext]]），合并后不该再依赖那种补丁。
    */
   const submit = useCallback(() => {
     if (!canSend) return;
     const text = draft.trim();
-    const prefix = target
-      ? buildDirectorDeskAgentContext(
-          {
-            project: target.project,
-            nodeId: target.nodeId,
-            upstreamSummary,
-            sceneSummary,
-          },
-          engine,
-        )
-      : '';
-    // 上下文 + 技能指令（常驻基础层 + 可选专业技能）+ 用户原话；用户可见的仍只是原话。
-    const parts = prefix ? [prefix, buildDirectorDeskSkillPrompt(skillId, engine)] : [];
-    const outbound = parts.length ? `${parts.join('\n\n')}\n\n用户：${text}` : text; // i18n-exempt
-    if (chat.send(text, [], outbound)) {
+    const context = [
+      target
+        ? buildDirectorDeskAgentContext(
+            {
+              project: target.project,
+              nodeId: target.nodeId,
+              upstreamSummary,
+              sceneSummary,
+            },
+            engine,
+          )
+        : '',
+      buildDirectorDeskSkillPrompt(skillId, engine),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    if (chat.send(text, [], context)) {
       setDraft('');
       // 自己的动作要看到回应：即使用户刚上翻过历史，发消息后也贴回底部。
       atBottomRef.current = true;
@@ -617,17 +735,18 @@ export function DirectorDeskChatPanel({
           作用域提示常驻：用户需要知道这段对话只属于当前节点。它是产品承诺，
           也是这个面板与「项目助手」唯一的区别所在。
         */}
-        <span
-          className="truncate text-[12px] leading-5 text-white/40"
+        <span className="truncate text-[12px] leading-5 text-white/40"
           title={t('node.directorDesk.assistantScopeHint')}
         >
-          {t('node.directorDesk.assistantScopeHint')}
+          {engine === 'director'
+            ? t('node.directorDesk.assistantUnifiedHint')
+            : t('node.directorDesk.assistantScopeHint')}
         </span>
         {/*
           「允许改动画面」：开 = agent 说完直接摆好；关 = 只出卡片、你自己点应用。
           与「清空」并排放在头部 —— 都是面板级开关，不占输入区的宽度。
         */}
-        {onSceneIntent && (
+        {canApplyScene && (
           <button
             type="button"
             onClick={toggleAutoApply}
@@ -647,7 +766,7 @@ export function DirectorDeskChatPanel({
           「清空重来」：破坏性，所以同一按钮点两次（第一次变「确认清空？」，3 秒超时）+
           走宿主通道不经过模型。宿主执行前会存撤销快照，误点了还能退回来。
         */}
-        {onSceneIntent && (
+        {canApplyScene && (
           <button
             type="button"
             onClick={handleResetScene}
@@ -683,14 +802,18 @@ export function DirectorDeskChatPanel({
       >
         {initializing && (
           <p className="text-[12px] leading-5 text-white/55">
-            {t('node.directorDesk.assistantSyncing')}
+            {engine === 'director'
+              ? t('node.directorDesk.assistantUnifiedSyncing')
+              : t('node.directorDesk.assistantSyncing')}
           </p>
         )}
 
         {!initializing && chat.messages.length === 0 && !chat.streamText && (
           <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-3">
             <p className="text-[12px] leading-5 text-white/70">
-              {t('node.directorDesk.assistantEmpty')}
+              {engine === 'director'
+                ? t('node.directorDesk.assistantUnifiedEmpty')
+                : t('node.directorDesk.assistantEmpty')}
             </p>
             {/*
               示例指令：点一下**填进输入框**而不是直接发 —— 用户还能改两个字再说，
@@ -738,6 +861,9 @@ export function DirectorDeskChatPanel({
                 // 用户消息里可能带着发给模型的上下文块，显示前剥掉；提案 JSON 也剥掉，改用卡片。
                 message={{
                   ...message,
+                  // 统一循环的历史里没有上下文块（它们走 `context` 字段，不落进用户消息）。
+                  // 这一层剥的是**更老的 Hermes 会话**残留 —— 旧对话仍要在同一个面板里
+                  // 读得干净，而不是让内部提示词突然冒出来。
                   text: stripDirectorProposals(
                     stripDirectorSceneIntent(stripDirectorDeskAgentContext(visibleText)),
                   ),
@@ -755,7 +881,7 @@ export function DirectorDeskChatPanel({
                   applied={appliedSceneMsgId === message.id}
                   onApply={() => {
                     setAppliedSceneMsgId(message.id);
-                    onSceneIntent?.(sceneIntent);
+                    applyScene(sceneIntent);
                   }}
                   onUndo={onUndoScene}
                 />
@@ -806,7 +932,9 @@ export function DirectorDeskChatPanel({
         {chat.busy && !chat.streamText && (
           <p className="flex items-center gap-1.5 text-[12px] leading-5 text-white/55">
             <Loader2 className="size-3.5 animate-spin" />
-            {t('node.directorDesk.assistantWaiting')}
+            {engine === 'director'
+              ? t('node.directorDesk.assistantUnifiedWaiting')
+              : t('node.directorDesk.assistantWaiting')}
           </p>
         )}
 
@@ -1103,4 +1231,222 @@ function hideOpenFence(text: string): string {
 
 function streamMessage(text: string): ChatMessage {
   return { id: 'director-desk-stream', role: 'assistant', text, timestamp: Date.now() };
+}
+
+// ── 统一循环（方案 3）────────────────────────────────────────────────────────
+
+/**
+ * 画布侧面板的对话源：导演台**统一循环**，不是 Hermes。
+ *
+ * ## 为什么不是 MCP 客户端
+ *
+ * 任务书给的两个选项是「经 `director_desk_call` MCP 工具」或「等价通道」。选后者
+ * （直接打 `/ai/run`）有两个具体理由：
+ *
+ * 1. `director_desk_call` 传的是**工具调用**，不是自然语言。要用它把一句「一段唯美的
+ *    爱情场景」送进去，就得先把这句话翻译成 `director_apply` 的参数 —— 而那正是
+ *    `ai_host.py` 的 agent 循环（读快照 → 调模型 → 生成参数 → 派发）已经在做的事。
+ *    走 MCP 等于在宿主侧重写一遍模型调用，还多一份翻译层要跟工具面漂移。
+ * 2. `/ai/run` 的事件流经 `tool_transport` 回到 iframe，而 iframe 面板正在监听它。
+ *    画布侧订阅**同一批事件**（见 `subscribeDirectorDeskAgentEvents`），所以两边看到
+ *    的 runId、文本增量、工具收据逐条相同。走 MCP 则要另建一条回传通道，那才是真正的
+ *    「两套」。
+ *
+ * ## 边界没破
+ *
+ * Hermes 那边一行没动（`hermes_sdk.py` / `hermes_pool.py` 不在本次改动面内）。
+ * 它现在只服务 MONOFORM 白模台 —— 白模台没有 `director_*` 那 18 个工具，它的写入口是
+ * 宿主自己的 dd-scene 注入通道，不是引擎工具面。
+ */
+function useDirectorDeskUnifiedChat(nodeId: string, enabled: boolean): DirectorDeskChatState {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [streamText, setStreamText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => new Set());
+  const sessionIdRef = useRef('');
+  const streamRef = useRef('');
+  // 已渲染的最后一条助手消息。`text` 事件是纯增量，第二次刷新时只能靠它区分
+  // 「这一句是新的」还是「这一句刚才已经渲染过了」—— 后端在每轮开头重发一次。
+  const lastTurnRef = useRef('');
+
+  /** 读一次后端那份 `Conversation`，转成界面消息。 */
+  const load = useCallback(async () => {
+    const session = getDirectorDeskV2Session(nodeId);
+    if (!session) {
+      setConnected(false);
+      return;
+    }
+    try {
+      const snapshot = await session.requestAgent('conversation') as {
+        conversation?: { sessionId?: string; messages?: DeskMessage[] };
+      } | null;
+      const conversation = snapshot?.conversation;
+      if (!conversation) return;
+      sessionIdRef.current = conversation.sessionId ?? sessionIdRef.current;
+      setMessages(
+        (conversation.messages ?? []).map((entry) => ({
+          id: entry.id,
+          role: entry.role,
+          text: entry.text,
+          timestamp: 0,
+        })),
+      );
+      setHistoryReady(true);
+      setConnected(true);
+      setError(null);
+    } catch (failure) {
+      setConnected(false);
+      setError(failure instanceof Error ? failure.message : String(failure));
+    }
+  }, [nodeId]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let cancelled = false;
+    void (async () => {
+      while (!cancelled) {
+        await load();
+        // 会话还没握手时后端没有工具清单，读对话只会一直失败。退避重试而不是空转 ——
+        // 弹窗刚打开的那一两秒正是这个状态。
+        if (cancelled) return;
+        await new Promise((resolve) => { setTimeout(resolve, 800); });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, load]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    return subscribeDirectorDeskAgentEvents(nodeId, (event) => {
+      const type = typeof event.type === 'string' ? event.type : '';
+      if (type === 'start') {
+        streamRef.current = '';
+        lastTurnRef.current = '';
+        setStreamText('');
+        setBusy(true);
+        setError(null);
+        return;
+      }
+      if (type === 'text') {
+        const chunk = typeof event.text === 'string' ? event.text : '';
+        // 首段之前的那次「整段重发」会被 runId 分界，这里按「本轮第一段」清一次。
+        if (!streamRef.current) setStreamText('');
+        streamRef.current += chunk;
+        setStreamText(streamRef.current);
+        return;
+      }
+      if (type === 'error') {
+        setError(typeof event.text === 'string' ? event.text : '任务失败');
+        setBusy(false);
+        void load();
+        return;
+      }
+      if (type === 'done') {
+        setBusy(false);
+        void load();
+      }
+    });
+  }, [enabled, nodeId, load]);
+
+  const send = useCallback((text: string, _attachments?: ChatAttachment[], context = '') => {
+    const session = getDirectorDeskV2Session(nodeId);
+    if (!session) {
+      setError('导演台还没连上，请先打开这个导演台节点');
+      return false;
+    }
+    // 乐观上屏：本条用户消息立刻可见，模型的实际回复由 `done` 后重读历史补齐。
+    // 不这么做的话，从按回车到第一段文字到达之间界面是完全没有回应的。
+    setMessages((prev) => [
+      ...prev,
+      { id: `local-${prev.length}-${text.slice(0, 8)}`, role: 'user', text, timestamp: Date.now() },
+    ]);
+    setBusy(true);
+    setError(null);
+    void session
+      .requestAgent('run', {
+        profileId: '', // 见下方 note：渠道由后端从共享会话里取
+        prompt: text,
+        sessionId: sessionIdRef.current,
+        context,
+        mode: 'execute',
+      })
+      .catch((failure: unknown) => {
+        setError(failure instanceof Error ? failure.message : String(failure));
+        setBusy(false);
+      });
+    return true;
+  }, [nodeId]);
+
+  const abort = useCallback(() => {
+    const session = getDirectorDeskV2Session(nodeId);
+    if (!session) return;
+    void session.requestAgent('stop').catch(() => undefined);
+  }, [nodeId]);
+
+  const appendNotification = useCallback((text: string) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `note-${prev.length}-${text.slice(0, 8)}`, role: 'assistant', text, timestamp: Date.now() },
+    ]);
+  }, []);
+
+  return {
+    connected,
+    connecting: !connected,
+    historyReady,
+    busy,
+    error,
+    messages,
+    streamText,
+    activeTurnId: lastTurnRef.current || null,
+    pinnedIds,
+    send,
+    appendNotification,
+    abort,
+    deleteMessage: (id: string) => setMessages((prev) => prev.filter((m) => m.id !== id)),
+    togglePin: (id: string) => setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    }),
+  };
+}
+
+/** 后端 `Conversation.renderable()` 的对外形状。 */
+interface DeskMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/**
+ * 面板入口。
+ *
+ * `director` 引擎走**导演台统一循环**（与 iframe 面板同一个助手、同一份记忆、同一个
+ * 渠道）；`monoform` 走 Hermes WS —— 白模台没有 `director_*` 工具面，它的对话只能是
+ * 原来那条。这条分叉是按引擎判的，不是按「有没有 session」临时兜底：白模台即使将来
+ * 接上工具面，也要显式改这里才会切过去。
+ */
+export function DirectorDeskChatPanel(props: DirectorDeskChatPanelProps) {
+  const { engine = 'director', scope } = props;
+  const scopeNodeId = scope?.id?.split('/')[1] ?? '';
+  const displayName = useAuthStore((state) => state.displayName);
+  // Hooks 不能按条件调，所以两条链**都**挂上，由 `chat` 选一份。MONOFORM 那条不发请求，
+  // 只是 `useSuperChat` 自己会建 WS —— 与其加一个 enabled 开关去改那个共享 hook
+  // （在 `superchat/` 里，本次不得改动），不如把选择放在渲染层。
+  const unified = useDirectorDeskUnifiedChat(scopeNodeId, engine === 'director');
+  const superchat = useSuperChat({
+    displayName: displayName || 'SuperTale',
+    scope,
+  });
+  return (
+    <DirectorDeskChatSurface
+      {...props}
+      chat={engine === 'director' ? unified : superchat}
+    />
+  );
 }

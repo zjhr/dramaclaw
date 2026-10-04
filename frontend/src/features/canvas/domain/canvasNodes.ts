@@ -728,10 +728,15 @@ export interface ThreeDWorldNodeData extends NodeDisplayData {
 }
 
 /**
- * 3D 导演台节点。节点本身只是一层壳：真正的编辑器是 `frontend/public/director-desk/`
- * 里的一个独立 SPA，在弹窗内的 iframe 里运行，双方通过 postMessage 桥（见
- * [[directorDeskBridge]]）通信 —— 桥的契约由导演台自己声明，画布只消费它上报的
+ * 3D 导演台节点（`mangfufu/director-desk` v2）。节点本身只是一层壳：真正的编辑器是
+ * `frontend/public/director-desk-v2/` 里的一个独立 SPA（源码 vendored 在
+ * `frontend/vendor/director-desk/`），在弹窗内的同源 iframe 里运行，双方通过 postMessage
+ * 桥（见 [[directorDeskBridge]]）通信 —— 桥的契约由导演台自己声明，画布只消费它上报的
  * capability。本接口只保存「会话结束后还该留在画布上」的东西：产物与工程快照引用。
+ *
+ * 旧的 `frontend/public/director-desk/`（上游是另一个项目 `xiaozangao/3d-director-desk`
+ * v0.3.1）已随替换整体删除，许可清单里的 992 条死条目也已清掉；MONOFORM 白模台仍以
+ * `frontend/public/monoform-desk/` 并存，走的是它自己的节点与 `engine: 'monoform'` 分支。
  */
 export interface DirectorDeskNodeData extends NodeDisplayData {
   /** 弹窗是否处于打开状态。仅内存态，节点卸载即失效。 */

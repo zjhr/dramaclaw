@@ -11,11 +11,13 @@
  * 替掉的边界：`useSuperChat`（WS 传输层，它自己另有测试）与 `MessageBubble`
  * （消息渲染，135KB，另有测试）。被测的是这个面板自己的行为。
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DirectorDeskChatPanel,
+  DirectorDeskChatSurface,
+  type DirectorDeskChatSurfaceProps,
   buildDirectorDeskAgentContext,
   stripDirectorDeskAgentContext,
   readStoredAutoApply,
@@ -126,6 +128,40 @@ vi.mock("@/stores/auth-store", () => ({
 
 const SCOPE: ChatScope = { kind: "directorDesk", id: "proj1/node-a" };
 
+// 导演台统一循环（方案 3）。模块级 mock：这个文件里表现层测试全部直接喂 `currentChat`，
+// 只有末尾那组「面板怎么接统一循环」的用例会碰到它，所以整份文件共用一个可控替身。
+const agentCalls: Array<{ op: string; payload: Record<string, unknown> }> = [];
+let agentReply: (op: string) => unknown = () => ({});
+let agentEvents: ((event: Record<string, unknown>) => void) | null = null;
+let deskSessionPresent = true;
+
+vi.mock("@/features/canvas/nodes/directorDeskV2Session", () => ({
+  getDirectorDeskV2Session: () =>
+    deskSessionPresent
+      ? {
+          requestAgent: (op: string, payload: Record<string, unknown> = {}) => {
+            agentCalls.push({ op, payload });
+            return Promise.resolve(agentReply(op));
+          },
+        }
+      : null,
+  subscribeDirectorDeskAgentEvents: (_nodeId: string, listener: (e: Record<string, unknown>) => void) => {
+    agentEvents = listener;
+    return () => { agentEvents = null; };
+  },
+}));
+
+/**
+ * 表现层测试直接喂 `currentChat`。
+ *
+ * 面板现在把「对话从哪来」交给调用方（[[DirectorDeskChatPanel]] 才决定是统一循环还是
+ * Hermes WS），所以这一千多行断言的是**同一份界面在两种对话源下表现一致**，而不是某一条
+ * 传输链路。两条链路各自的接线在文件末尾的 describe 里单独测。
+ */
+function Panel(props: Omit<DirectorDeskChatSurfaceProps, "chat">) {
+  return <DirectorDeskChatSurface {...props} chat={currentChat as never} />;
+}
+
 function message(id: string, role: ChatMessage["role"], text: string): ChatMessage {
   return { id, role, text, timestamp: 1 };
 }
@@ -145,7 +181,7 @@ beforeEach(() => {
 
 describe("DirectorDeskChatPanel", () => {
   it("文案是导演台口径，不是项目流水线口径", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
 
     // 标题不再是产品级品牌名「虾导」——它在 3D 导演台里和「导演台」撞概念。
     expect(screen.getByText("导演台助手")).toBeTruthy();
@@ -155,26 +191,28 @@ describe("DirectorDeskChatPanel", () => {
     expect(box.getAttribute("placeholder")).not.toContain("分集");
     // 空态说的是这个导演台能做的事，不是项目进度/任务失败原因 —— 也不能再承诺换背景
     // （节点已换 MONOFORM 引擎，没有背景系统；旧文案「生成对应的全景背景」是空承诺）。
-    expect(screen.getByText(/我会把角色和机位摆到导演台里/)).toBeTruthy();
+    // director 引擎的空态额外说明「和 iframe 面板是同一个助手」（方案 3）。
+    expect(screen.getByText(/和导演台面板里的助手是同一个/)).toBeTruthy();
+    // 面板在 director 引擎下走统一循环，空态要说明「这是同一个助手」——
+    // 旧文案只说「我会摆好」，正是主人以为有两个 AI 的来源之一。
+    expect(screen.getByText(/和导演台面板里的助手是同一个/)).toBeTruthy();
     expect(document.body.textContent).not.toContain("全景背景");
     expect(document.body.textContent).not.toContain("任务失败原因");
-    // 作用域承诺常驻可见。
-    expect(screen.getByText("只作用于当前节点")).toBeTruthy();
-  });
-
-  it("把本节点的 scope 原样交给传输层（不自己拼项目级 scope）", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
-    expect(hookCalls[hookCalls.length - 1]?.scope).toEqual(SCOPE);
+    // 作用域承诺常驻可见。director 引擎下这一行改成「同一个助手」的提示 ——
+    // 两边仍然是同一个节点、同一个循环，只是话术不再暗示是两个独立 AI。
+    expect(screen.getByText(/与导演台面板是同一个助手/)).toBeTruthy();
+    // MONOFORM 引擎保留原来的作用域口径（它确实还是另一条链路）。
+    const view = render(<Panel scope={SCOPE} engine="monoform" />);
+    expect(view.getByText("只作用于当前节点")).toBeTruthy();
   });
 
   it("没有 scope 时也不报错（面板退化而非崩）", () => {
-    render(<DirectorDeskChatPanel />);
-    expect(hookCalls[hookCalls.length - 1]?.scope).toBeUndefined();
+    render(<Panel />);
     expect(screen.getByText("导演台助手")).toBeTruthy();
   });
 
   it("输入后 Enter 发送，发送成功清空输入框", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "雨夜的天台" } });
     fireEvent.keyDown(box, { key: "Enter" });
@@ -186,7 +224,7 @@ describe("DirectorDeskChatPanel", () => {
   });
 
   it("Shift+Enter 换行而不是发送", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "第一行" } });
     fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
@@ -195,17 +233,17 @@ describe("DirectorDeskChatPanel", () => {
 
   it("忙碌时发送按钮换成停止，停止走 abort", () => {
     currentChat = fakeChat({ busy: true });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
 
     expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
-    expect(screen.getByText("正在生成，通常要一两分钟…")).toBeTruthy();
+    expect(screen.getByText("助手正在处理，通常要一两分钟…")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "停止" }));
     expect(abort).toHaveBeenCalled();
   });
 
   it("未连接时不能发送", () => {
     currentChat = fakeChat({ connected: false });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "雨夜的天台" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -219,8 +257,8 @@ describe("DirectorDeskChatPanel", () => {
       connecting: true,
       connected: false,
     });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
-    expect(screen.getByText(/正在连接导演台助手并同步这段对话/)).toBeTruthy();
+    render(<Panel scope={SCOPE} />);
+    expect(screen.getByText(/正在连接导演台助手/)).toBeTruthy();
     expect(screen.queryByText(/我会把角色和机位摆到导演台里/)).toBeNull();
   });
 
@@ -229,7 +267,7 @@ describe("DirectorDeskChatPanel", () => {
       messages: [message("m1", "assistant", "已生成：雨夜天台全景")],
       streamText: "正在描绘…",
     });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     const bubbles = screen.getAllByTestId("bubble").map((n) => n.textContent ?? "");
     // 桩气泡里还挂着操作按钮（用于测详情/媒体接线），所以按「包含」判文本。
     expect(bubbles.some((text) => text.includes("已生成：雨夜天台全景"))).toBe(true);
@@ -238,40 +276,40 @@ describe("DirectorDeskChatPanel", () => {
 
   it("错误以 role=alert 露出", () => {
     currentChat = fakeChat({ error: "连接失败" });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     expect(screen.getByRole("alert").textContent).toBe("连接失败");
   });
 
   it("关闭按钮接的是 onRequestClose", () => {
     const onRequestClose = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onRequestClose={onRequestClose} />);
+    render(<Panel scope={SCOPE} onRequestClose={onRequestClose} />);
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(onRequestClose).toHaveBeenCalled();
   });
 
   describe("生成背景", () => {
     it("只在导演台 scope 下出现（没有 scope 就没有这个能力）", () => {
-      render(<DirectorDeskChatPanel scope={SCOPE} />);
+      render(<Panel scope={SCOPE} />);
       expect(screen.getByTitle("生成背景")).toBeTruthy();
     });
 
     it("非导演台 scope 时不出现 —— 隔离是结构性的，不靠调用点自觉", () => {
-      render(<DirectorDeskChatPanel scope={{ kind: "project", id: "proj1" }} />);
+      render(<Panel scope={{ kind: "project", id: "proj1" }} />);
       expect(screen.queryByTitle("生成背景")).toBeNull();
     });
 
     it("scope id 不完整时不出现", () => {
-      render(<DirectorDeskChatPanel scope={{ kind: "directorDesk", id: "只有项目" }} />);
+      render(<Panel scope={{ kind: "directorDesk", id: "只有项目" }} />);
       expect(screen.queryByTitle("生成背景")).toBeNull();
     });
 
     it("描述为空时不可点", () => {
-      render(<DirectorDeskChatPanel scope={SCOPE} />);
+      render(<Panel scope={SCOPE} />);
       expect((screen.getByTitle("生成背景") as HTMLButtonElement).disabled).toBe(true);
     });
 
     it("点了就用 scope 里的 project/node 打那条路由，并清空输入框", async () => {
-      render(<DirectorDeskChatPanel scope={SCOPE} />);
+      render(<Panel scope={SCOPE} />);
       const box = screen.getByRole("textbox");
       fireEvent.change(box, { target: { value: "雨夜的天台" } });
       fireEvent.click(screen.getByTitle("生成背景"));
@@ -293,7 +331,7 @@ describe("DirectorDeskChatPanel", () => {
 
     it("失败时给可读提示，不吞掉", async () => {
       postJson.mockRejectedValueOnce(new Error("boom"));
-      render(<DirectorDeskChatPanel scope={SCOPE} />);
+      render(<Panel scope={SCOPE} />);
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "雨夜的天台" } });
       fireEvent.click(screen.getByTitle("生成背景"));
 
@@ -302,7 +340,7 @@ describe("DirectorDeskChatPanel", () => {
     });
 
     it("生成只作用于本节点：换成另一个节点就是另一条 URL", async () => {
-      render(<DirectorDeskChatPanel scope={{ kind: "directorDesk", id: "proj1/node-b" }} />);
+      render(<Panel scope={{ kind: "directorDesk", id: "proj1/node-b" }} />);
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "晴天" } });
       fireEvent.click(screen.getByTitle("生成背景"));
       await waitFor(() =>
@@ -354,29 +392,33 @@ describe("DirectorDeskChatPanel", () => {
       expect(ctx).toContain("（没有接上游素材）");
     });
 
-    it("发送时把上下文放进第 3 个参数，第 1 个仍是用户原话", () => {
-      render(<DirectorDeskChatPanel scope={SCOPE} upstreamSummary="图片「上游图」" />);
+    it("发送时上下文单独走第 3 个参数，第 1 个仍是用户原话", () => {
+      render(<Panel scope={SCOPE} upstreamSummary="图片「上游图」" />);
       const box = screen.getByRole("textbox");
       fireEvent.change(box, { target: { value: "换成雨夜天台" } });
       fireEvent.keyDown(box, { key: "Enter" });
 
       expect(send).toHaveBeenCalledTimes(1);
-      const [visible, attachments, outbound] = send.mock.calls[0] as unknown as [string, unknown, string];
+      const [visible, attachments, context] = send.mock.calls[0] as unknown as [string, unknown, string];
       // 用户看到的就是自己那句话
       expect(visible).toBe("换成雨夜天台");
       expect(attachments).toEqual([]);
-      // agent 拿到的是上下文 + 原话
-      expect(outbound).toContain("[导演台上下文]");
-      expect(outbound).toContain("图片「上游图」");
-      expect(outbound).toContain("用户：换成雨夜天台");
+      expect(context).toContain("[导演台上下文]");
+      expect(context).toContain("图片「上游图」");
+      // 上下文里**没有**用户原话：统一循环的对话历史被 iframe 与画布两个入口共用，
+      // 把原话拼进上下文会让这份共享历史被内部文本污染（`stripDirectorDeskAgentContext`
+      // 当年就是为这个 bug 打的补丁 —— 现在不该再依赖它）。
+      expect(context).not.toContain("换成雨夜天台");
     });
 
     it("没有导演台 scope 时不塞上下文（这段能力不存在）", () => {
-      render(<DirectorDeskChatPanel upstreamSummary="图片「上游图」" />);
+      render(<Panel upstreamSummary="图片「上游图」" />);
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "你好" } });
       fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-      const [, , outbound] = send.mock.calls[0] as unknown as [string, unknown, string];
-      expect(outbound).toBe("你好");
+      const [, , context] = send.mock.calls[0] as unknown as [string, unknown, string];
+      // 常驻技能层仍然在（那是导演台操作规范，与 scope 无关），但项目上下文不该有。
+      expect(context).not.toContain("[导演台上下文]");
+      expect(context).not.toContain("图片「上游图」");
     });
   });
 
@@ -429,7 +471,7 @@ describe("DirectorDeskChatPanel — dd-scene 检测", () => {
   it("回合结束后把助手回复里的 dd-scene 解析成 intent 交给宿主", async () => {
     currentChat = fakeChat({ busy: false, messages: [message("a1", "assistant", withBlock("orbit-left"))] });
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     await waitFor(() => expect(onSceneIntent).toHaveBeenCalledTimes(1));
     expect(onSceneIntent.mock.calls[0][0].camera.move).toBe("orbit-left");
   });
@@ -437,7 +479,7 @@ describe("DirectorDeskChatPanel — dd-scene 检测", () => {
   it("流式进行中（busy）不提前触发，避免抓到半截 JSON", async () => {
     currentChat = fakeChat({ busy: true, messages: [message("a1", "assistant", withBlock("dolly-in"))] });
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     await new Promise((r) => setTimeout(r, 50));
     expect(onSceneIntent).not.toHaveBeenCalled();
   });
@@ -445,14 +487,14 @@ describe("DirectorDeskChatPanel — dd-scene 检测", () => {
   it("普通回复（无块）不触发", async () => {
     currentChat = fakeChat({ busy: false, messages: [message("a1", "assistant", "就聊聊天，没有块")] });
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     await new Promise((r) => setTimeout(r, 50));
     expect(onSceneIntent).not.toHaveBeenCalled();
   });
 
   it("dd-scene 块在气泡里被剥掉，用户看不到 JSON", async () => {
     currentChat = fakeChat({ busy: false, messages: [message("a1", "assistant", withBlock("pan-left"))] });
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={vi.fn()} />);
+    render(<Panel scope={SCOPE} onSceneIntent={vi.fn()} />);
     const bubble = await screen.findByTestId("bubble");
     expect(bubble.textContent).not.toContain("director-desk-scene");
     expect(bubble.textContent).toContain("已生成");
@@ -469,7 +511,7 @@ describe("DirectorDeskChatPanel — dd-scene 检测", () => {
       ],
     });
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(String(toastError.mock.calls[0][0])).toContain("场景块解析失败");
     expect(onSceneIntent).not.toHaveBeenCalled();
@@ -478,7 +520,7 @@ describe("DirectorDeskChatPanel — dd-scene 检测", () => {
 
 describe("DirectorDeskChatPanel — 技能选择器", () => {
   it("默认（无专业技能）仍注入常驻的「导演台操作专家」基础层", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "帮我看看能做什么" } });
     fireEvent.keyDown(box, { key: "Enter" });
@@ -489,7 +531,7 @@ describe("DirectorDeskChatPanel — 技能选择器", () => {
   });
 
   it("选中「电影级运镜」后基础层保留、并叠加该专业技能", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     // 按钮默认显示「选择专业技能（可选）」，不是操作专家
     fireEvent.click(screen.getByText("选择专业技能（可选）"));
     fireEvent.click(screen.getByText("电影级运镜"));
@@ -502,7 +544,7 @@ describe("DirectorDeskChatPanel — 技能选择器", () => {
   });
 
   it("选「通用」清空专业技能，回到只有基础层", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     fireEvent.click(screen.getByText("选择专业技能（可选）"));
     fireEvent.click(screen.getByText("电影级运镜"));
     // 再打开（按钮此时显示已选技能名）选「通用」
@@ -517,7 +559,7 @@ describe("DirectorDeskChatPanel — 技能选择器", () => {
   });
 
   it("弹窗列出全部专业技能，「操作专家」不在可选列表里", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     fireEvent.click(screen.getByText("选择专业技能（可选）"));
     for (const name of ["分镜灵感", "电影级运镜", "角色调度走位", "构图与镜头语言", "光影氛围", "美术风格"]) {
       expect(screen.getByText(name)).toBeTruthy();
@@ -529,7 +571,7 @@ describe("DirectorDeskChatPanel — 技能选择器", () => {
   });
 
   it("非导演台 scope 下不出现技能选择器（结构性隔离）", () => {
-    render(<DirectorDeskChatPanel scope={{ kind: "project", id: "proj1" }} />);
+    render(<Panel scope={{ kind: "project", id: "proj1" }} />);
     expect(screen.queryByText("选择专业技能（可选）")).toBeNull();
   });
 });
@@ -549,7 +591,7 @@ describe("DirectorDeskChatPanel — 灵感提案卡片", () => {
   it("助手回复里的 dd-proposals 渲染成可点选卡片，不自动应用", async () => {
     currentChat = fakeChat({ busy: false, messages: [message("a1", "assistant", proposalsMsg())] });
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     expect(await screen.findByText("近身缠斗")).toBeTruthy();
     expect(screen.getByText("远景对峙")).toBeTruthy();
     expect(screen.getByText("贴身互搏跟拍")).toBeTruthy();
@@ -561,7 +603,7 @@ describe("DirectorDeskChatPanel — 灵感提案卡片", () => {
   it("点选一张卡片才把它的 scene 应用出去", async () => {
     currentChat = fakeChat({ busy: false, messages: [message("a1", "assistant", proposalsMsg())] });
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     fireEvent.click(await screen.findByText("远景对峙"));
     expect(onSceneIntent).toHaveBeenCalledTimes(1);
     expect(onSceneIntent.mock.calls[0][0].camera.move).toBe("dolly-in");
@@ -636,7 +678,7 @@ describe("DirectorDeskChatPanel — MONOFORM 引擎口径", () => {
   });
 
   it("面板：无「生成背景」按钮，基础层换成白模台口径", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} engine="monoform" />);
+    render(<Panel scope={SCOPE} engine="monoform" />);
     expect(screen.queryByTitle("生成背景")).toBeNull();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "摆两个人面对面" } });
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
@@ -647,7 +689,7 @@ describe("DirectorDeskChatPanel — MONOFORM 引擎口径", () => {
   });
 
   it("技能菜单按两组渲染，分镜灵感仍在且提示词按白模台真实能力写", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} engine="monoform" />);
+    render(<Panel scope={SCOPE} engine="monoform" />);
     fireEvent.click(screen.getByText("选择专业技能（可选）"));
     // 通用 + 操作组 4（运镜与动作/模型/场景/构图）+ 顾问组 4（含灵感）= 9
     expect(screen.getAllByRole("option")).toHaveLength(9);
@@ -823,10 +865,10 @@ describe("DirectorDeskChatPanel — MONOFORM 引擎口径", () => {
   });
 
   it("只输入普通场景描述时，传输内容自动带上重编演出与镜头的约束", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} engine="monoform" />);
+    render(<Panel scope={SCOPE} engine="monoform" />);
     fireEvent.click(screen.getByText("选择专业技能（可选）"));
     fireEvent.click(screen.getByRole("option", { name: /电影级运镜与动作编排/ }));
-    const request = "一段唯美的爱情演出场景";
+    const request = "甲乙在雨夜天台对峙，剑已出鞘";
     fireEvent.change(screen.getByRole("textbox"), { target: { value: request } });
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
     expect(send.mock.calls[0]?.[0]).toBe(request);
@@ -837,11 +879,12 @@ describe("DirectorDeskChatPanel — MONOFORM 引擎口径", () => {
     expect(transport).toContain("行动、回应与停顿");
     expect(transport).toContain("同一个 dd-scene 里一起输出");
     expect(transport).toContain("复用场景时先检查地点是否完整");
-    expect(transport).toContain(`用户：${request}`);
+    // 用户原话只在第 1 个参数里，不混进上下文。
+    expect(transport).not.toContain(request);
   });
 
   it("菜单分两组、组内单选（同一时刻只有一个选中）", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} engine="monoform" />);
+    render(<Panel scope={SCOPE} engine="monoform" />);
     fireEvent.click(screen.getByText("选择专业技能（可选）"));
     fireEvent.click(screen.getByText("审片建议")); // 选中 → 菜单自动关闭
     // 关闭后触发按钮显示的是选中的技能名，再点一次重新打开菜单看选中态
@@ -857,7 +900,7 @@ describe("DirectorDeskChatPanel — MONOFORM 引擎口径", () => {
 
 describe("面板体验（P1）", () => {
   it("空态给三条示例指令，点一下只填进输入框、不偷偷发出去", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} engine="monoform" />);
+    render(<Panel scope={SCOPE} engine="monoform" />);
     const chip = screen.getByText("两个人面对面站着说话");
     fireEvent.click(chip);
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
@@ -869,7 +912,7 @@ describe("面板体验（P1）", () => {
 
   it("点消息详情 → 打开详情面板（这里以前写死 no-op）", () => {
     currentChat = fakeChat({ messages: [message("m1", "assistant", "已经把两个人摆好了")] });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     expect(screen.queryByTestId("detail-panel")).toBeNull();
     fireEvent.click(screen.getAllByText("open-detail")[0]);
     expect(screen.getByTestId("detail-panel").textContent).toContain("已经把两个人摆好了");
@@ -877,14 +920,14 @@ describe("面板体验（P1）", () => {
 
   it("点媒体卡 → 走 superchat 那套真实弹层（带 tags/sections/下载）", () => {
     currentChat = fakeChat({ messages: [message("m1", "assistant", "出图了")] });
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     fireEvent.click(screen.getAllByText("open-media")[0]);
     expect(screen.getByTestId("media-modal").textContent).toBe("/shot.png");
   });
 
   it("用户上翻历史时出现「回到底部」，点了真的回底", () => {
     currentChat = fakeChat({ messages: [message("m1", "assistant", "一屏装不下的长回复")] });
-    const { container } = render(<DirectorDeskChatPanel scope={SCOPE} />);
+    const { container } = render(<Panel scope={SCOPE} />);
     const list = container.querySelector(".overflow-y-auto") as HTMLElement;
     const scrollTo = vi.fn();
     // jsdom 不做布局：手工造出「内容 1000px、视口 400px、当前在 100px」的离底状态
@@ -900,7 +943,7 @@ describe("面板体验（P1）", () => {
 
   it("用户刚上翻过，发消息后仍贴回底部（自己的动作要看到回应）", () => {
     currentChat = fakeChat({ messages: [message("m1", "assistant", "历史消息")] });
-    const { container } = render(<DirectorDeskChatPanel scope={SCOPE} />);
+    const { container } = render(<Panel scope={SCOPE} />);
     const list = container.querySelector(".overflow-y-auto") as HTMLElement;
     const scrollTo = vi.fn();
     Object.defineProperty(list, "scrollHeight", { value: 1000, configurable: true });
@@ -941,7 +984,7 @@ describe("白模台实时场景进上下文（增量修改的基准）", () => {
 describe("清空重来（破坏性，二次确认 + 不走模型）", () => {
   it("第一次点只是上膛，第二次点才真的清空，且不经过模型", () => {
     const onSceneIntent = vi.fn();
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
 
     fireEvent.click(screen.getByText("清空"));
     expect(onSceneIntent).not.toHaveBeenCalled();
@@ -955,7 +998,7 @@ describe("清空重来（破坏性，二次确认 + 不走模型）", () => {
   });
 
   it("宿主没接 onSceneIntent 时不显示清空按钮（没有通道就别给入口）", () => {
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     expect(screen.queryByText("清空")).toBeNull();
   });
 });
@@ -979,7 +1022,7 @@ describe("「允许改动画面」总开关", () => {
   it("开着时自动应用（既有行为不回归）", () => {
     const onSceneIntent = vi.fn();
     currentChat = fakeChat({ messages: [message("m1", "assistant", sceneText)] });
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
     expect(onSceneIntent).toHaveBeenCalledTimes(1);
   });
 
@@ -987,7 +1030,7 @@ describe("「允许改动画面」总开关", () => {
     window.localStorage.setItem(AUTO_KEY, "false");
     const onSceneIntent = vi.fn();
     currentChat = fakeChat({ messages: [message("m1", "assistant", sceneText)] });
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
 
     expect(onSceneIntent).not.toHaveBeenCalled();
     // 卡片还在、且是「待应用」态 —— 关掉的是自动应用，不是这条能力
@@ -1000,7 +1043,7 @@ describe("「允许改动画面」总开关", () => {
     window.localStorage.setItem(AUTO_KEY, "false");
     const onSceneIntent = vi.fn();
     currentChat = fakeChat({ messages: [message("m1", "assistant", sceneText)] });
-    render(<DirectorDeskChatPanel scope={SCOPE} onSceneIntent={onSceneIntent} />);
+    render(<Panel scope={SCOPE} onSceneIntent={onSceneIntent} />);
 
     const toggle = screen.getByRole("button", { name: /不自动改动/ });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
@@ -1014,42 +1057,42 @@ describe("「允许改动画面」总开关", () => {
 describe("DirectorDeskChatPanel — 技能选择按节点记忆", () => {
   // 用户实测：「节点没有记忆之前选择的 skill 选项」—— 每开一次节点都要重选一遍。
   it("选过的技能在重新挂载后仍在", () => {
-    const first = render(<DirectorDeskChatPanel scope={SCOPE} />);
+    const first = render(<Panel scope={SCOPE} />);
     fireEvent.click(screen.getByRole("button", { name: /选择专业技能/ }));
     fireEvent.click(screen.getByRole("option", { name: /电影级运镜/ }));
     first.unmount();
 
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     // 触发器上显示的是技能名，不再是「选择专业技能（可选）」。
     expect(screen.getByRole("button", { name: /电影级运镜/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /选择专业技能/ })).toBeNull();
   });
 
   it("按节点隔离：另一个节点的选择不会串过来", () => {
-    const first = render(<DirectorDeskChatPanel scope={SCOPE} />);
+    const first = render(<Panel scope={SCOPE} />);
     fireEvent.click(screen.getByRole("button", { name: /选择专业技能/ }));
     fireEvent.click(screen.getByRole("option", { name: /电影级运镜/ }));
     first.unmount();
 
-    render(<DirectorDeskChatPanel scope={{ kind: "directorDesk", id: "proj1/node-b" }} />);
+    render(<Panel scope={{ kind: "directorDesk", id: "proj1/node-b" }} />);
     expect(screen.getByRole("button", { name: /选择专业技能/ })).toBeTruthy();
   });
 
   it("选回「通用」会清掉记忆", () => {
-    const first = render(<DirectorDeskChatPanel scope={SCOPE} />);
+    const first = render(<Panel scope={SCOPE} />);
     fireEvent.click(screen.getByRole("button", { name: /选择专业技能/ }));
     fireEvent.click(screen.getByRole("option", { name: /电影级运镜/ }));
     fireEvent.click(screen.getByRole("button", { name: /电影级运镜/ }));
     fireEvent.click(screen.getByRole("option", { name: /通用/ }));
     first.unmount();
 
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     expect(screen.getByRole("button", { name: /选择专业技能/ })).toBeTruthy();
   });
 
   it("存了个技能池里没有的 id 时退回「通用」（池子会变）", () => {
     window.localStorage.setItem("dramaclaw.monoformDesk.skill.director.node-a", "已下架的技能");
-    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    render(<Panel scope={SCOPE} />);
     expect(screen.getByRole("button", { name: /选择专业技能/ })).toBeTruthy();
   });
 });
@@ -1081,7 +1124,7 @@ describe("DirectorDeskChatPanel — 顾问组技能不落地画面（硬门控�
     });
 
     render(
-      <DirectorDeskChatPanel scope={SCOPE} onSceneIntent={sceneIntent} engine="monoform" />,
+      <Panel scope={SCOPE} onSceneIntent={sceneIntent} engine="monoform" />,
     );
 
     expect(sceneIntent).not.toHaveBeenCalled();
@@ -1095,7 +1138,7 @@ describe("DirectorDeskChatPanel — 顾问组技能不落地画面（硬门控�
     });
 
     const view = render(
-      <DirectorDeskChatPanel scope={SCOPE} onSceneIntent={sceneIntent} engine="monoform" />,
+      <Panel scope={SCOPE} onSceneIntent={sceneIntent} engine="monoform" />,
     );
     expect(sceneIntent).not.toHaveBeenCalled();
 
@@ -1112,7 +1155,7 @@ describe("DirectorDeskChatPanel — 顾问组技能不落地画面（硬门控�
       messages: [message("a1", "assistant", SCENE_REPLY)],
     });
     render(
-      <DirectorDeskChatPanel scope={SCOPE} onSceneIntent={sceneIntent} engine="monoform" />,
+      <Panel scope={SCOPE} onSceneIntent={sceneIntent} engine="monoform" />,
     );
     expect(sceneIntent).toHaveBeenCalledTimes(1);
   });
@@ -1123,7 +1166,7 @@ describe("DirectorDeskChatPanel — 顾问组技能不落地画面（硬门控�
       messages: [message("a1", "assistant", SCENE_REPLY)],
     });
     render(
-      <DirectorDeskChatPanel scope={SCOPE} onSceneIntent={() => undefined} engine="monoform" />,
+      <Panel scope={SCOPE} onSceneIntent={() => undefined} engine="monoform" />,
     );
 
     // 卡片在（用户可以自己点「应用」），但没有「已应用」态。
@@ -1133,6 +1176,133 @@ describe("DirectorDeskChatPanel — 顾问组技能不落地画面（硬门控�
   });
 });
 
+
+/**
+ * 方案 3：画布侧面板与 iframe 面板**共用一个助手**。
+ *
+ * 合并前这里挂的是 Hermes WS，与 iframe 的 `ai_host.py` 循环完全独立 —— 用户看到的是
+ * 「两个 AI 助手」：不共享对话、不共享上下文、不共享渠道。下面这几条锁住合并后的接线。
+ */
+describe("DirectorDeskChatPanel — 统一循环（方案 3）", () => {
+  beforeEach(() => {
+    agentCalls.length = 0;
+    agentEvents = null;
+    deskSessionPresent = true;
+    agentReply = (op) =>
+      op === "conversation"
+        ? { conversation: { sessionId: "s1", messages: [] } }
+        : {};
+  });
+
+  it("画布侧发的指令走统一循环，不是 Hermes WS", async () => {
+    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    await waitFor(() =>
+      expect(agentCalls.some((call) => call.op === "conversation")).toBe(true),
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "一段唯美的爱情场景" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+
+    await waitFor(() => {
+      const run = agentCalls.find((call) => call.op === "run");
+      expect(run).toBeTruthy();
+      expect(run?.payload.prompt).toBe("一段唯美的爱情场景");
+    });
+    // superchat 那条 WS 不该收到这句话 —— 那是「两个助手」的根源。
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("不传渠道：后端从共享对话里继承，两边因此是同一个渠道", async () => {
+    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    await waitFor(() =>
+      expect(agentCalls.some((call) => call.op === "conversation")).toBe(true),
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "推近一点" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+
+    await waitFor(() => {
+      const run = agentCalls.find((call) => call.op === "run");
+      // 显式留空而不是塞一个默认 id —— 渠道只有一处真相（对话记着的那个）。
+      expect(run?.payload.profileId).toBe("");
+    });
+  });
+
+  it("上下文单独走 context 字段，不混进用户原话", async () => {
+    render(<DirectorDeskChatPanel scope={SCOPE} upstreamSummary="图片「上游图」" />);
+    await waitFor(() =>
+      expect(agentCalls.some((call) => call.op === "conversation")).toBe(true),
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "雨夜天台" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+
+    await waitFor(() => {
+      const run = agentCalls.find((call) => call.op === "run");
+      expect(run?.payload.prompt).toBe("雨夜天台");
+      expect(String(run?.payload.context)).toContain("图片「上游图」");
+      // 用户原话只在 prompt 里 —— 共享历史不能被内部文本污染。
+      expect(String(run?.payload.context)).not.toContain("雨夜天台");
+    });
+  });
+
+  it("渲染后端那份对话历史（不是 Hermes 的历史）", async () => {
+    agentReply = (op) =>
+      op === "conversation"
+        ? {
+            conversation: {
+              sessionId: "s1",
+              messages: [
+                { id: "u0", role: "user", text: "把镜头推近一点" },
+                { id: "a1", role: "assistant", text: "已经推到中景。" },
+              ],
+            },
+          }
+        : {};
+    render(<DirectorDeskChatPanel scope={SCOPE} />);
+
+    await waitFor(() => {
+      const bubbles = screen.getAllByTestId("bubble").map((node) => node.textContent ?? "");
+      expect(bubbles.some((text) => text.includes("把镜头推近一点"))).toBe(true);
+      expect(bubbles.some((text) => text.includes("已经推到中景。"))).toBe(true);
+    });
+  });
+
+  it("统一循环的事件流驱动界面：文本增量上屏、终态解除忙碌", async () => {
+    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    await waitFor(() => expect(agentEvents).toBeTruthy());
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "推近" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() => expect(agentEvents).toBeTruthy());
+
+    act(() => agentEvents?.({ type: "start", runId: "r1", sessionId: "s1" }));
+    act(() => agentEvents?.({ type: "text", text: "正在推近", runId: "r1" }));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("bubble").some((n) => (n.textContent ?? "").includes("正在推近"))).toBe(true),
+    );
+
+    act(() => agentEvents?.({ type: "done", runId: "r1", sessionId: "s1" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeTruthy());
+  });
+
+  it("界面说明它是同一个助手（不再暗示是两个独立 AI）", async () => {
+    render(<DirectorDeskChatPanel scope={SCOPE} />);
+    expect(screen.getByText(/与导演台面板是同一个助手/)).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText(/和导演台面板里的助手是同一个/)).toBeTruthy();
+    });
+  });
+
+  it("MONOFORM 引擎不走统一循环 —— 白模台没有 director_* 工具面", async () => {
+    render(<Panel scope={SCOPE} engine="monoform" />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "摆两个人" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    // 面板仍走 superchat（`Panel` 直接注入 currentChat），统一循环一次都没被调用。
+    expect(agentCalls).toHaveLength(0);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("DirectorDeskChatPanel — 创建模型技能", () => {
   // 用户实测：MONOFORM 池里少了一个专门「生成导演台模型」的 skill

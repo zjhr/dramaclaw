@@ -19,7 +19,12 @@ import {
   DirectorDeskNode,
   DIRECTOR_DESK_READY_TIMEOUT_MS,
 } from "@/features/canvas/nodes/DirectorDeskNode";
-import { DIRECTOR_DESK_MESSAGE_TYPES } from "@/features/canvas/nodes/directorDeskBridge";
+import {
+  createDirectorDeskBridge,
+  DIRECTOR_DESK_ACTIONS,
+  DIRECTOR_DESK_ACTION_DIRECTION,
+  DIRECTOR_DESK_MESSAGE_TYPES,
+} from "@/features/canvas/nodes/directorDeskBridge";
 import { isImmersiveViewerActive } from "@/features/viewer-kit/useViewerImmersiveBody";
 import { useCanvasStore } from "@/stores/canvasStore";
 
@@ -98,17 +103,91 @@ function renderBoth() {
   );
 }
 
+/**
+ * v2（T003 起）换子应用后，iframe 挂载点从 `/director-desk/` 改为 `/director-desk-v2/`，
+ * 实例标识参数从 `instanceId` 改为 `node_id`。选择器与取值都跟着改，否则下面所有
+ * iframe 计数断言都会因为"一个都选不中"而 5s 超时（而不是因为行为坏了）。
+ */
 function deskIframes(): HTMLIFrameElement[] {
   return Array.from(
-    document.querySelectorAll<HTMLIFrameElement>('iframe[src^="/director-desk/"]'),
+    document.querySelectorAll<HTMLIFrameElement>('iframe[src^="/director-desk-v2/"]'),
   );
 }
 
-function instanceIds(): string[] {
+function nodeIds(): string[] {
   return deskIframes().map(
     (frame) =>
-      new URLSearchParams((frame.getAttribute("src") ?? "").split("?")[1]).get("instanceId") ?? "",
+      new URLSearchParams((frame.getAttribute("src") ?? "").split("?")[1]).get("node_id") ?? "",
   );
+}
+
+/** 宿主 → 子应用发出的 request 帧里的 action 列表。 */
+function requestActions(frames: unknown[]): string[] {
+  return frames
+    .filter((f) => (f as { type?: string }).type === DIRECTOR_DESK_MESSAGE_TYPES.request)
+    .map((f) => String((f as { payload?: { action?: string } }).payload?.action ?? ""));
+}
+
+/** 宿主回给子应用的、某个 requestId 的 response 帧（v2 的落盘回执走这条）。 */
+function responseFrames(
+  frames: unknown[],
+  requestId: string,
+): Array<{ payload: { ok: boolean; data?: unknown; error?: { code: string; message: string } } }> {
+  return frames.filter((f) => {
+    const candidate = f as { type?: string; payload?: { requestId?: string } };
+    return (
+      candidate.type === DIRECTOR_DESK_MESSAGE_TYPES.response &&
+      candidate.payload?.requestId === requestId
+    );
+  }) as never;
+}
+
+/** 记录一扇 iframe 收到的宿主帧。 */
+function recordFrames(frame: HTMLIFrameElement, frames: unknown[]): void {
+  const contentWindow = frame.contentWindow;
+  if (!contentWindow) throw new Error("no iframe content window");
+  const original = contentWindow.postMessage.bind(contentWindow);
+  (contentWindow as unknown as { postMessage: unknown }).postMessage = (message: unknown) => {
+    frames.push(message);
+    return original(message as never, "*");
+  };
+}
+
+/** 从宿主方向投一条 ready。`nodeId` 省略 = 子应用没自报身份（向前兼容，不拦）。 */
+function emitReadyFrom(frame: HTMLIFrameElement, nodeId?: string) {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          type: DIRECTOR_DESK_MESSAGE_TYPES.ready,
+          payload: nodeId ? { protocolVersion: 2, nodeId } : {},
+        },
+        origin: window.location.origin,
+        source: frame.contentWindow as unknown as MessageEventSource,
+      }),
+    );
+  });
+}
+
+/** 不经过组件、直接驱动一层桥用的裸 iframe。 */
+function mountStandaloneIframe(nodeId: string): HTMLIFrameElement {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("data-guard-probe", "");
+  frame.setAttribute("src", `/director-desk-v2/?node_id=${nodeId}`);
+  document.body.appendChild(frame);
+  return frame;
+}
+
+function emitFromFrame(frame: HTMLIFrameElement, data: unknown) {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        origin: window.location.origin,
+        source: frame.contentWindow as unknown as MessageEventSource,
+      }),
+    );
+  });
 }
 
 function isOpen(nodeId: string): boolean {
@@ -139,6 +218,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  // 裸 iframe 是直接 append 到 body 的，testing-library 的自动清理管不到。
+  document.querySelectorAll("iframe[data-guard-probe]").forEach((node) => node.remove());
   window.history.replaceState({}, "", "/");
 });
 
@@ -156,7 +237,7 @@ describe("Perf — 惰性挂载", () => {
     renderBoth();
     await openDesk(0);
     expect(deskIframes()).toHaveLength(1);
-    expect(instanceIds()).toEqual([NODE_A]);
+    expect(nodeIds()).toEqual([NODE_A]);
     expect(isOpen(NODE_B)).toBe(false);
   });
 });
@@ -183,8 +264,8 @@ describe("Edges — 开关循环与连点竞态", () => {
       for (let i = 0; i < 10; i += 1) fireEvent.click(button);
     });
     await waitFor(() => expect(deskIframes()).toHaveLength(1), { timeout: 5000 });
-    expect(new Set(instanceIds()).size).toBe(1);
-    expect(instanceIds()).toEqual([NODE_A]);
+    expect(new Set(nodeIds()).size).toBe(1);
+    expect(nodeIds()).toEqual([NODE_A]);
     expect(isOpen(NODE_A)).toBe(true);
   });
 
@@ -202,14 +283,14 @@ describe("Edges — 开关循环与连点竞态", () => {
     expect(isImmersiveViewerActive()).toBe(false);
   });
 
-  it("关闭后重开回到同一个 instanceId（同一节点同一工程）", async () => {
+  it("关闭后重开回到同一个 node_id（同一节点同一工程）", async () => {
     seedCanvas();
     renderBoth();
     await openDesk(0);
-    const first = instanceIds()[0];
+    const first = nodeIds()[0];
     await closeDesk();
     await openDesk(0);
-    expect(instanceIds()[0]).toBe(first);
+    expect(nodeIds()[0]).toBe(first);
   });
 });
 
@@ -247,18 +328,196 @@ describe("States — 加载态 / 错误态", () => {
     seedCanvas();
     renderBoth();
     await openDesk(0);
-    const frame = deskIframes()[0];
-    act(() => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          data: { type: DIRECTOR_DESK_MESSAGE_TYPES.ready },
-          origin: window.location.origin,
-          source: frame.contentWindow as unknown as MessageEventSource,
-        }),
-      );
-    });
+    // 不带 nodeId = 子应用没自报身份。宿主不该因此判失败（向前兼容：更早的子应用
+    // 不报这个字段）。
+    emitReadyFrom(deskIframes()[0]);
     await waitFor(() => expect(screen.getByText(/已连接|Connected|Đã kết nối/)).toBeTruthy());
     expect(screen.queryByText(/正在连接导演台|Connecting to the director desk/)).toBeNull();
+  });
+});
+
+describe("协议守卫 — v2 的动作方向与身份自报", () => {
+  // v2 之后同一个 action 名不再等于"宿主发、子回"：`project.save` 是子应用主动请宿主
+  // 把工程写进节点（上游没有反向通道，于是复用同一对 request/response 消息，子发
+  // request、宿主回 response）。下面这几条把"方向"这条新机制钉住。
+  it("方向表给每个受控动作都留了条目（漏一个就是静默放行）", () => {
+    for (const action of DIRECTOR_DESK_ACTIONS) {
+      expect(DIRECTOR_DESK_ACTION_DIRECTION[action]).toMatch(/^(host-to-child|child-to-host)$/);
+    }
+    expect(DIRECTOR_DESK_ACTION_DIRECTION["project.save"]).toBe("child-to-host");
+    expect(DIRECTOR_DESK_ACTION_DIRECTION["tool.call"]).toBe("host-to-child");
+  });
+
+  it("宿主主动发 child-to-host 的 project.save：立即被拒，不发帧、不等超时", async () => {
+    const frame = mountStandaloneIframe("guard_probe");
+    const posted: unknown[] = [];
+    recordFrames(frame, posted);
+    // 超时给足 60s：若它是被"等超时"拒掉的，这条断言会挂在测试超时上而不是立刻拿到
+    // 方向错误 —— 两者要区分开，就靠这个值。
+    const bridge = createDirectorDeskBridge({ iframe: frame, requestTimeoutMs: 60_000 });
+    try {
+      emitFromFrame(frame, {
+        type: DIRECTOR_DESK_MESSAGE_TYPES.ready,
+        payload: { protocolVersion: 2, nodeId: "guard_probe" },
+      });
+      expect(bridge.isReady()).toBe(true);
+
+      await expect(
+        bridge.request("project.save", { kind: "project", name: "p.director", content: "{}" }),
+      ).rejects.toThrow(/child-to-host/);
+      // 拒绝发生在发出去之前：一条 request 帧都不该有。
+      expect(requestActions(posted)).not.toContain("project.save");
+
+      // 对照组：方向对的 host-to-child 动作照常发帧（否则上一条可能只是"桥还没 ready"）。
+      const pending = bridge.request("tool.call", { name: "director_export" });
+      void pending.catch(() => {});
+      expect(requestActions(posted)).toEqual(["tool.call"]);
+
+      bridge.dispose();
+      await expect(pending).rejects.toThrow(/disposed/);
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it("子应用发来的 project.save 被接住，并按 onProjectSave 的结果如实回执", async () => {
+    const frame = mountStandaloneIframe("guard_probe");
+    const posted: unknown[] = [];
+    recordFrames(frame, posted);
+    const url = "/static/projects/p/freezone/_uploads/director-desk-guard_probe-project-1.json?v=1";
+    const onProjectSave = vi.fn().mockResolvedValue({ saved: true, url, filename: "project.director" });
+    const bridge = createDirectorDeskBridge({ iframe: frame, onProjectSave });
+    try {
+      emitFromFrame(frame, {
+        type: DIRECTOR_DESK_MESSAGE_TYPES.ready,
+        payload: { protocolVersion: 2, nodeId: "guard_probe" },
+      });
+
+      const requestId = "child-save-1";
+      emitFromFrame(frame, {
+        type: DIRECTOR_DESK_MESSAGE_TYPES.request,
+        payload: {
+          protocolVersion: 2,
+          requestId,
+          action: "project.save",
+          options: { kind: "project", name: "project.director", content: '{"project":{}}' },
+        },
+      });
+
+      await waitFor(() => expect(responseFrames(posted, requestId)).toHaveLength(1));
+      expect(onProjectSave).toHaveBeenCalledTimes(1);
+      expect(onProjectSave.mock.calls[0][0]).toEqual({
+        kind: "project",
+        name: "project.director",
+        content: '{"project":{}}',
+      });
+      // 子应用正卡在 await 上等回包：回执必须是宿主真实结果，不是空壳成功。
+      expect(responseFrames(posted, requestId)[0].payload).toMatchObject({ ok: true, data: { saved: true, url } });
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it("宿主没接落盘时回明确失败，不让子应用干等到它自己的 120s", async () => {
+    const frame = mountStandaloneIframe("guard_probe");
+    const posted: unknown[] = [];
+    recordFrames(frame, posted);
+    const bridge = createDirectorDeskBridge({ iframe: frame });
+    try {
+      const requestId = "child-save-orphan";
+      emitFromFrame(frame, {
+        type: DIRECTOR_DESK_MESSAGE_TYPES.request,
+        payload: {
+          protocolVersion: 2,
+          requestId,
+          action: "project.save",
+          options: { kind: "project", name: "project.director", content: "{}" },
+        },
+      });
+
+      await waitFor(() => expect(responseFrames(posted, requestId)).toHaveLength(1));
+      expect(responseFrames(posted, requestId)[0].payload).toMatchObject({
+        ok: false,
+        error: { code: "host_save_failed" },
+      });
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it("ready 帧自报的 nodeId 会原样交给 onReady（桥这一侧是对的）", async () => {
+    const frame = mountStandaloneIframe("guard_probe");
+    const onReady = vi.fn();
+    const bridge = createDirectorDeskBridge({ iframe: frame, onReady });
+    try {
+      emitFromFrame(frame, {
+        type: DIRECTOR_DESK_MESSAGE_TYPES.ready,
+        payload: { protocolVersion: 2, nodeId: "guard_probe" },
+      });
+      expect(onReady).toHaveBeenCalledWith({ protocolVersion: 2, nodeId: "guard_probe" });
+
+      // 向前兼容：子应用没自报身份时只给 protocolVersion，不拦。
+      const other = mountStandaloneIframe("other_node");
+      const otherReady = vi.fn();
+      const otherBridge = createDirectorDeskBridge({ iframe: other, onReady: otherReady });
+      try {
+        emitFromFrame(other, { type: DIRECTOR_DESK_MESSAGE_TYPES.ready, payload: {} });
+        expect(otherReady).toHaveBeenCalledWith({});
+      } finally {
+        otherBridge.dispose();
+      }
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  /**
+   * 握手身份校验：**真的会触发**。
+   *
+   * 这里曾经是 `it.fails` —— T003 留下了 `onReady: () => handlersRef.current.handleReady()`，
+   * 回调把桥传进来的 `DirectorDeskReadyInfo` 整个丢掉，于是 `handleReady` 里那道
+   * `if (info.nodeId && info.nodeId !== id)` 永远拿到 `{}`，是死代码：子应用自报的
+   * node_id 再离谱也不会被拦下，而落盘是按 node_id 写进画布的，属于静默数据损坏。
+   *
+   * 现在桥回调把 info 透传下来（`DirectorDeskNode.tsx` 的 `onReady: (info) => …`），
+   * 所以断言必须是正向的：身份对不上就判 failed，并且**一个请求都不许发出去** ——
+   * 判 failed 之后再补发 capabilities.get 等于「先放行再补一刀」。
+   */
+  it("ready 自报的 nodeId 与本节点不符：判 failed 并写 errorMessage", async () => {
+    seedCanvas();
+    renderBoth();
+    await openDesk(0);
+    const frame = deskIframes()[0];
+    const frames: unknown[] = [];
+    recordFrames(frame, frames);
+
+    // origin 与 contentWindow 都对得上 —— 揭穿"它以为自己是 B"的只有 node_id。
+    emitReadyFrom(frame, NODE_B);
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/连接导演台失败|Could not reach the director desk|Không kết nối được/)
+          .length,
+      ).toBeGreaterThan(0),
+    );
+    expect(useCanvasStore.getState().nodes.find((n) => n.id === NODE_A)?.data.errorMessage).toMatch(
+      /node mismatch/,
+    );
+    expect(requestActions(frames)).toEqual([]);
+  });
+
+  it("带 nodeId 的 ready 不会把节点挡在门外（身份自报本身不能破坏握手）", async () => {
+    seedCanvas();
+    renderBoth();
+    await openDesk(0);
+    const frame = deskIframes()[0];
+    const frames: unknown[] = [];
+    recordFrames(frame, frames);
+
+    emitReadyFrom(frame, NODE_A);
+
+    await waitFor(() => expect(requestActions(frames)).toContain("capabilities.get"));
+    expect(screen.queryByRole("button", { name: /重试|Retry|Thử lại/ })).toBeNull();
   });
 });
 

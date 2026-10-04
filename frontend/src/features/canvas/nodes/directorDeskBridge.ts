@@ -11,8 +11,11 @@
  *               storyai:director-desk-captures-sent    机位截图批次（payload.captures）
  *               storyai:director-desk:response         请求响应（按 requestId 配对）
  *   宿主 → 子   storyai:director-desk:request          { requestId, action, options }
- *               storyai:director-desk-session          { instanceId, theme }
  *               storyai:director-desk-panorama         { edgeId, sourceNodeId, imageUrl, fileName }
+ *
+ * v1 的 `storyai:director-desk-session`（{ instanceId, theme }）已经没有发送方：
+ * 子应用侧不再监听它，宿主侧也没有调用点。它仍留在 DIRECTOR_DESK_MESSAGE_TYPES 里，
+ * 是为了让「宿主一次都不发 session」这条断言有地方可指。
  *
  * 三条必须守住的规矩，阶段 5/6 全部建立在它们之上：
  *
@@ -31,7 +34,15 @@
  * 单元测试用真实 `MessageEvent` 直接驱动（见 __tests__/features/canvas/director-desk-bridge.test.ts）。
  */
 
-/** 宿主支持的**最低**协议版本（兼容窗口的下界）；宿主自己发消息时不带版本号。 */
+/**
+ * **宿主自己的**协议版本：兼容窗口的下界，也是宿主发出的回执上盖的版本号。
+ *
+ * 回 `project.save` 回执时带 1 是对的 —— 这个字段描述的是**发包方**的协议版本，
+ * 而回执由宿主发，所以它是宿主的版本，不是子应用的。子应用那边只按 requestId 配对
+ * 并检查 `ok`，不读这个字段（vendor/director-desk/src/host-bridge.ts:319-334），
+ * 今天两边不对称也不会出事。写清楚是为了挡住下一次「看到 v2 说 2 就把这里改成 2」的
+ * 顺手修改：那会把宿主谎报成子应用的版本，而兼容窗口的判断仍然走集合，不受影响。
+ */
 export const DIRECTOR_DESK_PROTOCOL_VERSION = 1;
 
 /**
@@ -79,9 +90,73 @@ export const DIRECTOR_DESK_ACTIONS = [
   // MONOFORM 白模台用：宿主把 agent 翻译好的工程推回去（走 applyProjectSnapshot 热更新）。
   // director-desk 不声明它，只有 MONOFORM 在 capabilities.actions 里报，所以只对它生效。
   'scene.apply',
+  // ── v2（mangfufu/director-desk）新增 ──────────────────────────────────
+  // 工具面唯一入口：宿主 UI 与后续的 agent 走同一条路，子侧转手 `toolService.call`。
+  'tool.call',
+  // 工程 / 导出产物请宿主落盘（**子 → 宿**方向，见 DIRECTOR_DESK_ACTION_DIRECTION）。
+  'project.save',
+  // 把宿主存的 `.director` 文档推回子应用，导入走子应用自己的入口。
+  'project.load',
+  // 技能清单与启用态同步（第 4 块切片接内容，本切片只占位）。
+  'skills.sync',
+  // ── AI 面板（子应用 ↔ Python 后端）───────────────────────────────────────────
+  // 宿主问子应用要工具面与内置技能。后端不抄第二份，事实来源永远是 iframe 里的
+  // upstream `src/automation/contract.ts` 与 `builtin-skill.json`。
+  'ai.describe',
+  // 面板动作（渠道增删改查、run/stop/conversation/skills）由子应用发给宿主，
+  // 宿主再转后端。密钥与会话都只在后端，中间这一跳不持有它们。
+  'ai.request',
+  // agent 事件回流：宿主 → 子。这是唯一一条宿主主动往子应用推消息的动作。
+  'agent.event',
+  // ── 宿主 UI（第 5 条切片）────────────────────────────────────────────────
+  // 子应用请宿主打开 DramaClaw 自己的设置弹窗（子 → 宿主）。导演台的 AI 面板只留
+  // 渠道选择器 + 极简新建，完整渠道管理跳到宿主设置页 —— 那个页面本来就在，做一份
+  // 第二套只会漂移。
+  'ui.open-settings',
+  // 画布节点的场景缩略图（宿主 → 子）：子应用从自己的渲染画布截一张当前取景回给
+  // 宿主。这是「节点上要能看出导演台里发生了什么」的数据来源。
+  'preview.capture',
 ] as const;
 
 export type DirectorDeskAction = (typeof DIRECTOR_DESK_ACTIONS)[number];
+
+/**
+ * 宿主设置弹窗的页。子应用只能报这一项，实际落点由宿主决定（今天两页都可达）。
+ */
+export type DirectorDeskSettingsPage = 'models' | 'storage';
+
+/**
+ * 每个 action 的**方向**。
+ *
+ * v2 之后同一个 action 名不再等于「宿主发、子回」：`project.save` 是子应用主动请宿主
+ * 把工程写进节点（上游没有反向通道，于是复用同一对 request/response 消息，子发
+ * request、宿主回 response）。方向写死在这里，`request()` 就能在发出去之前拒绝
+ * 方向不对的动作，而不是等一个永远不会来的回包直到超时。
+ */
+export type DirectorDeskActionDirection = 'host-to-child' | 'child-to-host';
+
+export const DIRECTOR_DESK_ACTION_DIRECTION: Record<
+  DirectorDeskAction,
+  DirectorDeskActionDirection
+> = {
+  'capabilities.get': 'host-to-child',
+  'project.get': 'host-to-child',
+  'timeline.get': 'host-to-child',
+  'export.frame': 'host-to-child',
+  'export.video': 'host-to-child',
+  'plugin.result.submit': 'host-to-child',
+  'plugin.results.list': 'host-to-child',
+  'scene.apply': 'host-to-child',
+  'tool.call': 'host-to-child',
+  'project.save': 'child-to-host',
+  'project.load': 'host-to-child',
+  'skills.sync': 'host-to-child',
+  'ai.describe': 'host-to-child',
+  'ai.request': 'child-to-host',
+  'agent.event': 'host-to-child',
+  'ui.open-settings': 'child-to-host',
+  'preview.capture': 'host-to-child',
+};
 
 export const DIRECTOR_DESK_MESSAGE_TYPES = {
   ready: 'storyai:director-desk-ready',
@@ -96,6 +171,20 @@ export const DIRECTOR_DESK_MESSAGE_TYPES = {
 /** 默认超时：普通请求 15s；导出视频要现场录制，给 60s。 */
 export const DIRECTOR_DESK_REQUEST_TIMEOUT_MS = 15_000;
 export const DIRECTOR_DESK_EXPORT_VIDEO_TIMEOUT_MS = 60_000;
+/**
+ * `tool.call` 的超时。工具跑在子应用的 Three.js 渲染进程里，`director_apply` 会做模型
+ * 预热与提交校验，15s 的通用默认不够用。
+ */
+export const DIRECTOR_DESK_TOOL_CALL_TIMEOUT_MS = 60_000;
+/** `project.load` 会触发子应用侧的文档校验与模型准备，且宿主要先 fetch 工程 JSON。 */
+export const DIRECTOR_DESK_PROJECT_LOAD_TIMEOUT_MS = 30_000;
+
+/** 逐动作超时表；没列到的用 `requestTimeoutMs`。 */
+const DIRECTOR_DESK_ACTION_TIMEOUT_MS: Partial<Record<DirectorDeskAction, number>> = {
+  'export.video': DIRECTOR_DESK_EXPORT_VIDEO_TIMEOUT_MS,
+  'tool.call': DIRECTOR_DESK_TOOL_CALL_TIMEOUT_MS,
+  'project.load': DIRECTOR_DESK_PROJECT_LOAD_TIMEOUT_MS,
+};
 
 export interface DirectorDeskCapture {
   dataUrl: string;
@@ -140,6 +229,38 @@ export interface DirectorDeskExportVideoResult {
   height?: number;
   durationSeconds?: number;
   fileName?: string;
+}
+
+/** 子应用请宿主落盘的一次请求（`project.save`，子 → 宿主方向）。 */
+export interface DirectorDeskProjectSaveRequest {
+  kind: 'project' | 'export';
+  name: string;
+  /** `kind: 'project'` 时是 `.director` 文档全文（上游 `saveProjectFile` 给的就是字符串）。 */
+  content?: string;
+  /** `kind: 'export'` 时的二进制产物。 */
+  bytes?: ArrayBuffer;
+  byteLength?: number;
+  mimeType?: string;
+}
+
+/** `preview.capture` 的回包：一张降采样后的当前取景。 */
+export interface DirectorDeskPreviewFrame {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
+/** 宿主落盘后的回执。`saved: false` 表示宿主没存成，子应用会照实提示用户。 */
+export interface DirectorDeskProjectSaveResult {
+  saved: boolean;
+  url?: string;
+  filename?: string;
+}
+
+/** `tool.call` 的回包：子应用转手 `toolService.call` 之后的信封。 */
+export interface DirectorDeskToolResult {
+  revision: number | null;
+  result: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -198,11 +319,78 @@ export function isDirectorDeskAction(value: string): value is DirectorDeskAction
   return (DIRECTOR_DESK_ACTIONS as readonly string[]).includes(value);
 }
 
+/**
+ * 校验子应用发来的请求（v2 的 `project.save`）。请求体来自 iframe，虽然同源且已过
+ * source 校验，仍然逐字段查：形状不对的请求既不能落盘也不能回包，只能回错误。
+ */
+export function parseDirectorDeskHostRequest(
+  value: unknown,
+): { requestId: string; action: DirectorDeskAction; options: Record<string, unknown> } | null {
+  if (!isRecord(value)) return null;
+  const requestId = readString(value.requestId);
+  const action = readString(value.action);
+  if (!requestId || !isDirectorDeskAction(action)) return null;
+  if (DIRECTOR_DESK_ACTION_DIRECTION[action] !== 'child-to-host') return null;
+  const options = isRecord(value.options) ? value.options : {};
+  if (action === 'project.save') {
+    const kind = readString(options.kind);
+    if (kind !== 'project' && kind !== 'export') return null;
+    // 工程路径必须真的带得回来一份内容，否则宿主的落盘就是空文件。
+    if (kind === 'project' && typeof options.content !== 'string') return null;
+  }
+  return { requestId, action, options };
+}
+
+/** 把 `project.save` 的 options 收窄成宿主处理函数要的形状。 */
+export function readDirectorDeskProjectSaveRequest(
+  options: Record<string, unknown>,
+): DirectorDeskProjectSaveRequest {
+  const bytes = options.bytes;
+  return {
+    kind: readString(options.kind) === 'export' ? 'export' : 'project',
+    name: readString(options.name) || 'project.director',
+    ...(typeof options.content === 'string' ? { content: options.content } : {}),
+    ...(typeof options.byteLength === 'number' ? { byteLength: options.byteLength } : {}),
+    ...(typeof options.mimeType === 'string' && options.mimeType ? { mimeType: options.mimeType } : {}),
+    ...(bytes instanceof ArrayBuffer ? { bytes } : {}),
+  };
+}
+
+/** 子应用 ready 帧带回来的自报身份。字段都可能缺，缺失不等于不匹配。 */
+export interface DirectorDeskReadyInfo {
+  protocolVersion?: number;
+  nodeId?: string;
+}
+
 export interface DirectorDeskBridgeHandlers {
   /** 首次收到 ready（幂等，重复 ready 不会再触发）。 */
-  onReady?: () => void;
+  onReady?: (info: DirectorDeskReadyInfo) => void;
   onCaptures?: (captures: DirectorDeskCapture[]) => void;
   onClose?: () => void;
+  /**
+   * 子应用请宿主把工程/导出产物落盘（v2 的 `project.save`）。返回值就是回给子应用
+   * 的回执；处理函数抛错则回 `ok:false`，子应用会照实告诉用户没存上。
+   *
+   * 不给这个回调 = 宿主不接落盘：请求会被回成明确失败，而不是静默丢弃让子应用一直等。
+   */
+  onProjectSave?: (
+    request: DirectorDeskProjectSaveRequest,
+  ) => Promise<DirectorDeskProjectSaveResult>;
+  /**
+   * 子应用请宿主代转一个 AI 面板动作（v2 的 `ai.request`）。action 字段是面板动作名
+   * （`profiles` / `run` / `skills` …），与后端端点一一对应。
+   *
+   * 不给这个回调 = 宿主不接 AI 面板：请求会被回成明确失败，而不是静默丢弃让面板一直等。
+   * 模型与密钥都在后端，这一跳不持有它们。
+   */
+  onAgentRequest?: (op: string, payload: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * 子应用请宿主打开设置弹窗（`ui.open-settings`）。回执只有「开没开成」。
+   *
+   * 不给这个回调 = 宿主没有设置弹窗：请求会被回成明确失败，而不是静默丢弃让子应用
+   * 一直等到超时。
+   */
+  onOpenHostSettings?: (page: DirectorDeskSettingsPage) => void | Promise<void>;
   /** 协议/传输层错误（超时、非法请求、非致命来源丢弃不计入）。 */
   onError?: (error: Error) => void;
 }
@@ -228,7 +416,26 @@ export interface DirectorDeskBridge {
     fps?: 24 | 30 | 60;
     quality?: '720p' | '1080p';
   }) => Promise<DirectorDeskExportVideoResult>;
-  sendSession: (instanceId: string, theme?: 'dark' | 'light') => void;
+  // ── v2 导演台 ───────────────────────────────────────────────────────────
+  /**
+   * 工具面唯一入口。子应用把 `toolService.call(name, args)` 的结果原样带回，
+   * 所以宿主 UI 与后续的 agent 调的是同一条路。
+   */
+  callTool: (name: string, args?: Record<string, unknown>) => Promise<DirectorDeskToolResult>;
+  /**
+   * 让子应用走它自己的保存流程（`director_export {kind:'project'}`）。落盘由子应用
+   * 在过程中经 `project.save` 回请宿主完成，宿主侧的节点字段在 `onProjectSave` 里写。
+   */
+  saveProject: () => Promise<unknown>;
+  /** 把宿主存的 `.director` 文档推回子应用（关节点重开恢复）。 */
+  loadProject: (document: string) => Promise<unknown>;
+  /** 技能清单同步（第 4 块切片接内容）。 */
+  syncSkills: (entries: readonly unknown[]) => Promise<unknown>;
+  /**
+   * 截一张当前取景（`preview.capture`）。子应用从自己的渲染画布读，不需要用户
+   * 先打开导出对话框 —— 那是 `export.frame` 的路，会弹窗、要选参数。
+   */
+  capturePreview: (options?: { size?: number }) => Promise<DirectorDeskPreviewFrame>;
   sendPanorama: (payload: DirectorDeskPanoramaPayload) => void;
   /** 是否还挂着 message 监听（供测试与节点卸载断言使用）。 */
   isAttached: () => boolean;
@@ -249,7 +456,17 @@ export function createDirectorDeskBridge(
   const hostOrigin = options.hostOrigin
     ?? (typeof window !== 'undefined' ? window.location.origin : '');
   const requestTimeoutMs = options.requestTimeoutMs ?? DIRECTOR_DESK_REQUEST_TIMEOUT_MS;
-  const exportVideoTimeoutMs = options.exportVideoTimeoutMs ?? DIRECTOR_DESK_EXPORT_VIDEO_TIMEOUT_MS;
+
+  /**
+   * 逐动作超时。调用方显式给了 `exportVideoTimeoutMs` 时以调用方为准（测试要缩短它），
+   * 否则走 `DIRECTOR_DESK_ACTION_TIMEOUT_MS` 表，最后才回落到通用默认。
+   */
+  const actionTimeoutMs = (action: DirectorDeskAction): number => {
+    if (action === 'export.video' && options.exportVideoTimeoutMs !== undefined) {
+      return options.exportVideoTimeoutMs;
+    }
+    return DIRECTOR_DESK_ACTION_TIMEOUT_MS[action] ?? requestTimeoutMs;
+  };
 
   const pending = new Map<string, PendingRequest>();
   let ready = false;
@@ -325,6 +542,84 @@ export function createDirectorDeskBridge(
     entry.resolve(payload.data);
   }
 
+  /**
+   * 子应用发来的请求（v2 的 `project.save` 与 `ai.request`）。方向已在
+   * `parseDirectorDeskHostRequest` 里查过白名单，这里只负责执行 + 回包。
+   *
+   * 处理函数缺失时不静默丢弃：子应用正卡在 `await` 上等回包，丢弃等于让它一直等到
+   * 自己的超时。回一条明确失败，它能立刻把「没存上」告诉用户。
+   */
+  function handleHostRequest(
+    requestId: string,
+    action: DirectorDeskAction,
+    requestOptions: Record<string, unknown>,
+  ) {
+    const settle = (ok: boolean, data?: unknown, error?: string) => {
+      postToDirector({
+        type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+        payload: {
+          protocolVersion: DIRECTOR_DESK_PROTOCOL_VERSION,
+          requestId,
+          action,
+          ok,
+          ...(ok ? { data } : { error: { code: 'host_save_failed', message: error ?? '宿主未接受该请求' } }),
+        },
+      });
+    };
+    if (action === 'project.save') {
+      if (!options.onProjectSave) {
+        settle(false, undefined, '宿主未接管工程落盘');
+        return;
+      }
+      void options
+        .onProjectSave(readDirectorDeskProjectSaveRequest(requestOptions))
+        .then(
+          (result) => settle(true, result),
+          (error: unknown) =>
+            settle(false, undefined, error instanceof Error ? error.message : String(error)),
+        );
+      return;
+    }
+
+    // AI 面板动作（子应用 → 宿主 → Python 后端）。与 `project.save` 同方向：子应用发、
+    // 宿主回，回包同样按 requestId 配对。
+    if (action === 'ai.request') {
+      if (!options.onAgentRequest) {
+        settle(false, undefined, '宿主未接管导演台 AI 面板');
+        return;
+      }
+      const op = readString(requestOptions.op);
+      if (!op) {
+        settle(false, undefined, 'ai.request 缺少动作名');
+        return;
+      }
+      const payload = isRecord(requestOptions.payload) ? requestOptions.payload : {};
+      void options.onAgentRequest(op, payload).then(
+        (result) => settle(true, result),
+        (error: unknown) =>
+          settle(false, undefined, error instanceof Error ? error.message : String(error)),
+      );
+      return;
+    }
+
+    // 子应用请宿主打开自己的设置弹窗。处理函数缺失时明确失败：子应用正卡在
+    // `await` 上等回包，静默丢弃只会让它一直等到超时。
+    if (action === 'ui.open-settings') {
+      if (!options.onOpenHostSettings) {
+        settle(false, undefined, '宿主没有设置弹窗');
+        return;
+      }
+      const page = readString(requestOptions.page);
+      // 未知页码回落 models：渠道管理在那一页，猜错页码比猜错参数更坑。
+      const wanted: DirectorDeskSettingsPage = page === 'storage' ? 'storage' : 'models';
+      void Promise.resolve(options.onOpenHostSettings(wanted)).then(
+        () => settle(true, { opened: true, page: wanted }),
+        (error: unknown) =>
+          settle(false, undefined, error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
+
   function handleMessage(event: MessageEvent) {
     if (disposed) return;
     if (!isFromOurDirector(event)) return;
@@ -339,7 +634,13 @@ export function createDirectorDeskBridge(
           readyResolve?.();
           readyResolve = null;
           readyReject = null;
-          options.onReady?.();
+          const payload = isRecord(data.payload) ? data.payload : {};
+          options.onReady?.({
+            ...(typeof payload.protocolVersion === 'number'
+              ? { protocolVersion: payload.protocolVersion }
+              : {}),
+            ...(readString(payload.nodeId) ? { nodeId: readString(payload.nodeId) } : {}),
+          });
         }
         return;
       }
@@ -356,6 +657,12 @@ export function createDirectorDeskBridge(
       case DIRECTOR_DESK_MESSAGE_TYPES.response: {
         if (!isDirectorDeskResponsePayload(data.payload)) return;
         handleResponse(data.payload);
+        return;
+      }
+      case DIRECTOR_DESK_MESSAGE_TYPES.request: {
+        const request = parseDirectorDeskHostRequest(data.payload);
+        if (!request) return;
+        handleHostRequest(request.requestId, request.action, request.options);
         return;
       }
       default:
@@ -382,6 +689,10 @@ export function createDirectorDeskBridge(
     if (!isDirectorDeskAction(action)) {
       return Promise.reject(new Error(`unsupported director desk action: ${action}`));
     }
+    if (DIRECTOR_DESK_ACTION_DIRECTION[action] !== 'host-to-child') {
+      // 方向不对的动作发出去只会换一个永远不来的回包。
+      return Promise.reject(new Error(`director desk action is child-to-host only: ${action}`));
+    }
     if (!ready) {
       // 早失败好过让调用方等一个永远不来的响应：导演台在 ready 之前没挂监听。
       return Promise.reject(new Error(`director desk is not ready yet (action: ${action})`));
@@ -389,7 +700,7 @@ export function createDirectorDeskBridge(
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `dd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const timeoutMs = action === 'export.video' ? exportVideoTimeoutMs : requestTimeoutMs;
+    const timeoutMs = actionTimeoutMs(action);
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -429,13 +740,31 @@ export function createDirectorDeskBridge(
     getTimeline: () => request<unknown>('timeline.get'),
     exportVideo: (exportOptions) =>
       request<DirectorDeskExportVideoResult>('export.video', exportOptions as Record<string, unknown>),
-    sendSession(instanceId: string, theme: 'dark' | 'light' = 'dark') {
-      if (disposed) return;
-      postToDirector({
-        type: DIRECTOR_DESK_MESSAGE_TYPES.session,
-        payload: { instanceId, theme },
+    callTool: (name, args) =>
+      request<DirectorDeskToolResult>('tool.call', { name, args: args ?? {} }),
+    // 触发的是子应用**自己的**保存流程：director_export(kind=project) → saveProjectFile
+    // → window.directorDesktop.files('save-project') → 回到宿主的 onProjectSave。
+    // 宿主不要在这里直接传工程 JSON —— v2 的工程结构由上游定义，宿主不该复述一遍。
+    saveProject: () => request<unknown>('tool.call', { name: 'director_export', args: { kind: 'project' } }),
+    loadProject: (documentText) => request<unknown>('project.load', { document: documentText }),
+    syncSkills: (entries) => request<unknown>('skills.sync', { entries: [...entries] }),
+    capturePreview: async (previewOptions) => {
+      const data = await request<unknown>('preview.capture', {
+        ...(typeof previewOptions?.size === 'number' ? { width: previewOptions.size } : {}),
       });
+      if (!isRecord(data) || !readString(data.dataUrl).startsWith('data:image/')) {
+        throw new Error('director desk returned an unusable preview frame');
+      }
+      return {
+        dataUrl: readString(data.dataUrl),
+        width: typeof data.width === 'number' ? data.width : 0,
+        height: typeof data.height === 'number' ? data.height : 0,
+      };
     },
+    // `sendSession` 已删：v1 的子应用靠这条帧激活自己那份 localStorage 工程，
+    // v2 换成 IndexedDB 之后不再监听它（vendor/director-desk/src/host-bridge.ts:32-38
+    // 的 MESSAGES 只剩 ready/request/response），而宿主侧也没有任何调用点 ——
+    // 留着就是一条「以为发得出去」的死通道。
     sendPanorama(payload: DirectorDeskPanoramaPayload) {
       if (disposed) return;
       postToDirector({ type: DIRECTOR_DESK_MESSAGE_TYPES.panorama, payload });

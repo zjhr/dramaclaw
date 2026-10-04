@@ -23,6 +23,15 @@ export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 
 export type MediaStorageProvider = 'aliyun_oss' | 'cloudinary';
 
+/**
+ * 设置弹窗的两页。
+ *
+ * 只有 models / storage 两页，`SettingsDialog` 自己持有当前页的 state。`openSettings`
+ * **不传页码**：弹窗的初值就是 models（`settings-dialog.tsx` 的 `useState`），而本页
+ * 正是渠道管理所在处；传一个本页无法兑现的参数等于骗调用方。
+ */
+export type SettingsPage = 'models' | 'storage';
+
 export type FeatureModelProvider = string;
 
 export const FEATURE_MODEL_PROVIDERS: readonly FeatureModelProvider[] = [
@@ -291,6 +300,24 @@ interface SettingsState {
   setCanvasEdgeRoutingMode: (mode: CanvasEdgeRoutingMode) => void;
   setAutoCheckAppUpdateOnLaunch: (enabled: boolean) => void;
   setEnableUpdateDialog: (enabled: boolean) => void;
+  // ── 设置弹窗的跨组件开关 ──────────────────────────────────────────────────
+  /**
+   * 弹窗是否打开。**刻意不在 persist 里**：它描述的是「这一秒弹窗开着吗」，不是用户
+   * 偏好，刷新后自动弹窗只会挡住画布。
+   */
+  settingsDialogOpen: boolean;
+  /**
+   * 每次 `openSettings()` 自增。给 `SettingsDialog` 当 React `key` 用。
+   *
+   * 为什么需要它：弹窗内部自己记着停在哪一页，而它的初值是 models。画布上的导演台
+   * 节点跳过来时要的是「打开就落在模型页」，而 header 里那个常驻实例早就被人翻到
+   * 存储页去了 —— 换 key 强制重挂，让 `useState` 重新取初值。这是唯一不用改
+   * `settings-dialog.tsx` 的做法。
+   */
+  settingsOpenRequest: number;
+  /** 打开设置弹窗（落在模型页）。任何组件都能调，包括画布上的导演台节点。 */
+  openSettings: () => void;
+  closeSettings: () => void;
 }
 
 const HEX_COLOR_PATTERN = /^#?[0-9a-fA-F]{6}$/;
@@ -943,6 +970,14 @@ export const useSettingsStore = create<SettingsState>()(
         set({ canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(canvasEdgeRoutingMode) }),
       setAutoCheckAppUpdateOnLaunch: (enabled) => set({ autoCheckAppUpdateOnLaunch: enabled }),
       setEnableUpdateDialog: (enabled) => set({ enableUpdateDialog: enabled }),
+      settingsDialogOpen: false,
+      settingsOpenRequest: 0,
+      openSettings: () =>
+        set((state) => ({
+          settingsDialogOpen: true,
+          settingsOpenRequest: state.settingsOpenRequest + 1,
+        })),
+      closeSettings: () => set({ settingsDialogOpen: false }),
     }),
     {
       name: 'settings-storage',
@@ -964,12 +999,17 @@ export const useSettingsStore = create<SettingsState>()(
             _featureModelConfigProfileSyncPending,
           featureModelConfigBackendSnapshotKey:
             _featureModelConfigBackendSnapshotKey,
+          // 弹窗的开关与重挂计数是「此刻」的 UI 状态，持久化它等于刷新后自动弹窗。
+          settingsDialogOpen: _settingsDialogOpen,
+          settingsOpenRequest: _settingsOpenRequest,
           ...persisted
         } = state;
         void _featureModelConfigUserRevision;
         void _featureModelConfigProfileSyncedRevision;
         void _featureModelConfigProfileSyncPending;
         void _featureModelConfigBackendSnapshotKey;
+        void _settingsDialogOpen;
+        void _settingsOpenRequest;
         return {
           ...persisted,
           featureModelConfig: prepareFeatureModelSettingsForPersistence(

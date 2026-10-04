@@ -64,6 +64,7 @@ from novelvideo.api.routes import (  # noqa: E402
     styles,
     tasks,
 )
+from novelvideo.director_desk import routes as director_desk_routes  # noqa: E402
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -116,6 +117,9 @@ api_router.include_router(pipeline.router, tags=["pipeline"])
 api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
 api_router.include_router(freezone.router)
+api_router.include_router(
+    director_desk_routes.router, prefix="/director-desk", tags=["director-desk"]
+)
 api_router.include_router(release_notifications.router, tags=["release-notifications"])
 _verification_routes_registered = False
 

@@ -327,6 +327,9 @@ _DIRECTOR_DESK_TOOLS = frozenset({
     "dramaclaw_get_task",
     "dramaclaw_list_tasks",
     "dramaclaw_pipeline_status",
+    # 导演台自己的工具面。写不写得了由 `director_*` 的参数决定，但**作用范围**
+    # 天然被锁在这一个节点的画布窗口里 —— 见 `_is_director_desk_mcp_path`。
+    "director_desk_call",
 })
 
 
@@ -350,8 +353,19 @@ def _is_director_desk_write_path(api_path: str) -> bool:
     )
 
 
+def _is_director_desk_mcp_path(api_path: str) -> bool:
+    """`/api/v1/director-desk/mcp/tool` —— 导演台 18 个工具的入口。
+
+    放行它**没有扩大作用域**：这条路由只接受 `(nodeId, name, args)` 三元组，没有 path
+    参数；`name` 还要过后端按该节点 iframe 自报的清单校验。它能碰到的只有一扇画布
+    iframe 里的导演台工具层 —— 正是导演台 scope 承诺的「修改只作用于当前节点」。
+    """
+    parts = [part for part in api_path.split("/") if part]
+    return parts == ["api", "v1", "director-desk", "mcp", "tool"]
+
+
 def _guard_chat_scope_write(method: str, api_path: str) -> None:
-    """导演台 scope 下，写操作只放行那一条按节点隔离的全景路由。
+    """导演台 scope 下，写操作只放行那一条按节点隔离的全景路由与导演台工具面。
 
     工具白名单挡不住通用 HTTP 工具 —— `dramaclaw_post` 能打**任意**路由。
     所以这里再按路径卡一道。放在 `_request` 而不是某个 handler 里，是为了让今后
@@ -361,7 +375,7 @@ def _guard_chat_scope_write(method: str, api_path: str) -> None:
         return
     if method.upper() in ("GET", "HEAD", "OPTIONS"):
         return
-    if _is_director_desk_write_path(api_path):
+    if _is_director_desk_write_path(api_path) or _is_director_desk_mcp_path(api_path):
         return
     raise PermissionError(
         f"导演台对话只能改当前节点的背景，{method.upper()} {api_path} 已拒绝。"
@@ -369,7 +383,14 @@ def _guard_chat_scope_write(method: str, api_path: str) -> None:
     )
 
 
-def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> dict[str, Any]:
+def _request(
+    method: str,
+    path: str,
+    *,
+    query: Any = None,
+    body: Any = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
     _guard_chat_scope_write(method, api_path)
     url = f"{_base_url()}{api_path}{_query_string(query)}"
@@ -393,7 +414,7 @@ def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> 
 
     req = Request(url, data=payload, headers=headers, method=method.upper())
     try:
-        with urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as resp:
+        with urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout) as resp:
             text = resp.read().decode("utf-8", errors="replace")
             return _with_chat_error_hints(_decode_response(resp.status, text))
     except HTTPError as exc:
@@ -655,6 +676,46 @@ def _handle_patch(args: dict[str, Any], **_: Any) -> str:
 def _handle_delete(args: dict[str, Any], **_: Any) -> str:
     try:
         return tool_result(_request("DELETE", str(args.get("path") or ""), query=args.get("query"), body=args.get("body")))
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+# 导演台工具调用在后端要等 iframe 里的 toolService 回话，上游 `integration.cjs` 的超时是
+# 60s（`tool_transport.TOOL_CALL_TIMEOUT_S` 照抄）。HTTP 侧必须比它**长**：先掐 HTTP 的
+# 话，模型收到的是一个笼统的 network_error，认不出「结果未知」，于是重放一次写入 ——
+# 而那一次很可能已经在画布上生效了。多留 15s 给回程与序列化。
+DIRECTOR_DESK_TOOL_HTTP_TIMEOUT_SECONDS = 75.0
+
+
+def _handle_director_desk_call(args: dict[str, Any], **_: Any) -> str:
+    """外部 MCP 客户端驱动导演台 18 个 `director_*` 工具。
+
+    路径写死：这里**不接受**任意 path，所以拿这个工具去打别的后端路由没有入口。工具名
+    的白名单在后端（该节点 iframe 握手时自报的清单），插件侧只挡明显不是 `director_*`
+    的东西，省一次无谓往返 —— 权威判定在后端，不在提示词里。
+    """
+    try:
+        name = str(args.get("name") or "").strip()
+        if not name:
+            raise ValueError("director_desk_call requires a tool name")
+        if not name.startswith("director_"):
+            raise ValueError(
+                f"{name} is not a director desk tool; only the director_* tools "
+                "reported by the open desk node can be called"
+            )
+        payload = {
+            "nodeId": str(args.get("node_id") or args.get("nodeId") or "").strip(),
+            "name": name,
+            "args": args.get("args") if isinstance(args.get("args"), dict) else {},
+        }
+        return tool_result(
+            _request(
+                "POST",
+                "/api/v1/director-desk/mcp/tool",
+                body=payload,
+                timeout=DIRECTOR_DESK_TOOL_HTTP_TIMEOUT_SECONDS,
+            )
+        )
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -1771,6 +1832,31 @@ TOOLS = (
         "dramaclaw_delete",
         _schema("dramaclaw_delete", "Call a DramaClaw DELETE API path without using curl.", {**_PATH_PROPS, "body": {"type": "object"}}, ["path"]),
         _handle_delete,
+    ),
+    (
+        "director_desk_call",
+        _schema(
+            "director_desk_call",
+            "Call one of the open Director Desk node's own director_* tools (director_read, "
+            "director_apply, director_media, director_spatial, ...). The tool really runs inside "
+            "the browser canvas window, on that node's project — this is the only entry, and it "
+            "can never reach any other DramaClaw API path. node_id may be omitted when exactly "
+            "one desk node is open; omit it rather than guessing. The node must be open in the "
+            "canvas: on success you get {ok:true, revision, data}; execution:'not-started' means "
+            "the call was never dispatched (safe to retry); execution:'unknown' means it was "
+            "dispatched but the result never came back — read director_read for the current "
+            "state before deciding, do NOT replay a write.",
+            {
+                "node_id": {
+                    "type": "string",
+                    "description": "Director desk node id. Omit when exactly one node is open.",
+                },
+                "name": {"type": "string", "description": "director_* tool name, e.g. director_read."},
+                "args": {"type": "object", "description": "Tool arguments, verbatim."},
+            },
+            ["name"],
+        ),
+        _handle_director_desk_call,
     ),
     (
         "dramaclaw_pipeline_status",

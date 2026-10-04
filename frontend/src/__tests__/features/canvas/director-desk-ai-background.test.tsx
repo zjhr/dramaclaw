@@ -15,16 +15,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DirectorDeskNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
-  DIRECTOR_DESK_AI_PANORAMA_EDGE,
   DirectorDeskNode,
   directorDeskPanoUrlFromTask,
   directorDeskTaskBelongsTo,
 } from "@/features/canvas/nodes/DirectorDeskNode";
 import { DIRECTOR_DESK_MESSAGE_TYPES } from "@/features/canvas/nodes/directorDeskBridge";
+import { directorDeskPanoramaEntityId } from "@/features/canvas/nodes/directorDeskV2Session";
 import { EventBusContext } from "@/task-center/event-bus-context";
 import type { TaskEventBus } from "@/task-center/event-bus";
 import type { TaskState } from "@/task-center/types";
 import { useCanvasStore } from "@/stores/canvasStore";
+
+/** 全景链路要下载的图。给一张合法 PNG，让 `Response.arrayBuffer()` 有东西可读。 */
+function panoramaResponse(): Response {
+  return new Response(new TextEncoder().encode("scene pano bytes"), {
+    status: 200,
+    headers: { "content-type": "image/png" },
+  });
+}
 
 vi.mock("@xyflow/react", async () => {
   const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
@@ -107,6 +115,20 @@ function framesOf(iframe: HTMLIFrameElement): unknown[] {
   return cw?.__frames ?? [];
 }
 
+function emitFromDirector(data: unknown) {
+  const iframe = document.querySelector("iframe");
+  if (!iframe) throw new Error("no iframe");
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        origin: window.location.origin,
+        source: iframe.contentWindow as unknown as MessageEventSource,
+      }),
+    );
+  });
+}
+
 /** 打开弹窗，装好 iframe 出站帧录制器。 */
 async function openDesk(bus?: TaskEventBus) {
   seedCanvas();
@@ -137,6 +159,157 @@ async function openDesk(bus?: TaskEventBus) {
     return original(message as never, "*");
   };
   return iframe;
+}
+
+/**
+ * 握手 + 一个会回话的工具层。
+ *
+ * 工具层按上游 `service.ts` 的语义应答：先给 `director_media{action:'list'}` 与
+ * `director_read` 一个 revision，再让 import 推进版本，最后 apply 提交。宿主这边
+ * 断言的是「发了哪些工具调用、参数是什么」，因此这个假工具层必须按真实规则回话 ——
+ * 参数错了上游会抛错，回话层若照单全收，这条测试就等于没测。
+ */
+async function handshakeAndServe(iframe: HTMLIFrameElement) {
+  const frames = framesOf(iframe);
+  let revision = 11;
+
+  emitFromDirector({
+    type: DIRECTOR_DESK_MESSAGE_TYPES.ready,
+    payload: { protocolVersion: 2, nodeId: DESK },
+  });
+
+  const answered = new Set<string>();
+  const timer = setInterval(() => {
+    for (const frame of frames) {
+      const payload = (frame as { type?: string; payload?: Record<string, unknown> }).payload;
+      if (
+        (frame as { type?: string }).type !== DIRECTOR_DESK_MESSAGE_TYPES.request ||
+        !payload ||
+        typeof payload.requestId !== "string" ||
+        answered.has(payload.requestId)
+      ) {
+        continue;
+      }
+      const requestId = payload.requestId;
+      const action = String(payload.action ?? "");
+      answered.add(requestId);
+      if (action === "capabilities.get") {
+        emitFromDirector({
+          type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+          payload: {
+            protocolVersion: 2,
+            requestId,
+            action,
+            ok: true,
+            data: { protocolVersion: 2, actions: ["capabilities.get", "tool.call"] },
+          },
+        });
+        continue;
+      }
+      if (action !== "tool.call") continue;
+      const options = (payload.options ?? {}) as {
+        name?: string;
+        args?: Record<string, unknown>;
+      };
+      const name = String(options.name ?? "");
+      const args = options.args ?? {};
+      const reply = (result: unknown) =>
+        emitFromDirector({
+          type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+          payload: {
+            protocolVersion: 2,
+            requestId,
+            action,
+            ok: true,
+            data: { revision, result },
+          },
+        });
+      if (name === "director_media" && args.action === "list") {
+        reply({ revision, media: [], runtime: {} });
+      } else if (name === "director_media" && args.action === "import") {
+        if (args.revision !== revision) {
+          emitFromDirector({
+            type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+            payload: {
+              protocolVersion: 2,
+              requestId,
+              action,
+              ok: false,
+              error: { code: "director_desk_v2_error", message: "REVISION_CONFLICT" },
+            },
+          });
+          return;
+        }
+        revision += 1;
+        reply({ revision, resourceId: "media-ai-pano", name: args.name, width: 2048, height: 1024 });
+      } else if (name === "director_read") {
+        reply({ revision, entities: [], missingIds: (args.ids as string[]) ?? [] });
+      } else if (name === "director_apply") {
+        if (args.revision !== revision) {
+          emitFromDirector({
+            type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+            payload: {
+              protocolVersion: 2,
+              requestId,
+              action,
+              ok: false,
+              error: { code: "director_desk_v2_error", message: "REVISION_CONFLICT" },
+            },
+          });
+          return;
+        }
+        revision += 1;
+        reply({ revision, committed: true, preview: false, summary: {} });
+      } else {
+        emitFromDirector({
+          type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+          payload: {
+            protocolVersion: 2,
+            requestId,
+            action,
+            ok: false,
+            error: { code: "director_desk_v2_error", message: `工具未实现: ${name}` },
+          },
+        });
+      }
+    }
+  }, 4);
+
+  await waitFor(() =>
+    expect(
+      frames.some(
+        (f) =>
+          (f as { type?: string; payload?: { action?: string } }).type ===
+            DIRECTOR_DESK_MESSAGE_TYPES.request &&
+          (f as { payload?: { action?: string } }).payload?.action === "capabilities.get",
+      ),
+    ).toBe(true),
+  );
+  return () => clearInterval(timer);
+}
+
+interface ToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+/** 已发出的工具调用，按顺序。 */
+function toolCalls(iframe: HTMLIFrameElement): ToolCall[] {
+  return framesOf(iframe)
+    .filter(
+      (f) =>
+        (f as { type?: string; payload?: { action?: string } }).type ===
+          DIRECTOR_DESK_MESSAGE_TYPES.request &&
+        (f as { payload?: { action?: string } }).payload?.action === "tool.call",
+    )
+    .map((f) => {
+      const payload = (f as { payload: { options?: { name?: string; args?: Record<string, unknown> } } })
+        .payload;
+      return {
+        name: String(payload.options?.name ?? ""),
+        args: (payload.options?.args ?? {}) as Record<string, unknown>,
+      };
+    });
 }
 
 afterEach(() => {
@@ -182,65 +355,117 @@ describe("directorDeskPanoUrlFromTask", () => {
 });
 
 describe("AI 背景回灌到导演台", () => {
-  it("本节点的任务完成 → 往 iframe 推 panorama", async () => {
+  it("本节点的任务完成 → 走三步工具链路把图接成场景全景", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => panoramaResponse()));
     const bus = fakeBus();
     const iframe = await openDesk(bus);
+    const stop = await handshakeAndServe(iframe);
 
-    act(() => {
-      bus.complete({ result: { output_url: NODE_URL } });
-    });
+    try {
+      act(() => {
+        bus.complete({ result: { output_url: NODE_URL } });
+      });
 
-    await waitFor(() => {
-      const pano = framesOf(iframe).filter(
-        (f) => (f as { type?: string }).type === DIRECTOR_DESK_MESSAGE_TYPES.panorama,
+      await waitFor(() =>
+        expect(toolCalls(iframe).some((call) => call.name === "director_apply")).toBe(true),
       );
-      expect(pano).toHaveLength(1);
-      expect((pano[0] as { payload: Record<string, string> }).payload).toEqual({
-        edgeId: DIRECTOR_DESK_AI_PANORAMA_EDGE,
-        sourceNodeId: DESK,
-        imageUrl: NODE_URL,
-        fileName: "AI 背景",
-      });
-    });
+      const calls = toolCalls(iframe);
+      const importCall = calls.find((call) => call.args.action === "import")!;
+      // 只认领本节点的产物，且字节真的按 data URL 送进去了。
+      expect(String(importCall.args.data)).toMatch(/^data:image\/png;base64,/);
+      expect(importCall.args).not.toHaveProperty("path");
+
+      const applyCall = calls.find((call) => call.name === "director_apply")!;
+      const [operation] = applyCall.args.operations as Array<Record<string, unknown>>;
+      expect(operation.operation).toBe("add");
+      expect(operation.asset).toBe("visual-panorama");
+      expect(operation.id).toBe(directorDeskPanoramaEntityId(DESK));
+      const layer = (
+        (operation.patch as Record<string, { layers: Array<Record<string, unknown>> }>).surface
+      ).layers[0];
+      expect(layer.unlit).toBe(true);
+      expect(layer.resourceId).toBe("media-ai-pano");
+
+      // 旧断言盯的是一条 v2 侧没有接收方的帧；新链路不再发它。
+      expect(
+        framesOf(iframe).filter(
+          (f) => (f as { type?: string }).type === DIRECTOR_DESK_MESSAGE_TYPES.panorama,
+        ),
+      ).toHaveLength(0);
+
+      // 真正落进场景之后才宣布「已更新」。
+      await waitFor(() =>
+        expect(screen.getByText(/AI 背景已更新|AI background updated/)).toBeTruthy(),
+      );
+    } finally {
+      stop();
+    }
   });
 
-  it("别的节点的任务完成 → 什么都不推", async () => {
+  it("别的节点的任务完成 → 一条全景调用都不发", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => panoramaResponse()));
     const bus = fakeBus();
     const iframe = await openDesk(bus);
+    const stop = await handshakeAndServe(iframe);
 
-    act(() => {
-      bus.complete({ result: { output_url: OTHER_NODE_URL } });
-    });
-    await new Promise((r) => setTimeout(r, 50));
+    try {
+      act(() => {
+        bus.complete({ result: { output_url: OTHER_NODE_URL } });
+      });
+      await new Promise((r) => setTimeout(r, 80));
 
-    expect(
-      framesOf(iframe).filter(
-        (f) => (f as { type?: string }).type === DIRECTOR_DESK_MESSAGE_TYPES.panorama,
-      ),
-    ).toHaveLength(0);
+      expect(toolCalls(iframe)).toHaveLength(0);
+    } finally {
+      stop();
+    }
   });
 
-  it("任务失败不推背景（只有 task_complete 才算数）", async () => {
+  it("任务失败不接背景（只有 task_complete 才算数）", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => panoramaResponse()));
     const bus = fakeBus();
     const iframe = await openDesk(bus);
+    const stop = await handshakeAndServe(iframe);
 
-    act(() => {
-      bus.emit({
-        type: "task_failed",
-        task: {
-          task_type: "scene_pano_generation",
-          result: { output_url: NODE_URL },
-        } as unknown as TaskState,
-        previous: null,
+    try {
+      act(() => {
+        bus.emit({
+          type: "task_failed",
+          task: {
+            task_type: "scene_pano_generation",
+            result: { output_url: NODE_URL },
+          } as unknown as TaskState,
+          previous: null,
+        });
       });
-    });
-    await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 80));
 
-    expect(
-      framesOf(iframe).filter(
-        (f) => (f as { type?: string }).type === DIRECTOR_DESK_MESSAGE_TYPES.panorama,
-      ),
-    ).toHaveLength(0);
+      expect(toolCalls(iframe)).toHaveLength(0);
+    } finally {
+      stop();
+    }
+  });
+
+  it("全景接不上时不谎报「已更新」", async () => {
+    // 图下载失败是最容易发生的一种：产物 URL 存在，但文件已经不在项目里了。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () => new Response("", { status: 404 })),
+    );
+    const bus = fakeBus();
+    const iframe = await openDesk(bus);
+    const stop = await handshakeAndServe(iframe);
+
+    try {
+      act(() => {
+        bus.complete({ result: { output_url: NODE_URL } });
+      });
+      await waitFor(() => expect(toolCalls(iframe)).toHaveLength(0));
+      await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+      expect(screen.queryByText(/AI 背景已更新|AI background updated/)).toBeNull();
+      expect(screen.queryByText(/AI 背景生成中|Generating AI background/)).toBeNull();
+    } finally {
+      stop();
+    }
   });
 
   it("没有任务总线时安静工作，不抛也不崩", async () => {
@@ -314,31 +539,38 @@ describe("生成失败要给反馈（实测：网关 CPU 保护拒单，界面�
 
   it("生成期间看得见「进行中」，落地后换成「已更新」", async () => {
     // 用户点完「换背景」到图真的贴上之间有一两分钟（360 全景实测 ~100 秒）。
-    // 这段空窗以前完全没有反馈：agent 说一句「已开始生成」之后界面就静止，
-    // 成功时唯一的信号是 3D 画面自己变了。
+    // 这段空窗以前完全没有反馈：agent 说一句「已开始生成」之后界面就静止。
+    // 「已更新」现在由全景链路真的跑完来报，所以这里必须握手并回话，
+    // 否则那条胶囊永远不会亮 —— 那正是这个用例要守住的东西。
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => panoramaResponse()));
     const bus = fakeBus();
-    await openDesk(bus);
+    const iframe = await openDesk(bus);
+    const stop = await handshakeAndServe(iframe);
 
-    act(() => {
-      bus.emit({
-        type: "task_updated",
-        task: {
-          task_type: "scene_pano_generation",
-          scope: `director_desk_panorama:${DESK}:job1`,
-          status: "running",
-        } as TaskState,
-        previous: null,
+    try {
+      act(() => {
+        bus.emit({
+          type: "task_updated",
+          task: {
+            task_type: "scene_pano_generation",
+            scope: `director_desk_panorama:${DESK}:job1`,
+            status: "running",
+          } as TaskState,
+          previous: null,
+        });
       });
-    });
-    expect(screen.getByText(/AI 背景生成中|Generating AI background/)).toBeTruthy();
+      expect(screen.getByText(/AI 背景生成中|Generating AI background/)).toBeTruthy();
 
-    act(() => {
-      bus.complete({ result: { output_url: NODE_URL } });
-    });
-    await waitFor(() =>
-      expect(screen.getByText(/AI 背景已更新|AI background updated/)).toBeTruthy(),
-    );
-    expect(screen.queryByText(/AI 背景生成中|Generating AI background/)).toBeNull();
+      act(() => {
+        bus.complete({ result: { output_url: NODE_URL } });
+      });
+      await waitFor(() =>
+        expect(screen.getByText(/AI 背景已更新|AI background updated/)).toBeTruthy(),
+      );
+      expect(screen.queryByText(/AI 背景生成中|Generating AI background/)).toBeNull();
+    } finally {
+      stop();
+    }
   });
 
   it("别的节点在生成 → 不显示进行中（隔离不靠调用点自觉）", async () => {

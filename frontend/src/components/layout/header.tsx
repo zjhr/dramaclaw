@@ -38,6 +38,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAppStore } from "@/stores/app-store";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { authRequired, isCeRuntime, phoneOtpEntryVisible } from "@/lib/runtime-config";
 import { resetUserSessionState } from "@/lib/reset-region-state";
 import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
@@ -65,7 +66,14 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const navigate = useNavigate();
   const params = useParams({ strict: false }) as { project?: string };
   const [companionOpen, setCompanionOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // 设置弹窗的开关搬进了 settingsStore：导演台节点在画布上，够不着 header 的局部
+  // state，那边需要一个跨组件的 openSettings() 才能把用户送到渠道管理页。
+  const settingsOpen = useSettingsStore((s) => s.settingsDialogOpen);
+  // 每次 openSettings() 自增，当 SettingsDialog 的 React key：强制重挂让弹窗回到
+  // 「模型页」这个默认落点（渠道管理在那一页）。
+  const settingsOpenRequest = useSettingsStore((s) => s.settingsOpenRequest);
+  const openSettings = useSettingsStore((s) => s.openSettings);
+  const closeSettings = useSettingsStore((s) => s.closeSettings);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [releaseNotificationStateVersion, setReleaseNotificationStateVersion] = useState(0);
   const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
@@ -369,7 +377,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
                   hasSettingsWarning ? t("header.settingsWithWarning") : t("header.settings")
                 }
                 aria-expanded={settingsOpen}
-                onClick={() => setSettingsOpen(true)}
+                onClick={openSettings}
               >
                 <Bolt className="size-[17px]" />
                 {hasSettingsWarning ? (
@@ -499,7 +507,13 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         onClose={() => setPhoneBindingOpen(false)}
         onBound={() => { void accountSecurity.refetch(); }}
       /> : null}
-      {ceRuntime ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} /> : null}
+      {ceRuntime ? (
+        <SettingsDialog
+          key={`settings-${settingsOpenRequest}`}
+          open={settingsOpen}
+          onOpenChange={(next) => (next ? openSettings() : closeSettings())}
+        />
+      ) : null}
       {settingsWarningBubble
         ? createPortal(
             <div

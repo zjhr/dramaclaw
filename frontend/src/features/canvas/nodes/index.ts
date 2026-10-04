@@ -29,9 +29,10 @@ import { VideoStoryNode } from './VideoStoryNode';
 export const nodeTypes: NodeTypes = {
   audioNode: withLodShell('audioNode', AudioNode),
   beatContextNode: withLodShell('beatContextNode', BeatContextNode),
-  // 节点级硬替换：directorDesk 节点类型渲染 MONOFORM（MonoformDeskNode）。
-  // 旧 DirectorDeskNode 组件留在文件里但不再挂进 nodeTypes（360 管线代码保留不触发）。
-  directorDeskNode: withLodShell('directorDeskNode', MonoformDeskNode),
+  // 节点类型 directorDeskNode 渲染 3D 导演台（DirectorDeskNode，iframe 指向
+  // vendored 上游 /director-desk-v2/）。MONOFORM 白模台组件（MonoformDeskNode）仍保留在
+  // 文件里并复用同一套桥与对话面板，但不再挂进 nodeTypes，故画布上不再出现白模入口。
+  directorDeskNode: withLodShell('directorDeskNode', DirectorDeskNode),
   exportImageNode: withLodShell('exportImageNode', ImageNode),
   groupNode: withLodShell('groupNode', GroupNode),
   imageGenNode: withLodShell('imageGenNode', ImageGenNode),
