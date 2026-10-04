@@ -1,16 +1,38 @@
 #!/usr/bin/env python3
-"""参数化模板 → **未压缩** GLB（给 MONOFORM 白模台注入真几何）。
+"""参数化模板 → **未压缩** GLB（给导演台注入真几何）。
 
-**为什么是"模板 + 参数"而不是自由建模**：agent 只从这 4 个模板里选、填几个尺寸，
-几何完全由确定性脚本生成 —— 不把 AI 生成的 Python 喂给 Blender（安全与质量都不可控）。
+## 与「AI 现场写脚本」那条通路的关系
+
+这个脚本是**确定性的固定模板**通路：agent 从 4 个模板里选、填几个尺寸，几何完全
+由这里的脚本生成。同一场景永远得到同一个 GLB，评审和回归都便宜。
+
+另一条通路是 `ai_model.py`：让 AI 现场写 bpy 脚本，跑完过一遍护栏再导出。
+**为什么当初不放开、以及现在为什么放开**（2026-10 立场更新）：
+
+- 原立场：「不把 AI 生成的 Python 喂给 Blender（安全与质量都不可控）」。
+- **可执行率已经不是问题**：单次裸调 LLM 写 Blender 脚本的可执行率只有 0.41~0.92
+  （3DCodeBench, arXiv 2606.01057）；挂上 coding agent harness 后升到 0.986~1.000。
+  我们本来就是 agent 场景，所以「AI 脚本大概率跑不起来」不再成立。
+- **质量问题仍然成立，但可检测**：同一篇论文点名的残余缺陷是
+  「successful renders still suffer from disconnected or floating 3D geometric
+  components」，并强调「Physical Plausibility supersedes Executability」。
+  也就是说失败模式是**几何不成立**而非语法不成立，而几何不成立是可测量、
+  可拒绝、可重试的 —— 这正是 `ai_guard.py` 那套护栏做的事。
+- **难度分层**：L1 成功 75~89%，L3 掉到 8~32%。短剧预演道具（桌/椅/瓶/花器）
+  属于 L1~L2，够用；越接近 L3 越应该退回固定模板。
+
+所以两条通路**并存**：能用模板就用模板（更稳、更省），模板覆盖不到才让 AI 写，
+并且**必须**过护栏。护栏不过就如实说做不了，不许把坏模型塞进场景。
 
 用法（由 `ensure_blender.py` 找到的 Blender 执行）：
     blender -b -P scripts/blender/build_template.py -- \
         --template rail --out /tmp/rail.glb --params '{"length": 3.0}'
 
 尺度：**米制**（Blender 默认单位）。导出时 `export_yup=True` 做 Z-up → Y-up 转换，
-`export_draco_mesh_compression_enable=False` —— MONOFORM 的 GLTFLoader **没注册 DRACO**，
-压缩过的 GLB 它加载不了。
+`export_draco_mesh_compression_enable=False` —— 上游 v2 导演台的 glTF loader
+**显式拒绝** Draco（`vendor/director-desk/src/resources/gltf-model.ts:18` 见到
+`KHR_draco_mesh_compression` 直接抛错），压缩过的 GLB 它加载不了。
+（注意：MONOFORM 已下线，但结论不变 —— 换了个 loader，仍然不认 Draco。）
 """
 
 from __future__ import annotations
@@ -154,7 +176,8 @@ def main() -> int:
     bpy.ops.export_scene.gltf(
         filepath=args.out,
         export_format="GLB",
-        # MONOFORM 的 GLTFLoader 没注册 DRACO/KTX2 —— 压缩过的包它加载不了。
+        # 上游 v2 导演台的 glTF loader 见到 KHR_draco_mesh_compression 会**直接拒绝加载**
+        # （vendor/director-desk/src/resources/gltf-model.ts:18），所以压缩保持关闭。
         export_draco_mesh_compression_enable=False,
         export_yup=True,          # Blender Z-up → GLB Y-up
         export_apply=True,        # 应用缩放/修改器，几何带上真实尺寸
