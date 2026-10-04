@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -52,6 +53,64 @@ SANDBOX_ENV = {
     "https_proxy": "",
     "PYTHONNOUSERSITE": "1",
 }
+
+#: `CREATE_NEW_PROCESS_GROUP`（winbase.h，`0x00000200`）。`subprocess` 只在 Windows 上
+#: 从 `_winapi` 导出它，所以这里给字面量。
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+#: `taskkill` 自己的超时。
+TASKKILL_TIMEOUT_SECONDS = 10
+
+
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def process_group_kwargs() -> dict:
+    """子进程「自成组」的启动参数。**两个平台不是同一个参数。**
+
+    POSIX 用 `start_new_session=True`（`setsid`）。**Windows 上它是个 no-op** ——
+    CPython 的 Windows `_execute_child` 形参名直接写作 `unused_start_new_session`，
+    传了不报错也不生效；而且 `os.killpg` / `os.getpgid` 来自 C 的 `posix` 模块，
+    Windows 上根本不存在（`AttributeError`），`signal.SIGKILL` 同样只在 Unix 有。
+    所以 Windows 必须用 `creationflags=CREATE_NEW_PROCESS_GROUP`。
+    """
+    if is_windows():
+        return {"creationflags": CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def kill_tree(proc: subprocess.Popen) -> str:
+    """杀掉整个进程组 / 整棵进程树，返回实际生效的手段。
+
+    只 `proc.kill()` 的话，Blender fork 出去的子进程会活下来继续占 CPU 与临时目录，
+    **超时就等于没超时**。Windows 上没有 POSIX 进程组，靠 `taskkill /T` 按父子
+    关系收子树。返回 `"fallback-proc-kill"` 表示组手段不可用、只杀了直接子进程
+    —— 那是降级，如实报出来。
+    """
+    if is_windows():
+        try:
+            done = subprocess.run(  # noqa: S603 — argv 列表，无 shell
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=TASKKILL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            done = None
+        if done is not None and done.returncode == 0:
+            return "taskkill"
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return "killpg"
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        proc.kill()
+    except (OSError,):  # pragma: no cover — 进程已消失
+        pass
+    return "fallback-proc-kill"
 
 
 def _parse_report(stdout: str) -> dict | None:
@@ -84,18 +143,40 @@ def run_once(blender: str, script: Path, out: Path, kind: str | None,
         argv += ["--real-height", str(real_height)]
 
     env = {**os.environ, **SANDBOX_ENV}
+    # 不用 `subprocess.run(timeout=)`：它超时只 kill 直接子进程，Blender fork 出去
+    # 的子进程会活下来继续占 CPU。改用 Popen 自己管超时，才能在超时点上收整组。
     try:
-        proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, env=env, check=False,
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=env, **process_group_kwargs(),
         )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "report": {"reason": "timeout",
-                                        "limitSeconds": timeout},
-                "exitCode": None, "timedOut": True, "stdout": "", "stderr": ""}
+    except OSError as exc:
+        return {"ok": False, "report": {"reason": "blender-launch-failed", "error": str(exc)},
+                "exitCode": None, "timedOut": False, "stdout": "", "stderr": ""}
 
-    report = _parse_report(proc.stdout) or {
+    killed_by = ""
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        killed_by = kill_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=TASKKILL_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:  # pragma: no cover — kill 后仍不退，极少见
+            stdout, stderr = "", ""
+        # 失败不留半成品：下游必须只看到「要么完整 GLB，要么什么都没有」。
+        try:
+            out.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"ok": False,
+                "report": {"reason": "timeout", "limitSeconds": timeout,
+                           "killedBy": killed_by},
+                "exitCode": None, "timedOut": True,
+                "stdout": (stdout or "")[-4000:], "stderr": (stderr or "")[-2000:]}
+
+    report = _parse_report(stdout) or {
         "reason": "no-report",
-        "tail": (proc.stdout or proc.stderr or "")[-800:],
+        "tail": (stdout or stderr or "")[-800:],
     }
     ok = proc.returncode == 0 and report.get("reason") is None
     return {
@@ -103,8 +184,8 @@ def run_once(blender: str, script: Path, out: Path, kind: str | None,
         "report": report,
         "exitCode": proc.returncode,
         "timedOut": False,
-        "stdout": proc.stdout[-4000:],
-        "stderr": proc.stderr[-2000:],
+        "stdout": (stdout or "")[-4000:],
+        "stderr": (stderr or "")[-2000:],
     }
 
 

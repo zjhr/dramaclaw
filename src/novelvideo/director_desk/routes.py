@@ -29,6 +29,9 @@
 | POST | `/ai/stop` | 停止 |
 | POST | `/ai/conversation` | 读当前对话 |
 | POST | `/ai/conversation/new` | 重置对话 |
+| POST | `/ai/blender/status` | 本机能否跑 AI 建模（Blender 路径、护栏路径、可用 kind） |
+| POST | `/ai/blender/run` | 跑一段 AI 写的 bpy 脚本 → 护栏 → GLB |
+| POST | `/ai/blender/tool` | 同上，但回**工具结果**形状并内联 base64 |
 | POST | `/skills` | 技能面板动作 |
 
 ### MCP（外部客户端 + 上游面板的 MCP 区）
@@ -54,10 +57,21 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from novelvideo.director_desk.ai_host import (
+    BLENDER_KINDS,
+    BLENDER_TOOL_NAME,
     ProfileError,
     ProviderError,
     ToolContract,
     get_ai_service,
+    run_blender_tool,
+)
+from novelvideo.director_desk.blender_runner import (
+    BlenderRunnerError,
+    blender_available,
+    guard_path,
+    resolve_out_path,
+    run_ai_model,
+    unique_out_path,
 )
 from novelvideo.director_desk.mcp_tools import (
     DirectorDeskMcpError,
@@ -217,6 +231,43 @@ class McpToolRequest(BaseModel):
 class McpConfigRequest(BaseModel):
     client: str = "stdio"
     apiUrl: str = ""
+
+
+class BlenderRunRequest(BaseModel):
+    """把一段 AI 写的 bpy 脚本交给后端跑护栏，产出 GLB。
+
+    ``script`` 就是 AI 给的那份原文，后端不解析、不改写、不做白名单 —— 这是主人
+    明确选的「完全自由」。护栏（悬空 / 连通分量 / 尺度 / 面数 / 禁网）与宿主侧的
+    超时、`shell=False`、路径不逃逸在 :mod:`novelvideo.director_desk.blender_runner`。
+    """
+
+    script: str
+    """完整可执行的 bpy 脚本。不接受占位符或伪代码。"""
+
+    name: str = ""
+    """道具显示名，也用作 GLB 文件名主干。"""
+
+    kind: str = ""
+    """真实尺寸表里的类别，护栏据此做尺度硬归一化。"""
+
+    expectParts: int | None = None
+    """预期连通分量数。不符即失败 —— 逼 AI 先想清楚自己写了几个零件。"""
+
+    realHeight: float | None = None
+    """显式真实高度（米）。`kind` 之外的类别用它。"""
+
+    timeoutSeconds: int = 60
+    """单次上限秒。会再被硬顶（300s）夹一次。"""
+
+    out: str = ""
+    """GLB 文件名 / 路径。留空自动生成；给出时必须落在导演台模型目录内。"""
+
+    inline: bool = True
+    """成功时是否内联 base64 data URL。
+
+    网页版 `director_media import` 不收本机路径，所以**默认内联** —— 这不是
+    可选项，是导入链路的唯一通路。GLB 超过上限时如实报错，不给导不进去的路径。
+    """
 
 
 # ── 会话与工具面 ────────────────────────────────────────────────────────────
@@ -441,6 +492,82 @@ async def new_conversation(payload: NodeRequest) -> dict[str, Any]:
         return {"conversation": await get_ai_service().new_conversation(payload.nodeId)}
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ── Blender 执行 ────────────────────────────────────────────────────────────
+
+
+@router.post("/ai/blender/status")
+def blender_status() -> dict[str, Any]:
+    """本机能不能跑 AI 建模。技能面板与排查用，不产生任何副作用。"""
+    available, source = blender_available()
+    return {
+        "available": available,
+        "source": source,
+        "guard": str(guard_path()),
+        "tool": BLENDER_TOOL_NAME,
+        "kinds": list(BLENDER_KINDS),
+    }
+
+
+@router.post("/ai/blender/run")
+async def blender_run(payload: BlenderRunRequest) -> dict[str, Any]:
+    """跑一段 AI 写的 bpy 脚本 → 护栏 → GLB。
+
+    **回包永远是 200**，成功失败都由 ``ok`` 说。护栏判失败（悬空、分量数不符、
+    脚本抛异常、超时）是这条链路的**正常结果**，套 HTTP 错误码只会让调用方把它
+    当成「服务挂了」而看不到 ``guardReport`` 里那几条具体是哪几个零件、什么高度。
+
+    只有**参数不合法**（空脚本、路径逃逸、未知 kind）才是 400 —— 那种重试也没用，
+    得先改参数。
+    """
+    kind = payload.kind.strip() or None
+    if kind and kind not in BLENDER_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"kind={kind} 不在真实尺寸表里；用其中之一或不传 kind 并给 realHeight",
+        )
+    try:
+        out_path = resolve_out_path(payload.out) if payload.out else unique_out_path(payload.name)
+        result = await run_ai_model(
+            payload.script,
+            out_path=out_path,
+            timeout=payload.timeoutSeconds,
+            kind=kind,
+            expect_parts=payload.expectParts,
+            real_height=payload.realHeight,
+        )
+    except BlenderRunnerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.public(inline=payload.inline)
+
+
+@router.post("/ai/blender/tool")
+async def blender_tool(payload: BlenderRunRequest) -> dict[str, Any]:
+    """与 :func:`blender_run` 同一个执行体，但回**工具结果**的形状并内联 base64。
+
+    给不想自己拼 ``director_media`` 入参的调用方用（面板按钮、外部编排）。
+    ``{"ok": false, ...}`` 时 ``error`` 是给模型看的那句话。
+
+    参数非法**不抛 400**：工具结果本身就是「模型要读的文字」，套一层 HTTP 状态码
+    只会让调用方拿不到那句话。
+    """
+    try:
+        data = await run_blender_tool(
+            {
+                "script": payload.script,
+                "name": payload.name,
+                "kind": payload.kind,
+                "expectParts": payload.expectParts,
+                "realHeight": payload.realHeight,
+                "timeoutSeconds": payload.timeoutSeconds or 60,
+            }
+        )
+    except BlenderRunnerError as exc:
+        data = {"ok": False, "reason": "invalid-arguments", "message": str(exc)}
+    if not data.get("ok"):
+        return {"ok": False, "error": data.get("message") or "Blender 执行失败", "data": data}
+    return {"ok": True, "data": data}
 
 
 # ── 技能 ────────────────────────────────────────────────────────────────────

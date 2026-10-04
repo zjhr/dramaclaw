@@ -21,7 +21,7 @@ v2 导演台的道具**全部走 `director_apply` 的 operations**。没有 dd-s
 | 目录里有现成资产 | `director_assets({queries:[...], kind:"prop"})` → `add` 用它的 id |
 | 要可调尺寸的基础几何 | `project` 切 `creationMode:"geometry"` → 再 `director_read` 拿调色板 → `add{asset:"shape-*", patch:{assetParameters:{...}}}` |
 | 要真几何 | `director_media({action:"import",...})` 导成工程资源 → 按 resourceId `add` |
-| 要 AI 现场建模 | 见 [Blender 现场生成](references/blender-pipeline.md)（有护栏，且**你不能自己跑**） |
+| 要 AI 现场建模 | `blender_run_model({script, kind, expectParts})` —— **你自己写脚本自己跑，用户不用动手**；见 [Blender 现场生成](references/blender-pipeline.md) |
 
 尺寸参数写 **`patch.assetParameters`**。写成 `patch.parameters` 上游直接报错，整批回滚。
 
@@ -36,6 +36,15 @@ v2 导演台的道具**全部走 `director_apply` 的 operations**。没有 dd-s
 - 建筑：`structureLink={parentId,parentPort,ownPort,offset,rotation}`，删父件前先解子件
 
 字段细节见[道具与布景](references/props.md)。
+
+## Blender 这一档的诚实边界
+
+`blender_run_model` **真的会在本机起 Blender 跑你写的脚本**，用户不需要做任何事。
+但护栏会拒一部分产出：悬空零件、连通分量数对不上、脚本自己抛异常、死循环、面数超预算。
+**被拒不是 bug，是它在替你挡住一个会浮在半空的坏模型。** 失败时回包里有 `reason` 与
+`guardReport`（哪个零件、什么高度），照着改脚本重试，**上限 3 次**；仍然不过就如实告诉
+用户「这个造型做不了，建议加一个固定模板」—— 不要重试到「差不多就行」，也不要编
+「已经做好了」。本机没装 Blender 4.5.x 时回 `blender-unavailable`，那也不是你的问题。
 
 ## 真实边界
 

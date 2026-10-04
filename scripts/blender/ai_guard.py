@@ -33,11 +33,14 @@
 | 内存上限 | `resource.setrlimit`，**macOS 实测不生效**（见 `_limit_memory`） | 兜底靠超时 + 面数预算；报告里的 `memoryCapped` 如实反映 |
 | 连通分量检查 | `_components()` 把网格拆成连通分量并计数 | 抓论文点名的 disconnected components |
 | 支撑/悬空检查 | 每个分量与更大分量的包围盒必须**接触** | 抓论文点名的 floating components |
+| 干净起点 | `_clear_startup_scene()` 先删掉 factory-startup 的默认 Cube | 否则分量数凭空 +1，`component-count` 变成「模型没问题也会挂」的假失败 |
 | 退化几何检查 | 分量体积 / 面数下限 | 抓「一个点当零件」这类退化输出 |
 | 尺度硬归一化 | `_normalize_scale()` 按真实尺寸缩放并落地 | **不信 LLM 写的尺寸**——把「记错尺度」变成不可能出错 |
 | Z-up → Y-up | 导出 `export_yup=True` | Blender 是 Z-up，glTF 是 Y-up |
 
-进程超时、内存与退出码归集在宿主 `ai_model.py`。
+进程超时、内存与退出码归集在宿主 `ai_model.py`（服务侧是
+`src/novelvideo/director_desk/blender_runner.py`）。两处都按平台分支：
+POSIX 杀进程组、Windows 杀进程树（`taskkill /T`），Blender 在三个平台上同样会 fork。
 
 ## 成功/失败都是机器可读的
 
@@ -130,8 +133,9 @@ def _limit_memory() -> str:
     hard limit 从 unlimited 往下压。所以在 macOS 上**内存上限实际上没生效**，
     报告里的 `memoryCapped` 如实是 false。Linux 上 `RLIMIT_AS` 可用。
 
-    macOS 上真正兜住内存的是**超时**（失控分配的进程同样会超时被杀）
-    和**面数预算**（`MAX_FACES`，在导出前就拒绝）。
+    **Windows 上 `resource` 模块不存在**，所以这里如实返回 `"unavailable"`，不假装
+    设上了。真正兜住内存的因此只有**超时**（失控分配的进程同样会超时被杀；Windows
+    上是 `taskkill /T` 收整棵进程树）与**面数预算**（`MAX_FACES`，在导出前就拒绝）。
     """
     try:
         import resource
@@ -151,6 +155,18 @@ def _limit_memory() -> str:
         except (ValueError, OSError):
             continue
     return "unsupported-on-this-platform"
+
+
+def _clear_startup_scene() -> None:
+    """清空 `--factory-startup` 留下的默认 Cube，再跑 AI 脚本。
+
+    **默认 Cube 不是 AI 的产出，不该混进模型。** 它会让连通分量数凭空 +1，于是
+    「四条腿的凳子 = 5 个分量」恒被 `component-count` 打回，而且打回的原因是模型
+    本身没问题 —— 这是最难查的一类假失败。与其在技能文档里要求每份脚本都记得先删
+    Cube（记得的写、忘了的挂），不如在护栏这一层一次性保证干净起点。
+    """
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete()
 
 
 def _run_ai_script(script_path: str) -> None:
@@ -401,6 +417,7 @@ def main() -> int:
     try:
         version = _assert_version()
         _block_network()
+        _clear_startup_scene()
         _run_ai_script(script)
 
         objects = _mesh_objects()

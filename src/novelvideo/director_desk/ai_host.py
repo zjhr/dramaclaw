@@ -54,6 +54,11 @@ from uuid import uuid4
 
 import httpx
 
+from novelvideo.director_desk.blender_runner import (
+    BlenderRunnerError,
+    run_ai_model,
+    unique_out_path,
+)
 from novelvideo.director_desk.tool_transport import (
     DirectorDeskToolTransport,
     NoActiveSessionError,
@@ -63,6 +68,9 @@ from novelvideo.director_desk.tool_transport import (
 
 __all__ = [
     "AbortToken",
+    "BLENDER_KINDS",
+    "BLENDER_TOOL_DEFINITION",
+    "BLENDER_TOOL_NAME",
     "Channel",
     "DirectorDeskAiService",
     "ProfileError",
@@ -81,6 +89,8 @@ __all__ = [
     "missing_result",
     "models_endpoint",
     "models_endpoint_candidates",
+    "run_blender_tool",
+    "tools_for_run",
     "validate_profile",
 ]
 
@@ -147,6 +157,64 @@ DISCUSSION_TOOL_NAMES = frozenset(
 #: 混合读写工具在讨论模式下只放行的读操作（上游 ``mediaReadActions`` / ``sceneReadActions``）。
 _MEDIA_READ_ACTIONS = frozenset({"list", "surfaces"})
 _SCENE_READ_ACTIONS = frozenset({"list", "read"})
+
+# ── Blender 执行工具（本仓自加，不在上游那 18 个里）────────────────────────
+#
+# 上游 ``contract.ts`` 的 18 个 ``director_*`` 工具**一个执行能力都没有**：本仓
+# ``director_desk/`` 全部模块里 ``subprocess`` / ``os.system`` / ``popen`` 命中数为 0。
+# 所以「AI 现场建模」这条阶梯此前只能停在「把脚本交给用户手动跑」。
+#
+# **为什么不往上游 ``contract.ts`` 里加第 19 个工具**：那份文件与上游逐字相同
+# （``diff /tmp/mdf-desk/src/automation/contract.ts frontend/vendor/director-desk/
+# src/automation/contract.ts`` 无输出），本仓对它的任何改动都会在下一次同步上游时
+# 静默消失，而 ``PATCHES.md`` 的维护成本远高于收益。工具面本来就是后端在
+# :meth:`DirectorDeskAiService.run` 里组装的（``contract.tools_for`` 的返回值），
+# 在**后端**追加一条定义既不碰上游源码，也不需要宿主桥新开一个 action ——
+# 执行发生在后端，画布 iframe 全程不参与。
+#
+# 它在**执行模式**下可用、**讨论模式**下不给：讨论模式不改工程，跑一次 Blender
+# 就是改工程的手段。
+BLENDER_TOOL_NAME = "blender_run_model"
+
+#: `--kind` 可选值。护栏的 ``real_sizes.REAL_HEIGHTS`` 的键，同时也是给 AI 的白名单：
+#: 传了表外的值只会让尺度归一化静默失效（见 ``ai_guard._normalize_scale``）。
+BLENDER_KINDS = (
+    "table", "desk", "chair", "stool", "bar_stool", "bench", "sofa", "bed",
+    "nightstand", "wardrobe", "shelf", "lamp", "table_lamp", "vase", "bottle",
+    "cup", "bowl", "book", "box", "crate", "plant", "door", "window", "barrel",
+    "toolbox", "stair", "railing",
+)  # fmt: skip
+
+BLENDER_TOOL_DEFINITION: dict[str, Any] = {
+    "name": BLENDER_TOOL_NAME,
+    "description": (
+        "Build a previs prop by writing a Blender bpy script and running it yourself on this "
+        "machine; the user does not run anything. script is complete executable bpy code "
+        "(primitive_*_add, transform_apply, join), no placeholders or pseudocode. Blender starts "
+        "from factory settings, so the scene is already empty. Every part must physically touch "
+        "the main body, otherwise the guard rejects it. kind picks a real-world height for hard "
+        "scale normalisation; expectParts is the number of connected components you intend "
+        "(a four-leg stool is 5); set it only when you are sure. On success the reply carries data, "
+        "a model/gltf-binary data URL you must pass straight to "
+        "director_media({action:'import', data, name, mime:'model/gltf-binary', requestId, "
+        "revision}) with no other change, then add it by resourceId. On failure read reason and "
+        "guardReport, fix the script and retry at most 3 times; if it still fails say plainly "
+        "that the model cannot be made. Never claim success without ok:true."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "script": {"type": "string", "description": "Complete bpy script source"},
+            "name": {"type": "string", "description": "Prop display name; also the GLB filename"},
+            "kind": {"type": "string", "enum": list(BLENDER_KINDS)},
+            "expectParts": {"type": "integer", "minimum": 1, "maximum": 64},
+            "realHeight": {"type": "number", "description": "Explicit real height in metres"},
+            "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        },
+        "required": ["script"],
+        "additionalProperties": False,
+    },
+}
 
 #: 渠道配置在全局 settings 库里的 provider 前缀。
 _CHANNEL_PREFIX = "director-desk-"
@@ -1656,6 +1724,27 @@ class ToolContract:
         return self.discussion if mode == "discuss" else self.definitions
 
 
+def tools_for_run(
+    contract: ToolContract, mode: str
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """本轮发给模型的工具面与执行白名单。
+
+    白名单与工具面**必须同源**：模型看到的与被允许执行的若是两份，某次上游升级后
+    就会悄悄差出一个名字，而差出来的那个是「看得见、调不动」。
+
+    Blender 工具在**执行模式**追加，讨论模式不给 —— 讨论模式不改工程，跑一次
+    Blender 就是改工程的手段。它不在上游 ``contract.ts`` 里（理由见
+    :data:`BLENDER_TOOL_NAME`），在这里追加等于后端组装工具面，不需要动上游源码，
+    也不需要在宿主桥新开一个 action。
+    """
+    tools = list(contract.tools_for(mode))
+    allowed = {str(tool["name"]) for tool in tools}
+    if mode != "discuss":
+        tools.append(BLENDER_TOOL_DEFINITION)
+        allowed.add(BLENDER_TOOL_NAME)
+    return tools, allowed
+
+
 # ── 渠道的全局存储 ──────────────────────────────────────────────────────────
 
 
@@ -2227,8 +2316,7 @@ class DirectorDeskAiService:
             raise NoActiveSessionError("导演台工具清单尚未就绪，请在画布上重新打开该导演台节点")
 
         run_mode = "discuss" if mode == "discuss" else "execute"
-        tools = contract.tools_for(run_mode)
-        allowed = {str(tool["name"]) for tool in tools}
+        tools, allowed = tools_for_run(contract, run_mode)
         abort = AbortToken()
         run_id = str(uuid4())
         session = conversation.id
@@ -2432,6 +2520,21 @@ class DirectorDeskAiService:
                 return {"ok": True, "data": await self._skills.tool(args)}
             except Exception as exc:  # noqa: BLE001 - 技能失败是该工具的业务结果
                 return {"ok": False, "error": str(exc)}
+        if name == BLENDER_TOOL_NAME:
+            # 就地执行，不经画布 iframe —— 与 director_skill 同理：这条工具要的
+            # 是后端进程，引擎帮不上忙，绕一圈长轮询只会把超时放大成卡死。
+            try:
+                data = await _with_abort(run_blender_tool(args), abort)
+            except RunAborted:
+                raise
+            except BlenderRunnerError as exc:
+                return {"ok": False, "error": str(exc)}
+            except Exception as exc:  # noqa: BLE001 - 同上：执行失败是该工具的业务结果
+                self._log(f"director desk blender failed: {exc}")
+                return {"ok": False, "error": f"Blender 执行失败：{exc}"}
+            if not data.get("ok"):
+                return {"ok": False, "error": data.get("message") or "Blender 执行失败", "data": data}
+            return {"ok": True, "data": data}
         try:
             return await _with_abort(self._transport.call(node_id, name, args), abort)
         except RunAborted:
@@ -2452,6 +2555,51 @@ def abort_check(abort: AbortToken) -> None:
         raise RunAborted()
 
 
+async def run_blender_tool(args: Mapping[str, Any]) -> dict[str, Any]:
+    """``blender_run_model`` 的执行体：跑护栏，回一个能直接喂回模型的形状。
+
+    **成功时必须内联 base64**：网页版 ``director_media import`` 明确拒绝本机路径
+    （上游 ``automation/service.ts:60``），模型只能以 ``data:`` URL 进工程。
+    内联上限在 :data:`blender_runner.MAX_INLINE_GLTF_BYTES`，超了如实报错而不是
+    给一个导不进去的路径。
+    """
+    script = str(args.get("script") or "")
+    kind = str(args.get("kind") or "").strip() or None
+    if kind and kind not in BLENDER_KINDS:
+        return {
+            "ok": False,
+            "reason": "unknown-kind",
+            "message": f"kind={kind} 不在真实尺寸表里；用其中之一或不传 kind 并给 realHeight。",
+        }
+    expect_parts = args.get("expectParts")
+    real_height = args.get("realHeight")
+    timeout = args.get("timeoutSeconds") or 60
+    result = await run_ai_model(
+        script,
+        out_path=unique_out_path(str(args.get("name") or "")),
+        timeout=int(timeout),
+        kind=kind,
+        expect_parts=int(expect_parts) if expect_parts not in (None, "") else None,
+        real_height=float(real_height) if real_height not in (None, "") else None,
+    )
+    payload = result.public()
+    if not result.ok:
+        return payload
+    try:
+        payload["data"] = result.data_url()
+    except BlenderRunnerError as exc:
+        # 文件没问题但导不进工程：如实说清楚，别让模型拿着一句「护栏通过」就去
+        # director_media 导一个不存在的文件。
+        return {
+            "ok": False,
+            "reason": "inline-too-large",
+            "message": str(exc),
+            "guardReport": result.guard_report,
+            "bytes": result.size_bytes,
+        }
+    return payload
+
+
 def _tool_summary(name: str, output: Mapping[str, Any]) -> Any:
     if output.get("ok") and name == "director_apply":
         data = output.get("data") if isinstance(output.get("data"), dict) else {}
@@ -2463,6 +2611,9 @@ def _tool_summary(name: str, output: Mapping[str, Any]) -> Any:
     data = output.get("data") if isinstance(output.get("data"), dict) else None
     if output.get("ok") and isinstance(data, dict) and data.get("summary") is not None:
         return data["summary"]
+    # blender_run_model 这类后端本地工具把结论放在 message 里（护栏的判定原话）。
+    if output.get("ok") and isinstance(data, dict) and data.get("message") is not None:
+        return data["message"]
     return output.get("error") or (data or {}).get("summary")
 
 
