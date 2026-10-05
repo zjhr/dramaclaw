@@ -19,6 +19,7 @@ Electron 依赖：上游 `host.cjs:1` 的 ``{dialog, shell}``（选目录 / 用�
 from __future__ import annotations
 
 import asyncio
+import logging
 import hashlib
 import json
 import os
@@ -32,6 +33,8 @@ from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 import yaml
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_BYTES",
@@ -420,6 +423,7 @@ class SkillStore:
         try:
             data = target.read_bytes()
         except OSError as exc:
+            _log.warning("director desk skill read failed path=%s exc=%s", file, type(exc).__name__)
             raise SkillError("该文件是二进制附件，请在技能目录中查看") from exc
         if b"\0" in data:
             raise SkillError("该文件是二进制附件，请在技能目录中查看")
@@ -480,6 +484,7 @@ class SkillStore:
                     }
                 )
             except BaseException:
+                _log.error("director desk skill install failed name=%s", pack.name)
                 shutil.rmtree(destination, ignore_errors=True)
                 raise
             if previous:
@@ -688,7 +693,9 @@ async def github_package(url: str, *, client: httpx.AsyncClient | None = None) -
     """
     source = _github_source(url)
     owned = client is None
-    http = client or httpx.AsyncClient(follow_redirects=False, timeout=30.0)
+    # trust_env=False：和 ai_host 同一个理由。技能包从 GitHub 拉，走本地代理
+    # 既无必要也会把 github.com 的证书验证搅乱（见 ai_host 里的完整说明）。
+    http = client or httpx.AsyncClient(follow_redirects=False, timeout=30.0, trust_env=False)
     files: list[SkillFile] = []
     state = {"bytes": 0, "requests": 0}
     try:

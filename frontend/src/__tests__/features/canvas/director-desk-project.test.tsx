@@ -478,7 +478,14 @@ describe("重开节点 → 工程回灌", () => {
     const frames = await handshake();
     expect(requestActions(frames)).not.toContain("project.load");
     expect(sessionFrames(frames)).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // 弹窗打开会读一次项目分镜（`/director-desk/storyboard`）——那是取「第 N 场戏」
+    // 的依据，与工程回灌无关。这条用例要断的是**没有 directorProjectRef 就不发起
+    // 工程回灌**，上面那两行（`project.load` 不在请求里、`session` 为空）已经断到了，
+    // 所以这里不该再断言整个 fetch 一次没发——那会把「读了分镜」也判成回归。
+    const projectLoadCalls = fetchMock.mock.calls.filter(([, init]) =>
+      String((init as RequestInit | undefined)?.body ?? "").includes("project.load"),
+    );
+    expect(projectLoadCalls).toHaveLength(0);
     // 没有快照只是不回灌，不影响握手与能力
     expect(screen.getByRole("button", { name: /保存工程|Save project/ })).toBeTruthy();
   });

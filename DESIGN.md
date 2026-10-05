@@ -100,6 +100,21 @@ typography:
     fontSize: 12px
     fontWeight: 400
     lineHeight: 1.33
+  badge-xs:
+    # 紧凑徽章 / 状态摘要专用。不要拿它写正文 —— 11px 是「一行里并排放三四个状态
+    # 徽章」时仍能保持单行不换行的下限（导演台节点壳 22px 高的状态栏、
+    # 画布节点角标都是这个场景）。低于 11px 在 1x 屏上已经读不清；
+    # 需要更小的信息量应该改成 icon 或折叠，不要再往下调。
+    fontFamily: Inter
+    fontSize: 11px
+    fontWeight: 500
+    lineHeight: 1.27
+  badge-xs-strong:
+    # 同 badge-xs，字重更高，用于徽章里的数值/状态词。
+    fontFamily: Inter
+    fontSize: 11px
+    fontWeight: 600
+    lineHeight: 1.27
   counter-pixel:
     fontFamily: PikoCountdownPixel
     fontSize: 72px

@@ -63,17 +63,20 @@ import {
   type DirectorDeskExportVideoResult,
   type DirectorDeskProjectSaveRequest,
   type DirectorDeskReadyInfo,
+  type DirectorDeskStoryboardPayload,
 } from './directorDeskBridge';
 import {
   DIRECTOR_DESK_PANORAMA_MAX_BYTES,
   DirectorDeskPanoramaError,
   directorDeskV2IframeSrc,
+  fetchDirectorDeskStoryboard,
   getDirectorDeskV2Session,
   markDirectorDeskV2SessionReady,
   registerDirectorDeskV2Session,
   subscribeDirectorDeskAgentEvents,
+  withStoryboardContext,
 } from './directorDeskV2Session';
-import type { DirectorDeskAiOp } from './directorDeskV2Session';
+import type { DirectorDeskAiOp, DirectorDeskStoryboard } from './directorDeskV2Session';
 
 type DirectorDeskNodeProps = NodeProps & {
   id: string;
@@ -466,6 +469,15 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const [artifactError, setArtifactError] = useState<string | null>(null);
   const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null);
   /**
+   * 项目分镜目录与「当前在看哪条」。
+   *
+   * 这是导演台从「一个空的 3D 工具」变成「项目流程的一环」的关键：用户在这里说
+   * 「按第 3 场戏摆」，AI 靠这段上下文知道第 3 场戏是什么。刷新时机跟着弹窗
+   * 开关走 —— 关着的时候拉分镜没有任何用处，而分镜可能已经被别处改过。
+   */
+  const [storyboard, setStoryboard] = useState<DirectorDeskStoryboard | null>(null);
+  const [storyboardError, setStoryboardError] = useState<string | null>(null);
+  /**
    * AI 背景的状态：正在生成 / 最近一次落地的时间。
    *
    * 这条反馈以前是缺的 —— 用户点完「换背景」，agent 说一句「已开始生成」，然后
@@ -479,6 +491,20 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   // 已经送进导演台的那张全景图（来源节点 + 地址）。用它避免每次重开都把用户在导演台
   // 里自己换的背景覆盖掉；只有上游真的换图时才重发。
   const sentPanoramaRef = useRef<string | null>(null);
+  /**
+   * 最新一次读到的分镜上下文原文。`onAgentRequest` 在建桥时建一次、此后不重建，
+   * 所以它拿不到后续渲染的闭包 —— 走 ref。
+   */
+  const storyboardContextRef = useRef('');
+  /**
+   * 最新一次读到的分镜本体（面板通过 `storyboard.get` 要的就是它）。
+   *
+   * 与上面那个 ref 同一个理由：桥只建一次，闭包里的 `storyboard` 会停在建桥那一刻。
+   * 分镜选择搬进 AI 面板后，这张 ref 就是面板唯一的取数来源。
+   */
+  const storyboardRef = useRef<DirectorDeskStoryboard | null>(null);
+  /** 分镜读取失败的原因。与 `storyboardRef` 同一个理由：面板只能经载荷拿到它。 */
+  const storyboardErrorRef = useRef<string | null>(null);
   /**
    * 全景链路的反馈。**必须有**：v2 的全景要走三步工具调用，素材太大、格式不对、
    * 导演台正在忙这三种情况都会真失败 —— 界面毫无反应的话用户只会以为功能坏了。
@@ -523,6 +549,9 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const previewBusyRef = useRef(false);
   const lastPreviewRef = useRef<string>('');
   const sceneSaveTimerRef = useRef<number | null>(null);
+  /** 存档失败过一次。只有「曾经失败过」才需要在下次成功时清掉红字，
+   *  否则每次成功都写一次节点数据，纯属浪费。 */
+  const saveErrorRef = useRef(false);
 
   // 沉浸式独占键盘：弹窗打开期间画布的全局快捷键（Delete / Tab / M / 空格平移 …）
   // 必须让位，否则用户在导演台里按 WASD 会串到画布上。
@@ -792,7 +821,26 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       // 堆出一串几乎一样的存档。静默期取 2s —— 够覆盖模型连着几轮工具调用。
       sceneSaveTimerRef.current = window.setTimeout(() => {
         sceneSaveTimerRef.current = null;
-        void persistProjectSnapshot().catch(() => undefined);
+        // 存档失败**必须显形**。这里原来写的是 `.catch(() => undefined)`，后果是
+        // AI 改了几十轮、节点上看起来一切正常，关掉页面却什么都没留下，而且
+        // 日志里一条线索都没有 —— 现场实测就是这样：无静默就无从定位。
+        void persistProjectSnapshot()
+          .then(() => {
+            if (mountedRef.current && saveErrorRef.current) {
+              saveErrorRef.current = false;
+              updateNodeData(id, { errorMessage: null });
+            }
+          })
+          .catch((error: unknown) => {
+            saveErrorRef.current = true;
+            const detail = error instanceof Error ? error.message : String(error);
+            console.error('[director-desk] 工程存档失败，AI 的改动没有落盘', detail);
+            if (mountedRef.current) {
+              updateNodeData(id, {
+                errorMessage: t('node.directorDesk.saveFailed', { detail }),
+              });
+            }
+          });
       }, 2000);
     };
     const unsubscribe = subscribeDirectorDeskAgentEvents(id, (event) => {
@@ -1103,6 +1151,149 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const handlersRef = useRef({ handleReady, handleDeskClose, handleCaptures, handleProjectSave });
   handlersRef.current = { handleReady, handleDeskClose, handleCaptures, handleProjectSave };
 
+  /**
+   * 读项目分镜。跟着弹窗开关走：关着时拉分镜没有用处，而分镜随时可能别处改过，
+   * 缓存一份到下次打开只会让 AI 拿着过期镜头说话。
+   *
+   * 读的是节点 data 里记住的那一集 / 那一条；没记住就让后端选最后一个有分镜的集。
+   */
+  const refreshStoryboard = useCallback(
+    (options: { episode?: number; beat?: number } = {}) => {
+      const project = readUrl().project;
+      if (!project) return Promise.resolve(null);
+      return fetchDirectorDeskStoryboard(project, {
+        episode: options.episode ?? data.storyboardEpisode ?? undefined,
+        beat: options.beat ?? data.storyboardBeat ?? undefined,
+      });
+    },
+    // `data.storyboardEpisode` / `data.storyboardBeat` 只在选择变化时读；
+    // 刻意不进依赖，否则每写一次节点数据都会重新拉一遍分镜。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  useEffect(() => {
+    if (!isOpen) {
+      setStoryboard(null);
+      setStoryboardError(null);
+      storyboardContextRef.current = '';
+      return undefined;
+    }
+    let cancelled = false;
+    void refreshStoryboard()
+      .then((loaded) => {
+        if (cancelled || !loaded) return;
+        setStoryboard(loaded);
+        setStoryboardError(null);
+        storyboardContextRef.current = loaded.context;
+        // 后端替我们选了集 / 镜头（第一次打开时是它决定的），把它落回节点，
+        // 下次打开面板显示的就是主人上次看到的那条。
+        if (loaded.episode && loaded.episode !== data.storyboardEpisode) {
+          updateNodeData(id, { storyboardEpisode: loaded.episode });
+        }
+        if (loaded.selected && loaded.selected !== data.storyboardBeat) {
+          updateNodeData(id, { storyboardBeat: loaded.selected });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // 分镜读不到不该挡住导演台：把话说明白，AI 这一轮就没有「第 N 场戏」的依据，
+        // 它会照工程现状回答，而不是拿一份不存在的分镜编。
+        setStoryboardError(error instanceof Error ? error.message : String(error));
+        storyboardContextRef.current = '';
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, id, refreshStoryboard]);
+
+  // 面板经 `storyboard.get` 取的是 ref，不是 state（桥只建一次，闭包会停在建桥那一刻）。
+  // 单独一条 effect 同步，而不是在每个写入点各写一遍 —— 三处写入少一处，ref 就会
+  // 悄悄留下一份旧分镜，面板看到的选中态与 AI 实际拿到的 context 会对不上。
+  useEffect(() => {
+    storyboardRef.current = storyboard;
+  }, [storyboard]);
+  useEffect(() => {
+    storyboardErrorRef.current = storyboardError;
+  }, [storyboardError]);
+
+  const selectStoryboardBeat = useCallback(
+    async (episode: number, beat: number): Promise<DirectorDeskStoryboard | null> => {
+      updateNodeData(id, { storyboardEpisode: episode, storyboardBeat: beat });
+      try {
+        const loaded = await refreshStoryboard({ episode, beat });
+        if (!loaded) return null;
+        setStoryboard(loaded);
+        // ref 同步写一次，不只依赖下面那条 effect：面板的 `storyboard.select` 在这个
+        // await 之后**立刻**回读载荷，那时 effect 还没跑（要等下一次 commit），
+        // 只靠 effect 会让面板拿到上一场的分镜。
+        storyboardRef.current = loaded;
+        setStoryboardError(null);
+        storyboardContextRef.current = loaded.context;
+        return loaded;
+      } catch (error: unknown) {
+        // 选中失败必须说出来，但不能把已经拿到的分镜清空：用户只是选了一场，
+        // 读不出来不等于这个项目没有分镜。
+        setStoryboardError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [id, refreshStoryboard, updateNodeData],
+  );
+
+  /**
+   * 面板看到的分镜载荷。
+   *
+   * **不带 `context`**（注释见 `DirectorDeskStoryboardPayload`）：那段拼接文本只进
+   * `/ai/run` 的 `context`，发进面板只会多一个泄漏面，面板也没有它的用途。
+   *
+   * 从 ref 读而不是闭包：桥只在 iframe 首帧前建一次，之后不再重建，闭包里的
+   * `storyboard` 会永远停在建桥那一刻。
+   */
+  const readStoryboardPayload = useCallback((): DirectorDeskStoryboardPayload => {
+    const current = storyboardRef.current;
+    const shots = (current?.beats ?? []).map((beat) => ({
+      beat_number: beat.beat_number,
+      scene: beat.scene,
+      duration_seconds: beat.duration_seconds,
+      speaker: beat.speaker,
+      synopsis: beat.synopsis,
+      spoken_text: beat.spoken_text,
+    }));
+    const error = storyboardErrorRef.current;
+    return {
+      episodes: current?.episodes ?? [],
+      episode: current?.episode ?? 0,
+      shots,
+      selected: current?.selected ?? null,
+      // 空项目也给一句人话：面板上不能是一块空白，那看起来像坏了而不是像「还没有」。
+      // 但**读失败时不发这句** —— 它会把一次接口故障说成「你没素材」，而真正该做的是
+      // 报出失败本身。两个字段互斥，面板按 error 优先显示。
+      hint: shots.length === 0 && !error ? t('node.directorDesk.storyboardEmptyHint') : '',
+      error,
+    };
+  }, [t]);
+
+  /**
+   * 桥的回调读最新闭包，所以这两张表每渲染一次就更新一次。桥本身不重建
+   * （重建会把 iframe 重新挂一遍），见 `attachIframe` 的注释。
+   */
+  const storyboardBridgeRef = useRef<{
+    get: typeof readStoryboardPayload;
+    select: (episode: number, beat: number) => Promise<DirectorDeskStoryboardPayload>;
+  }>({ get: readStoryboardPayload, select: async () => readStoryboardPayload() });
+  storyboardBridgeRef.current = {
+    get: readStoryboardPayload,
+    select: async (episode: number, beat: number) => {
+      const loaded = await selectStoryboardBeat(episode, beat);
+      // 读失败时 `loaded` 是 null，但面板仍要拿到一份**如实**的载荷（可能是上一次
+      // 成功读到的，也可能是空项目）—— 面板据此显示旧分镜而不是清空。
+      void loaded;
+      return readStoryboardPayload();
+    },
+  };
+
   // 桥必须在 iframe 的文档开始执行之前就位，否则首帧 ready 会丢。
   //
   // 用**回调 ref** 而不是 useLayoutEffect + 普通 ref：Dialog 的内容是 portal 且比
@@ -1124,8 +1315,22 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         onAgentRequest: async (op, payload) => {
           const session = getDirectorDeskV2Session(id);
           if (!session) throw new Error('导演台会话尚未就绪');
+          // 「按第 N 场戏摆」要成立，AI 必须先知道第 N 场戏是什么。宿主是唯一同时
+          // 知道「当前项目」和「用户正在看哪条分镜」的地方，所以在这里把分镜上下文
+          // 挂进 run 的 `context` —— **不改 prompt**：那是用户原话，会原样落进共享
+          // 对话历史，两个面板都会看到这段内部文本。
+          if (op === 'run') {
+            return session.requestAgent(
+              op as DirectorDeskAiOp,
+              withStoryboardContext(payload, storyboardContextRef.current),
+            );
+          }
           return session.requestAgent(op as DirectorDeskAiOp, payload);
         },
+        // 分镜选择搬进 AI 面板后，面板自己不再有取数通道 —— 它向宿主要。
+        // 两个回调都走 ref：桥只在建桥那一刻创建，闭包会停在当时。
+        onStoryboardGet: () => storyboardBridgeRef.current.get(),
+        onStoryboardSelect: ({ episode, beat }) => storyboardBridgeRef.current.select(episode, beat),
         // 导演台 AI 面板只留渠道选择器与极简新建；完整渠道管理跳 DramaClaw 设置页。
         // 走 settingsStore 而不是事件总线：设置弹窗本来就由 header 渲染，store 是
         // 它已有的跨组件通道，再开一条只能多一处真相。
@@ -1361,12 +1566,12 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
             <span>{t('node.directorDesk.sceneStatusUnknown')}</span>
           )}
           {savedAt !== null && (
-            <span className="rounded-full bg-cyan-300/[0.12] px-1.5 text-[10px] text-cyan-200/90">
+            <span className="rounded-full bg-cyan-300/[0.12] px-1.5 text-[11px] text-cyan-200/90">
               {t('node.directorDesk.projectArchivedShort')}
             </span>
           )}
           {aiActivity && (
-            <span className="flex items-center gap-1 text-[10px] text-sky-200/90">
+            <span className="flex items-center gap-1 text-[11px] text-sky-200/90">
               <Loader2 className="size-2.5 animate-spin" />
               {aiActivity.kind === 'tool' && aiActivity.name
                 ? t('node.directorDesk.assistantActivityShort', { name: aiActivity.name })
@@ -1394,7 +1599,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
           )}
           <span
             role="status"
-            className="ml-auto flex items-center gap-1 text-[10px] leading-4 text-white/40"
+            className="ml-auto flex items-center gap-1 text-[11px] leading-4 text-white/40"
           >
             {aiSceneAt !== null && t('node.directorDesk.sceneAppliedShort')}
           </span>
@@ -1552,6 +1757,18 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
                 {projectReadout && (
                   <span className="text-[12px] leading-5 text-white/45">{projectReadout}</span>
                 )}
+                {/*
+                  分镜选择不在这里，而在导演台自己的 AI 面板里（`ai-chat` 视图，
+                  紧邻渠道选择器）。这是用户的原话：「这分镜太占地方了，不应该放这里，
+                  应该放 AI 对话，选择」—— 它占满整行宽度，还把「保存工程」「工程已存档」
+                  挤到别处。
+
+                  选分镜本来就是「这一轮用什么」的决定，与选渠道、选模式同一性质，所以
+                  跟着对话去。数据层没有跟着搬走：`refreshStoryboard` 仍随弹窗开关读一次，
+                  面板经 `storyboard.get` / `storyboard.select` 两条子→宿主动作取数与回写
+                  （见 `attachIframe`）。AI 上下文注入也不变：`withStoryboardContext` 仍
+                  只写 `context`，绝不混进 `prompt`。
+                */}
                 {savedAt !== null && (
                   <span className="rounded-full bg-cyan-300/[0.12] px-2 py-0.5 text-[12px] leading-5 text-cyan-200/90">
                     {t('node.directorDesk.projectArchivedAt', {

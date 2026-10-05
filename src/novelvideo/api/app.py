@@ -37,6 +37,7 @@ from novelvideo.task_backend.limits import (
     ProjectUserTaskLimitExceeded,
     UserTaskLimitExceeded,
 )
+from novelvideo.utils.log_setup import configure_logging
 from novelvideo.utils.upload_safety import MAX_PROJECT_UPLOAD_BYTES
 
 logger = logging.getLogger("novelvideo.api.app")
@@ -96,6 +97,9 @@ def _record_resource_request(resource_key: str) -> tuple[int, int]:
 
 
 def create_app() -> FastAPI:
+    # 先配日志再做任何别的事：应用工厂后面每一步都可能打日志，而 uvicorn 的
+    # 默认配置只管自己那三个 logger，不会给 root 补 handler（见 log_setup）。
+    configure_logging()
     register_verification_routes()
 
     application = FastAPI(title="NovelVideo API", openapi_tags=OPENAPI_TAGS)

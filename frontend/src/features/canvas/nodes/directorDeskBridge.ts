@@ -116,6 +116,16 @@ export const DIRECTOR_DESK_ACTIONS = [
   // 画布节点的场景缩略图（宿主 → 子）：子应用从自己的渲染画布截一张当前取景回给
   // 宿主。这是「节点上要能看出导演台里发生了什么」的数据来源。
   'preview.capture',
+  // ── 分镜选择（子 → 宿主）────────────────────────────────────────────────
+  // 「这一轮谈第几场戏」是宿主的知识，不是导演台的：分镜存在 DramaClaw 的项目库里，
+  // 宿主还知道节点 data 里记住的是哪一条。子应用没有后端会话，只能向宿主要。
+  //
+  // **不复用 `ai.request`**：那条通道的终点是 Python 后端（`DirectorDeskAiOp` 一一对应
+  // `/ai/*` 端点），而分镜宿主自己已经读到了（`refreshStoryboard`）。走它会为了一个
+  // 纯本地的取数多绕一跳后端，还要求后端开一条新端点。
+  'storyboard.get',
+  // 面板选中某场后回写宿主。返回重读后的同一份载荷，让面板按事实重画而不是自己乐观更新。
+  'storyboard.select',
 ] as const;
 
 export type DirectorDeskAction = (typeof DIRECTOR_DESK_ACTIONS)[number];
@@ -156,6 +166,8 @@ export const DIRECTOR_DESK_ACTION_DIRECTION: Record<
   'agent.event': 'host-to-child',
   'ui.open-settings': 'child-to-host',
   'preview.capture': 'host-to-child',
+  'storyboard.get': 'child-to-host',
+  'storyboard.select': 'child-to-host',
 };
 
 export const DIRECTOR_DESK_MESSAGE_TYPES = {
@@ -261,6 +273,44 @@ export interface DirectorDeskProjectSaveResult {
 export interface DirectorDeskToolResult {
   revision: number | null;
   result: unknown;
+}
+
+/**
+ * 一条分镜。字段名与后端 `ai_director_desk_context.beat_view` 逐字一致，让面板不需要
+ * 一份翻译表就能画卡片。
+ */
+export interface DirectorDeskStoryboardShot {
+  beat_number: number;
+  scene: string;
+  duration_seconds: number;
+  speaker: string;
+  synopsis: string;
+  spoken_text: string;
+}
+
+/**
+ * `storyboard.get` / `storyboard.select` 的载荷。
+ *
+ * **不含 `context`**：那是宿主喂给 `/ai/run` 的内部上下文，只走 `withStoryboardContext`
+ * 那条路。发进面板等于让一段本不该出现在界面上的拼接文本多一个泄漏面，面板也没有用它。
+ */
+export interface DirectorDeskStoryboardPayload {
+  /** 有分镜的集号，升序。空数组 = 这个项目还没有分镜。 */
+  episodes: number[];
+  episode: number;
+  shots: DirectorDeskStoryboardShot[];
+  /** 当前选中的 `beat_number`；没有选中时为 null。 */
+  selected: number | null;
+  /** 项目 id 之外的一句话提示（无分镜时告诉用户去哪生成分镜）。空字符串表示无需提示。 */
+  hint: string;
+  /**
+   * 读分镜失败的原文，null 表示没失败。
+   *
+   * **必须带**：面板只拿到这份载荷，没有别的地方能知道「读不到」与「这个项目真的没有
+   * 分镜」的区别 —— 前者该提示重试/看错误，后者该引导去生成分镜。合成一句「没有分镜」
+   * 会把一次接口故障说成用户没有素材。
+   */
+  error: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -391,6 +441,21 @@ export interface DirectorDeskBridgeHandlers {
    * 一直等到超时。
    */
   onOpenHostSettings?: (page: DirectorDeskSettingsPage) => void | Promise<void>;
+  /**
+   * 子应用问当前项目的分镜（`storyboard.get`，子 → 宿主）。宿主是唯一同时知道
+   * 「当前项目」和「用户正在看哪场戏」的地方，所以取数只在这里发生。
+   *
+   * 不给这个回调 = 宿主不提供分镜：请求会被回成明确失败，面板据此显示「读不到」，
+   * 而不是静默丢弃让面板一直等到超时。
+   */
+  onStoryboardGet?: () => Promise<DirectorDeskStoryboardPayload> | DirectorDeskStoryboardPayload;
+  /**
+   * 面板选中某一场（`storyboard.select`，子 → 宿主）。宿主回写节点 data、重读分镜，
+   * 并把重读后的载荷一并返回 —— 面板按回包重画，不自己乐观更新，避免两边选中态分叉。
+   */
+  onStoryboardSelect?: (
+    shot: { episode: number; beat: number },
+  ) => Promise<DirectorDeskStoryboardPayload> | DirectorDeskStoryboardPayload;
   /** 协议/传输层错误（超时、非法请求、非致命来源丢弃不计入）。 */
   onError?: (error: Error) => void;
 }
@@ -617,6 +682,43 @@ export function createDirectorDeskBridge(
         (error: unknown) =>
           settle(false, undefined, error instanceof Error ? error.message : String(error)),
       );
+      return;
+    }
+
+    // 分镜选择（子 → 宿主）。与 `ai.request` 同方向，但**不经过 Python 后端**：
+    // 分镜宿主自己已经读到了，再绕一圈后端只会让选镜头这件事多一次网络往返，
+    // 还要求后端开一条只为转发本地取数的端点。
+    if (action === 'storyboard.get' || action === 'storyboard.select') {
+      if (action === 'storyboard.get') {
+        if (!options.onStoryboardGet) {
+          settle(false, undefined, '宿主未提供分镜数据');
+          return;
+        }
+        void Promise.resolve(options.onStoryboardGet()).then(
+          (result) => settle(true, result),
+          (error: unknown) =>
+            settle(false, undefined, error instanceof Error ? error.message : String(error)),
+        );
+        return;
+      }
+      if (!options.onStoryboardSelect) {
+        settle(false, undefined, '宿主未接管分镜选择');
+        return;
+      }
+      // 集号与镜头号都必须是正整数：0 是后端「没指定」的哨兵值，放行会让面板的
+      // 「没选中」被当成「第 0 场」，而第 0 场不存在。
+      const episode = Number(requestOptions.episode);
+      const beat = Number(requestOptions.beat);
+      if (!Number.isInteger(episode) || episode < 1 || !Number.isInteger(beat) || beat < 1) {
+        settle(false, undefined, 'storyboard.select 需要正整数的 episode 与 beat');
+        return;
+      }
+      void Promise.resolve(options.onStoryboardSelect({ episode, beat })).then(
+        (result) => settle(true, result),
+        (error: unknown) =>
+          settle(false, undefined, error instanceof Error ? error.message : String(error)),
+      );
+      return;
     }
   }
 

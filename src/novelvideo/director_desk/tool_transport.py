@@ -37,11 +37,14 @@ agent 循环跑在后端（模型密钥、配额、会话历史都在这一侧�
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "DirectorDeskToolTransport",
@@ -204,9 +207,11 @@ class DirectorDeskToolTransport:
             )
         )
         session.touch()
+        _log.debug("director desk tool queued node=%s name=%s request=%s", key, name, request_id)
         try:
             return await asyncio.wait_for(future, self._tool_timeout)
         except (asyncio.TimeoutError, TimeoutError):
+            _log.warning("director desk tool timed out node=%s name=%s request=%s", key, name, request_id)
             return {
                 "ok": False,
                 "execution": "unknown",
@@ -222,7 +227,14 @@ class DirectorDeskToolTransport:
         key = str(node_id or "").strip()
         pending = self._pending.get(str(request_id or ""))
         if pending is None or pending.node_id != key:
+            _log.debug("director desk tool result unmatched node=%s request=%s", key, request_id)
             return False
+        _log.debug(
+            "director desk tool result node=%s request=%s ok=%s",
+            key,
+            request_id,
+            bool(result.get("ok")) if isinstance(result, dict) else False,
+        )
         return self._resolve(str(request_id), result)
 
     def _resolve(self, request_id: str, result: dict[str, Any]) -> bool:
@@ -271,6 +283,12 @@ class DirectorDeskToolTransport:
             session.wakeup.clear()
             payload = self._drain(session)
             if payload["calls"] or payload["events"]:
+                _log.debug(
+                    "director desk poll node=%s calls=%s events=%s",
+                    key,
+                    len(payload["calls"]),
+                    len(payload["events"]),
+                )
                 return payload
             remaining = deadline - time.monotonic()
             if remaining <= 0:

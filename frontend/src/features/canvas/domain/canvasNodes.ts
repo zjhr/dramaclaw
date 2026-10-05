@@ -756,6 +756,12 @@ export interface DirectorDeskNodeData extends NodeDisplayData {
   sourceKind?: 'image' | 'text' | null;
   /** 错误消息（桥握手失败、上传失败时显示）。 */
   errorMessage?: string | null;
+  /**
+   * 导演台当前在看的分镜（集号 / 镜头号）。AI 面板据此把「第 3 场戏」落到具体
+   * 那一条上；`null` 表示没选，AI 会拿整集目录去问而不是猜。
+   */
+  storyboardEpisode?: number | null;
+  storyboardBeat?: number | null;
   [key: string]: unknown;
 }
 

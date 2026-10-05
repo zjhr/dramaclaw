@@ -32,6 +32,7 @@
 | POST | `/ai/blender/status` | 本机能否跑 AI 建模（Blender 路径、护栏路径、可用 kind） |
 | POST | `/ai/blender/run` | 跑一段 AI 写的 bpy 脚本 → 护栏 → GLB |
 | POST | `/ai/blender/tool` | 同上，但回**工具结果**形状并内联 base64 |
+| POST | `/storyboard` | 项目分镜目录 + 选中镜头的上下文文本（**唯一带鉴权**的端点，见下） |
 | POST | `/skills` | 技能面板动作 |
 
 ### MCP（外部客户端 + 上游面板的 MCP 区）
@@ -47,15 +48,23 @@
 没有明文。``/ai/channel-models`` 与 ``/ai/channel-quick-create`` 同理 —— 前者只回模型
 ID，后者的回包形状与 ``/ai/configure`` 一致。``/ai/profile-models`` 连请求体都不收
 密钥（渠道的密钥留在后端），回包同样只有模型 ID。
+
+``/storyboard`` 是这批里唯一挂 ``get_api_user`` 的：其余端点只碰导演台自己的工程
+（同一台机器上的一次会话），而它读的是**项目数据** —— 剧本、旁白、角色名。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from novelvideo.director_desk.ai_director_desk_context import (
+    beat_view,
+    build_storyboard_context,
+    storyboard_episodes_with_beats,
+)
 from novelvideo.director_desk.ai_host import (
     BLENDER_KINDS,
     BLENDER_TOOL_NAME,
@@ -568,6 +577,76 @@ async def blender_tool(payload: BlenderRunRequest) -> dict[str, Any]:
     if not data.get("ok"):
         return {"ok": False, "error": data.get("message") or "Blender 执行失败", "data": data}
     return {"ok": True, "data": data}
+
+
+# ── 分镜上下文 ──────────────────────────────────────────────────────────────
+
+
+class StoryboardRequest(BaseModel):
+    """读项目分镜，供导演台面板选镜头与拼上下文。
+
+    ``episode`` 留空时取「最后一个有分镜的集」。宿主不该猜当前是第几集：项目里
+    可能只有第 3 集有分镜，猜成第 1 集会静默给出一份空目录。
+    """
+
+    project: str
+    episode: int = 0
+    beat: int = 0
+
+
+async def _api_user(request: Request) -> dict:
+    """``novelvideo.api.auth.get_api_user`` 的等价依赖，签名逐字对齐。
+
+    导入推迟到调用时：``novelvideo.api.__init__`` 挂的就是本模块，顶部导入会形成
+    「routes → api → routes」的环，先于 ``novelvideo.api`` 导入本模块的地方（测试、
+    MCP 工具）会拿到半初始化的模块。
+    """
+    from novelvideo.api.auth import get_api_user  # noqa: PLC0415
+
+    return await get_api_user(request)
+
+
+@router.post("/storyboard")
+async def storyboard(payload: StoryboardRequest, user: dict = Depends(_api_user)) -> dict[str, Any]:
+    """当前项目的分镜目录 + 选中镜头的上下文文本。
+
+    **鉴权与 ``/ai/*`` 那批端点不同**：那批是本机单用户、只碰导演台自己的工程；
+    这里读的是项目数据（剧本、旁白、角色），所以要过 ``get_api_user`` +
+    ``resolve_project_scope``，而不是裸挂。
+    """
+    from novelvideo.api.deps import (  # noqa: PLC0415
+        resolve_project_scope,
+        sqlite_store_for_context_scope,
+        sqlite_store_scope,
+    )
+
+    resolved = await resolve_project_scope(payload.project, user, required_role="viewer")
+    scope = (
+        sqlite_store_for_context_scope(resolved.ctx, load_graph_state=False)
+        if resolved.ctx
+        else sqlite_store_scope(resolved.username, resolved.project_name)
+    )
+    async with scope as store:
+        counts = await store.count_beats_by_episode()
+        available = storyboard_episodes_with_beats(counts)
+        if not available:
+            return {"ok": True, "data": {"episode": 0, "episodes": [], "beats": [], "context": ""}}
+        episode = payload.episode if payload.episode in available else available[-1]
+        beats = await store.get_beats_as_dicts(episode)
+
+    views = [beat_view(beat, episode=episode) for beat in beats]
+    views = [view for view in views if view["beat_number"]]
+    selected = payload.beat or (views[0]["beat_number"] if views else None)
+    return {
+        "ok": True,
+        "data": {
+            "episode": episode,
+            "episodes": available,
+            "beats": views,
+            "selected": selected,
+            "context": build_storyboard_context(beats, episode=episode, selected=selected),
+        },
+    }
 
 
 # ── 技能 ────────────────────────────────────────────────────────────────────

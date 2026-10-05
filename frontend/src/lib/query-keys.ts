@@ -143,4 +143,6 @@ export const queryKeys = {
   ttsVoices: (p: string) => ["projects", p, "tts", "voices"] as const,
   modelGateway: () => ["model-gateway", "config"] as const,
   releaseNotifications: (locale: string) => ["release-notifications", locale] as const,
+  /** 写法库是本机共用的，不按项目分片。 */
+  writingSkills: () => ["writing-skills"] as const,
 };

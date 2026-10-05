@@ -977,7 +977,7 @@ describe("导演台 AI 面板的渠道同步", () => {
 <div id="timeline-content"></div><button id="timeline-to-ai"></button>`;
   };
   const channelSelect = () => document.querySelector<HTMLSelectElement>("#ai-channel")!;
-  const statusBox = () => document.querySelector<HTMLTextAreaElement>("#ai-status")!;
+  const statusBox = () => document.querySelector<HTMLElement>("#ai-status")!;
   const promptBox = () => document.querySelector<HTMLTextAreaElement>("#ai-prompt")!;
   const sendButton = () => document.querySelector<HTMLButtonElement>("#ai-send")!;
   const openToggle = () => document.querySelector<HTMLButtonElement>("#ai-toggle")!;
@@ -1084,7 +1084,7 @@ describe("导演台 AI 面板的渠道同步", () => {
     await flush();
 
     expect(calls.run).toEqual([]); // 一次都没发出去
-    expect(statusBox().value).toContain("这个渠道已被删除，请重新选择");
+    expect(statusBox().textContent).toContain("这个渠道已被删除，请重新选择");
     expect(channelSelect().value).toBe("openai"); // 落到还活着的那条
     expect(sendButton().disabled).toBe(false); // 选好新的还能再发
   });
@@ -1160,5 +1160,229 @@ describe("导演台 AI 面板的渠道同步", () => {
 
     expect(calls.profiles).toBe(before);
     expect(channelIds()).toEqual(["sharellm"]);
+  });
+
+  it("旧 transcript 字符串恢复成消息，流式文本并进同一条 AI", async () => {
+    let emit: (event: { type: string; sessionId: string; text?: string; name?: string; status?: string; summary?: unknown }) => void = () => {};
+    const { bridge } = makeBridge([channel("sharellm")]);
+    bridge.conversation.mockResolvedValue({
+      ok: true as const,
+      data: {
+        sessionId: "s1",
+        profileId: "",
+        transcript: "\n跟随或模块连接引用\n\n你：继续\nAI：上次整批\n[director_apply：ok]{\"n\":1}\n",
+      },
+    });
+    bridge.onEvent.mockImplementation((cb: typeof emit) => { emit = cb; });
+    await mountPanel(bridge);
+
+    const roles = () => [...document.querySelectorAll("#ai-transcript .ai-msg")].map((el) => el.getAttribute("data-role"));
+    expect(roles()).toEqual(["error", "user", "assistant", "tool"]);
+    expect(document.querySelector(".ai-msg-user .ai-bubble")?.textContent).toBe("继续");
+    expect(document.querySelector(".ai-msg-assistant .ai-bubble")?.textContent).toBe("上次整批");
+    expect(document.querySelector(".ai-msg-tool summary")?.textContent).toContain("director_apply · ok");
+    expect(document.querySelector(".ai-msg-tool pre")?.textContent).toContain('"n": 1');
+
+    promptBox().value = "再来";
+    sendButton().click();
+    await flush();
+    await flush();
+    emit({ type: "text", sessionId: "s1", text: "甲" });
+    emit({ type: "text", sessionId: "s1", text: "乙" });
+    const assistants = [...document.querySelectorAll(".ai-msg-assistant .ai-bubble")].map((el) => el.textContent);
+    expect(assistants[assistants.length - 1]).toBe("甲乙");
+    emit({ type: "error", sessionId: "s1", text: "连接中断" });
+    const errors = [...document.querySelectorAll(".ai-msg-error")];
+    expect(errors[errors.length - 1]?.textContent).toContain("连接中断");
+    expect(statusBox().textContent).not.toContain("连接中断");
+    expect(document.querySelector("#ai-transcript")?.getAttribute("aria-live")).toBe("polite");
+  });
+});
+
+/**
+ * 分镜选择搬进 AI 对话面板。
+ *
+ * 主人原话：「这分镜太占地方了，不应该放这里，应该放 AI 对话，选择」——它原来挂在弹窗
+ * 顶部状态栏里，占满整行宽度还把「保存工程」「工程已存档」挤走。
+ *
+ * 这里断三件事：弹窗顶部不再有卡片墙；面板能经子→宿主动作取到分镜；面板选中某场后
+ * 宿主真的换了 `context`（而不是只换了个界面高亮）。
+ */
+
+/** 一条 beat 的后端回包形状（`ai_director_desk_context.beat_view`）。 */
+function beatPayload(beatNumber: number, scene: string, synopsis: string, spoken = "") {
+  return {
+    episode: 1,
+    beat_number: beatNumber,
+    scene,
+    time_of_day: "夜",
+    duration_seconds: 8.2,
+    audio_type: "dialogue",
+    audio_type_label: "对话",
+    speaker: spoken ? "林晚" : "",
+    synopsis,
+    video_prompt: "推门进入",
+    spoken_text: spoken,
+    identities: ["林晚"],
+    is_manual_shot: false,
+  };
+}
+
+/**
+ * 桩 `/director-desk/storyboard`。`selected` 记下最近一次请求带的是哪一场，
+ * `contexts` 留下每个回包的 context 原文 —— 后者用来证明 context 真的换了。
+ */
+function stubStoryboardFetch(options: { beats?: number; fail?: boolean } = {}) {
+  const beats = options.beats ?? 3;
+  const requests: Array<Record<string, unknown>> = [];
+  const contexts: string[] = [];
+  const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    requests.push(body);
+    if (options.fail) {
+      return new Response(JSON.stringify({ ok: false, error: "分镜服务没起来" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const beat = Number(body.beat) || 1;
+    const context = `以下是本项目当前的分镜（storyboard）资料：第 ${beat} 场 · 第 1 集。`;
+    contexts.push(context);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        data: {
+          episode: 1,
+          episodes: [1],
+          selected: beat,
+          beats: Array.from({ length: beats }, (_unused, index) =>
+            beatPayload(index + 1, index === 0 ? "咖啡馆" : "车内", `第 ${index + 1} 场概要`, "你好"),
+          ),
+          context,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { requests, contexts };
+}
+
+/**
+ * 分镜按**当前项目**取（`readUrl().project`）。jsdom 的默认路径不是
+ * `/projects/<id>/freezone`，不铺好这条 URL 的话 `refreshStoryboard` 直接 early-return，
+ * 后面每一条断言都会看到「一个没有分镜的项目」—— 而不是它该看到的东西。
+ */
+function useProjectUrl(project = "P01ABCDEF") {
+  window.history.replaceState(null, "", `/projects/${project}/freezone?canvas=user_local_test`);
+}
+
+/** 打开弹窗并完成握手，返回一个往面板发子→宿主请求并等回包的小工具。 */
+async function openDeskWithStoryboard() {
+  const user = userEvent.setup();
+  useProjectUrl();
+  renderNode();
+  await user.click(screen.getByRole("button", { name: /打开|Open|Mở/ }));
+  await waitFor(() => expect(iframeEl()).not.toBeNull());
+  const frames: unknown[] = [];
+  installFrameRecorder(frames);
+  emitFromDirector({ type: DIRECTOR_DESK_MESSAGE_TYPES.ready });
+  await waitFor(() => expect(screen.queryByText(/正在连接导演台|Connecting/)).toBeNull());
+
+  /** 面板发起一次子→宿主请求，返回宿主回包（含 ok 与 data）。 */
+  const ask = async (action: string, options?: Record<string, unknown>) => {
+    emitFromDirector({
+      type: DIRECTOR_DESK_MESSAGE_TYPES.request,
+      payload: { protocolVersion: 2, requestId: `req-${action}`, action, options },
+    });
+    return waitFor(() => {
+      const frame = frames.find(
+        (f) =>
+          (f as { payload?: { requestId?: string; action?: string } }).payload?.requestId
+            === `req-${action}`
+          && (f as { payload?: { action?: string } }).payload?.action === action,
+      );
+      expect(frame).toBeTruthy();
+      return (frame as { payload: { ok: boolean; data?: unknown } }).payload;
+    });
+  };
+  return { ask, frames };
+}
+
+describe("分镜选择：搬进 AI 对话面板", () => {
+  it("两条动作进协议白名单，方向都是子→宿主", () => {
+    expect(isDirectorDeskAction("storyboard.get")).toBe(true);
+    expect(isDirectorDeskAction("storyboard.select")).toBe(true);
+    expect(DIRECTOR_DESK_ACTION_DIRECTION["storyboard.get"]).toBe("child-to-host");
+    expect(DIRECTOR_DESK_ACTION_DIRECTION["storyboard.select"]).toBe("child-to-host");
+  });
+
+  it("弹窗顶部不再有分镜卡片墙（搬走了，不是复制了一份）", async () => {
+    stubStoryboardFetch();
+    useProjectUrl();
+    renderNode();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /打开|Open|Mở/ }));
+    await waitFor(() => expect(iframeEl()).not.toBeNull());
+    // 等分镜真的读回来（读回来才有内容可渲染），再断言顶部没有卡片墙。
+    await waitFor(() => expect(storedData().storyboardBeat).toBe(1));
+    expect(screen.queryByTestId("director-desk-storyboard-picker")).toBeNull();
+    expect(screen.queryByTestId("director-desk-beat-number")).toBeNull();
+    // 「保存工程」回到自己的位置，没有被分镜挤走。
+    expect(
+      screen.getByRole("button", { name: /保存工程|Save project|Lưu dự án/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("面板经 storyboard.get 拿到分镜，且载荷里没有 context", async () => {
+    stubStoryboardFetch();
+    const { ask } = await openDeskWithStoryboard();
+    const payload = await ask("storyboard.get");
+    expect(payload.ok).toBe(true);
+    const data = payload.data as {
+      episodes: number[];
+      shots: Array<{ beat_number: number; scene: string }>;
+      selected: number | null;
+    };
+    expect(data.episodes).toEqual([1]);
+    expect(data.shots).toHaveLength(3);
+    expect(data.shots.map((shot) => shot.beat_number)).toEqual([1, 2, 3]);
+    expect(data.selected).toBe(1);
+    // context 是宿主喂 /ai/run 的内部文本，绝不能发进面板（见 PATCHES.md 第 11 条）。
+    expect(JSON.stringify(payload.data)).not.toContain("storyboard）资料");
+  });
+
+  it("面板选中第 3 场后，context 真的换了（不是只换界面高亮）", async () => {
+    const { contexts } = stubStoryboardFetch();
+    const { ask } = await openDeskWithStoryboard();
+    await ask("storyboard.get");
+    const payload = await ask("storyboard.select", { episode: 1, beat: 3 });
+    expect(payload.ok).toBe(true);
+    // 节点 data 记住了这一场：下次打开面板显示的还是它。
+    await waitFor(() => expect(storedData().storyboardBeat).toBe(3));
+    // 回包按宿主重读的结果来，不是面板自己写的 selected。
+    expect((payload.data as { selected: number }).selected).toBe(3);
+    // 真正的判据：送进 AI 的 context 变了。
+    expect(contexts).toContain("以下是本项目当前的分镜（storyboard）资料：第 3 场 · 第 1 集。");
+  });
+
+  it("beat 非正整数直接被拒，不回落到「第 0 场」", async () => {
+    stubStoryboardFetch();
+    const { ask } = await openDeskWithStoryboard();
+    const payload = await ask("storyboard.select", { episode: 1, beat: 0 });
+    expect(payload.ok).toBe(false);
+    expect(storedData().storyboardBeat ?? 1).toBe(1);
+  });
+
+  it("读不到分镜时报失败原因，不谎报成「没有分镜」", async () => {
+    stubStoryboardFetch({ fail: true });
+    const { ask } = await openDeskWithStoryboard();
+    const payload = await ask("storyboard.get");
+    expect(payload.ok).toBe(true);
+    const data = payload.data as { shots: unknown[]; hint: string; error: string | null };
+    expect(data.shots).toEqual([]);
+    // 两个字段互斥：读失败时不能说「去画布生成分镜」，那会把故障说成用户没素材。
+    expect(data.error).toBeTruthy();
+    expect(data.hint).toBe("");
   });
 });

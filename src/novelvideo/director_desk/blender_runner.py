@@ -62,6 +62,7 @@ Unix 有。所以 Windows 上必须换 `creationflags` + `taskkill`，`proc.kill
 from __future__ import annotations
 
 import asyncio
+import logging
 import base64
 import itertools
 import json
@@ -76,6 +77,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "BlenderRunnerError",
@@ -526,6 +529,12 @@ async def run_ai_model(
         )
     workdir = Path(tempfile.mkdtemp(prefix="dramaclaw-blender-"))
     started = time.monotonic()
+    _log.debug(
+        "director desk blender start kind=%s script_bytes=%s timeout=%s",
+        kind,
+        len(source.encode("utf-8")),
+        limit,
+    )
     try:
         script_path = workdir / "ai_model.py"
         script_path.write_text(source, encoding="utf-8")
@@ -594,6 +603,7 @@ async def run_ai_model(
         elapsed = int((time.monotonic() - started) * 1000)
         if timed_out:
             _remove_output(out)
+            _log.warning("director desk blender timeout limit=%s elapsed_ms=%s", limit, elapsed)
             return RunResult(
                 ok=False,
                 reason="timeout",
@@ -627,6 +637,14 @@ async def run_ai_model(
             report = {**report, "cleanupFailed": True, "cleanupPath": str(out)}
 
         size = out.stat().st_size if ok else 0
+        if ok:
+            _log.debug("director desk blender guard ok elapsed_ms=%s bytes=%s", elapsed, size)
+        else:
+            _log.warning(
+                "director desk blender guard fail reason=%s elapsed_ms=%s",
+                report.get("reason"),
+                elapsed,
+            )
         return RunResult(
             ok=ok,
             reason="" if ok else str(report.get("reason") or "blender-failed"),

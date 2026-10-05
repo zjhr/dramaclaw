@@ -1023,3 +1023,105 @@ export function listDirectorDeskV2NodeIds(): string[] {
 export function resetDirectorDeskV2SessionsForTests(): void {
   sessions.clear();
 }
+
+/**
+ * 一场分镜。字段与后端 `beat_view` 的输出一一对应，只多一个 `episode`。
+ */
+export interface DirectorDeskStoryboardShot {
+  beat_number: number;
+  scene: string;
+  duration_seconds: number;
+  speaker: string;
+  synopsis: string;
+  spoken_text: string;
+}
+
+/** 整个项目的分镜，以及这一轮带上哪个 episode / beat。 */
+export interface DirectorDeskStoryboard {
+  episode: number;
+  episodes: number[];
+  beats: DirectorDeskStoryboardShot[];
+  /** 选中的场次；`null` = 这个集还没有分镜。 */
+  selected: number | null;
+  /**
+   * 后端拼好的「这一轮要带进模型上下文的分镜说明」。
+   *
+   * 由后端生成而不是前端拼：它有 beat 的全部字段和防注入的措辞，前端拼一遍就得
+   * 维护第二套格式，两边一漂移模型就看到半截说明。
+   */
+  context: string;
+}
+
+/**
+ * 从后端拉分镜。
+ *
+ * 走宿主这一侧而不是面板：面板在 iframe 里，取不到项目 id 和登录态，而且分镜是
+ * **项目级**数据，宿主是唯一知道当前项目的地方。
+ *
+ * 读失败时返回 `null` 而不是抛 —— 调用方要区分「这个项目真的没有分镜」和「接口
+ * 挂了」，合成一句「没有分镜」会把一次故障说成用户没素材。
+ */
+export async function fetchDirectorDeskStoryboard(
+  projectId: string,
+  options?: { episode?: number; beat?: number; signal?: AbortSignal },
+): Promise<DirectorDeskStoryboard | null> {
+  const response = await fetch(`${DIRECTOR_DESK_API_BASE}/storyboard`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      projectId,
+      episode: options?.episode,
+      beat: options?.beat,
+    }),
+    signal: options?.signal,
+  });
+  const text = await response.text();
+  let payload: unknown = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`分镜接口返回了非 JSON 响应（HTTP ${response.status}）`);
+  }
+  if (!response.ok) {
+    const detail = readRecord(payload).detail;
+    throw new Error(typeof detail === 'string' ? detail : `分镜接口失败（HTTP ${response.status}）`);
+  }
+  // 回包是 `{ok:true, data:{…}}`，和 `postJson` 同一层壳。
+  const data = readRecord(readRecord(payload).data);
+  const episodes = (data.episodes as unknown[]).filter(
+    (value): value is number => typeof value === 'number',
+  );
+  const beats = (data.beats as unknown[]).filter(isShot);
+  const selected = data.selected;
+  return {
+    episode: typeof data.episode === 'number' ? data.episode : 0,
+    episodes,
+    beats,
+    selected: typeof selected === 'number' ? selected : null,
+    context: typeof data.context === 'string' ? data.context : '',
+  };
+}
+
+function isShot(value: unknown): value is DirectorDeskStoryboardShot {
+  const record = readRecord(value);
+  return typeof record.beat_number === 'number';
+}
+
+/**
+ * 把分镜上下文挂进 `run` 请求的 `context` 字段。
+ *
+ * **不改 prompt**：prompt 是用户原话，会原样落进共享对话历史，两个面板都会看到
+ * 这段内部文本。`context` 是后端单独取的字段，只进这一轮的模型上下文。
+ *
+ * 没有分镜时原样返回 —— 上层已经准备好了一段可读的说明塞在那里，这里不重复。
+ */
+export function withStoryboardContext(
+  payload: unknown,
+  context: string | null | undefined,
+): Record<string, unknown> {
+  if (!context) return readRecord(payload);
+  const record = readRecord(payload);
+  if (record.context === context) return record;
+  return { ...record, context };
+}
