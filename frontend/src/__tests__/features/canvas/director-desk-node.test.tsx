@@ -1239,6 +1239,14 @@ function stubStoryboardFetch(options: { beats?: number; fail?: boolean } = {}) {
   const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     requests.push(body);
+    // 端点的请求模型用的是 `project`，写成 `projectId` 会拿到 422。这条断言是
+    // 真实踩过的坑：字段名错了测试照样全绿，因为 mock 从不读这个键。
+    if (!options.fail && typeof body.project !== "string") {
+      return new Response(
+        JSON.stringify({ detail: [{ type: "missing", loc: ["body", "project"] }] }),
+        { status: 422, headers: { "content-type": "application/json" } },
+      );
+    }
     if (options.fail) {
       return new Response(JSON.stringify({ ok: false, error: "分镜服务没起来" }), {
         status: 500,

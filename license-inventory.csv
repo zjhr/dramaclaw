@@ -3317,11 +3317,11 @@ tests/test_video_processing_request.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/public/director-desk-v2/assets/fbx-model-CUy18QCS.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/gltf-model-f39w7GRB.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/index-DFFDezT9.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/fbx-model-CBXQUlTm.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/gltf-model-DwjNPV5f.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-7TvRV21p.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
 frontend/public/director-desk-v2/assets/index-C-5KcWTn.css,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-loader-CNIygRRS.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-runtime-KuXpmtBp.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/obj-model-CE9xlCJB.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/thumbnails-CkCk_T4S.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-loader-GxELb9pG.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-runtime-DSWZKd0L.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-model-BC-G6xBW.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/thumbnails-BCHwkaZa.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output

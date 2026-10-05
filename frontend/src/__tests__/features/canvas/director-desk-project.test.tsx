@@ -464,7 +464,7 @@ describe("重开节点 → 工程回灌", () => {
 
     // 快照可用 → 不出现降级提示
     await waitFor(() =>
-      expect(screen.queryByText(/快照不可用|snapshot unavailable|Không có bản chụp/)).toBeNull(),
+      expect(screen.queryByText(/快照加载失败|snapshot failed to load|Không tải được bản chụp/)).toBeNull(),
     );
     // 回灌不得反过来改写节点字段（那是保存方向的写路径）
     expect(storedData().directorProjectRef).toBe(SNAPSHOT_REF);
@@ -502,7 +502,7 @@ describe("重开节点 → 工程回灌", () => {
     const frames = await handshake();
 
     await waitFor(() =>
-      expect(screen.getByText(/快照不可用|snapshot unavailable|Không có bản chụp/)).toBeTruthy(),
+      expect(screen.getByText(/快照加载失败|snapshot failed to load|Không tải được bản chụp/)).toBeTruthy(),
     );
     // 关键：拿不到快照就**不能**把空文档推给子应用（那等于把用户的工程清空）。
     expect(requestActions(frames)).not.toContain("project.load");
@@ -519,7 +519,7 @@ describe("重开节点 → 工程回灌", () => {
     await renderOpenNode({ directorProjectRef: SNAPSHOT_REF });
     await handshake();
     await waitFor(() =>
-      expect(screen.getByText(/快照不可用|snapshot unavailable|Không có bản chụp/)).toBeTruthy(),
+      expect(screen.getByText(/快照加载失败|snapshot failed to load|Không tải được bản chụp/)).toBeTruthy(),
     );
     expect(document.querySelector("iframe")).not.toBeNull();
   });
@@ -530,7 +530,7 @@ describe("重开节点 → 工程回灌", () => {
     await renderOpenNode({ directorProjectRef: SNAPSHOT_REF });
     await handshake();
     await waitFor(() =>
-      expect(screen.getByText(/快照不可用|snapshot unavailable|Không có bản chụp/)).toBeTruthy(),
+      expect(screen.getByText(/快照加载失败|snapshot failed to load|Không tải được bản chụp/)).toBeTruthy(),
     );
   });
 });

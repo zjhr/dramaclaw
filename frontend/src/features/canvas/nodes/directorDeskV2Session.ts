@@ -1062,7 +1062,7 @@ export interface DirectorDeskStoryboard {
  * 挂了」，合成一句「没有分镜」会把一次故障说成用户没素材。
  */
 export async function fetchDirectorDeskStoryboard(
-  projectId: string,
+  project: string,
   options?: { episode?: number; beat?: number; signal?: AbortSignal },
 ): Promise<DirectorDeskStoryboard | null> {
   const response = await fetch(`${DIRECTOR_DESK_API_BASE}/storyboard`, {
@@ -1070,7 +1070,10 @@ export async function fetchDirectorDeskStoryboard(
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      projectId,
+      // 字段名必须是 `project` —— 端点的请求模型用这个名字（`StoryboardRequest`）。
+      // 写成 `projectId` 会拿到 422，而这里原本把失败当成「读不到」，用户只看到
+      // 一句「工程快照加载失败」类的提示，真正的原因被吞掉了。
+      project,
       episode: options?.episode,
       beat: options?.beat,
     }),
