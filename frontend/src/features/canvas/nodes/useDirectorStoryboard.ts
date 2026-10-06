@@ -2,14 +2,14 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
-import type { CanvasNode, DirectorDeskNodeData } from '../domain/canvasNodes';
+import { CANVAS_NODE_TYPES, type CanvasNode, type DirectorDeskNodeData } from '../domain/canvasNodes';
 import { localizeNodeDisplayName } from '../domain/nodeDisplay';
 import { prepareDirectorReferenceImage } from '../application/directorReferenceImage';
 import {
   DIRECTOR_PROJECT_STORYBOARD_SOURCE, directorStoryboardSources, resolveDirectorStoryboardSource,
 } from '../application/directorStoryboardSources';
 import { readUrl } from '@/lib/url-params';
-import type { DirectorDeskStoryboardPayload } from './directorDeskBridge';
+import type { DirectorDeskStoryboardPayload, DirectorDeskStoryboardSource } from './directorDeskBridge';
 import {
   fetchDirectorDeskCanvasStoryboard, fetchDirectorDeskStoryboard, type DirectorDeskStoryboard,
 } from './directorDeskV2Session';
@@ -20,16 +20,30 @@ export function useDirectorStoryboard(
   update: (nodeId: string, patch: Partial<DirectorDeskNodeData>) => void, t: TFunction,
 ) {
   const sources = useMemo(() => directorStoryboardSources(upstream), [upstream]);
-  const labels = sources.map(source => ({
+  const sourceCards: DirectorDeskStoryboardSource[] = sources.map(source => ({
     id: source.id,
     label: localizeNodeDisplayName(source.node.type!, source.node.data, t)
       + (source.kind === 'beat' ? ` · EP${source.episode} #${source.beat}` : ''),
+    kind: source.kind === 'beat' ? 'shot' : source.node.type === CANVAS_NODE_TYPES.textAnnotation ? 'text'
+      : source.node.type === CANVAS_NODE_TYPES.script ? 'script' : source.beats.some(beat => Boolean(beat.reference_image_url)) ? 'image' : 'storyboard',
+    previewImageUrl: typeof source.beats[0]?.reference_image_url === 'string' ? source.beats[0].reference_image_url : undefined,
+    itemCount: source.beats.length,
+    detail: source.kind === 'beat' ? `第 ${source.episode} 集 · 第 ${source.beat} 镜` : undefined,
   }));
-  if (readUrl().project) labels.push({ id: DIRECTOR_PROJECT_STORYBOARD_SOURCE, label: t('node.directorDesk.storyboardProjectSource') });
+  const labels = sourceCards.map(({ id, label }) => ({ id, label }));
+  if (readUrl().project) {
+    sourceCards.push({
+      id: DIRECTOR_PROJECT_STORYBOARD_SOURCE,
+      label: t('node.directorDesk.storyboardProjectSource'),
+      kind: 'project',
+      detail: t('node.directorDesk.storyboardProjectSourceDetail'),
+    });
+    labels.push({ id: DIRECTOR_PROJECT_STORYBOARD_SOURCE, label: t('node.directorDesk.storyboardProjectSource') });
+  }
   const resolved = resolveDirectorStoryboardSource(sources, data.storyboardSourceId);
   const sourceId = resolved?.id ?? (data.storyboardSourceId === DIRECTOR_PROJECT_STORYBOARD_SOURCE ? data.storyboardSourceId : null);
-  const input = useRef({ data, sources, labels, sourceId });
-  input.current = { data, sources, labels, sourceId };
+  const input = useRef({ data, sources, labels, sourceCards, sourceId });
+  input.current = { data, sources, labels, sourceCards, sourceId };
   const current = useRef<DirectorDeskStoryboard | null>(null);
   const contextRef = useRef('');
   const error = useRef<string | null>(null);
@@ -52,7 +66,7 @@ export function useDirectorStoryboard(
         : t('node.directorDesk.storyboardEmptyHint');
     }
     return {
-      sources: latest.labels, sourceId: selectedId,
+      sources: latest.sourceCards, sourceId: selectedId,
       sourceLabel: latest.labels.find(label => label.id === selectedId)?.label || '',
       loading: loading.current,
       episodes: story?.episodes ?? [], episode: story?.episode ?? 0,
@@ -180,5 +194,5 @@ export function useDirectorStoryboard(
     }
     return { context, images };
   }, [contextForRun]);
-  return { contextRef, contextForRun, inputForRun, get, select, selectSource, version, sourceOptionsKey: JSON.stringify(labels) };
+  return { contextRef, contextForRun, inputForRun, get, select, selectSource, version, sourceOptionsKey: JSON.stringify(sourceCards) };
 }

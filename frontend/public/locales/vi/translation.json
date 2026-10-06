@@ -7381,6 +7381,7 @@
       "assistantBusyShort": "AI đang chạy",
       "saveFailed": "Lưu dự án thất bại — thay đổi của AI chưa được ghi xuống đĩa (đóng trang sẽ mất): {{detail}}",
       "storyboardProjectSource": "Phân cảnh dự án (chọn rõ ràng)",
+      "storyboardProjectSourceDetail": "Đọc phân cảnh đã lưu trong dự án này",
       "storyboardLoading": "Đang đọc phân cảnh liên kết…",
       "storyboardSourceDisconnected": "Nguồn đã chọn đã bị ngắt. Kết nối lại hoặc chọn nguồn khác.",
       "storyboardChooseSource": "Có nhiều nguồn phân cảnh được kết nối. Hãy chọn nguồn cho cuộc trò chuyện này.",

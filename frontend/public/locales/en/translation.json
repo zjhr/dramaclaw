@@ -7477,6 +7477,7 @@
       "assistantBusyShort": "AI working",
       "saveFailed": "Project save failed — the AI changes were not written to disk (closing the page loses them): {{detail}}",
       "storyboardProjectSource": "Project storyboard (choose explicitly)",
+      "storyboardProjectSourceDetail": "Read saved storyboards from this project",
       "storyboardLoading": "Loading linked storyboard…",
       "storyboardSourceDisconnected": "The selected source was disconnected. Connect it again or choose another source.",
       "storyboardChooseSource": "Multiple storyboard sources are connected. Choose one for this conversation.",

@@ -32,7 +32,13 @@ function makeBridge(initial = [channel('openai'), channel('sharellm')], conversa
     let listener: ((event: Event) => void) | undefined;
     let resolveRun: ((value: unknown) => void) | undefined;
     const state = { channels: initial, selected: 1, held: false, imageUrl: '' };
-    const payload = () => ({ episodes: [1], episode: 1, shots: shots.map(shot => ({ ...shot, reference_image_url: state.imageUrl })), selected: state.selected, hint: '', error: null });
+    const payload = () => ({
+        sources: [
+            { id: 'image-source', label: 'image.png', kind: 'image', previewImageUrl: state.imageUrl || '/source.png', itemCount: 3 },
+            { id: '@project-storyboard', label: '项目分镜目录（主动选择）', kind: 'project', detail: '读取当前项目已保存的分镜' },
+        ], sourceId: 'image-source', sourceLabel: 'image.png',
+        episodes: [1], episode: 1, shots: shots.map(shot => ({ ...shot, reference_image_url: state.imageUrl })), selected: state.selected, hint: '', error: null,
+    });
     const bridge = {
         profiles: vi.fn(async () => ({ ok: true, data: state.channels })),
         conversation: vi.fn(async () => ({ ok: true, data: { sessionId: 'session-1', profileId: '', transcript: '', ...conversation } })),
@@ -87,6 +93,18 @@ afterEach(() => {
 });
 
 describe('分镜选择的真实交互', () => {
+    it('来源以缩略图卡片呈现类型、名称和选中态', async () => {
+        const fake = makeBridge(); await mount(fake.bridge);
+        element<HTMLButtonElement>('ai-storyboard-toggle').click();
+        const sourceCards = [...document.querySelectorAll<HTMLButtonElement>('.ai-source-card')];
+        expect(sourceCards).toHaveLength(2);
+        expect(sourceCards[0]).toHaveTextContent('图片分镜');
+        expect(sourceCards[0]).toHaveTextContent('3 个镜头');
+        expect(sourceCards[0].querySelector('img')).toHaveAttribute('src', '/source.png');
+        expect(sourceCards[0]).toHaveAttribute('aria-selected', 'true');
+        expect(sourceCards[1]).toHaveTextContent('项目目录');
+    });
+
     it('鼠标转移卡片焦点时，即使 activeElement 暂时为 body 也不能关闭或重建目标卡片', async () => {
         const fake = makeBridge(); await mount(fake.bridge);
         element<HTMLButtonElement>('ai-storyboard-toggle').click();

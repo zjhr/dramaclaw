@@ -7477,6 +7477,7 @@
       "assistantBusyShort": "AI 在跑",
       "saveFailed": "工程存档失败，AI 的改动没有落盘（关掉页面会丢失）：{{detail}}",
       "storyboardProjectSource": "项目分镜目录（主动选择）",
+      "storyboardProjectSourceDetail": "读取当前项目已保存的分镜",
       "storyboardLoading": "正在读取关联分镜…",
       "storyboardSourceDisconnected": "已选来源已断开，请连接上游或重新选择来源。",
       "storyboardChooseSource": "已连接多个分镜来源，请先选择本轮使用哪一个。",

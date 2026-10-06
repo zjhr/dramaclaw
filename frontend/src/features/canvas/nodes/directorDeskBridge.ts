@@ -293,6 +293,16 @@ export interface DirectorDeskStoryboardShot {
   spoken_text: string;
 }
 
+/** 分镜来源的可视化摘要，供 AI 面板显示缩略图与来源类型。 */
+export interface DirectorDeskStoryboardSource {
+  id: string;
+  label: string;
+  kind?: 'image' | 'storyboard' | 'shot' | 'script' | 'text' | 'project' | 'other';
+  previewImageUrl?: string;
+  itemCount?: number;
+  detail?: string;
+}
+
 /**
  * `storyboard.get` / `storyboard.select` 的载荷。
  *
@@ -301,7 +311,7 @@ export interface DirectorDeskStoryboardShot {
  */
 export interface DirectorDeskStoryboardPayload {
   /** 仅含当前导演台的直接上游，以及用户可主动选择的项目目录。 */
-  sources?: { id: string; label: string }[];
+  sources?: DirectorDeskStoryboardSource[];
   sourceId?: string | null;
   sourceLabel?: string;
   loading?: boolean;
