@@ -46,6 +46,44 @@ def make_store(tmp_path: Path, *, builtin: BuiltinSkill | None = None) -> SkillS
     return SkillStore(tmp_path, builtin_provider=lambda: builtin)
 
 
+async def test_default_store_provides_independent_image_skill_without_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """没有画布握手和手工导入时，新安装的软件也能提供独立图片技能。"""
+    monkeypatch.setattr(skill_store, "_STORE", None)
+    monkeypatch.setattr(skill_store, "_default_root", lambda: tmp_path)
+    store = skill_store.get_skill_store()
+    entry = next(item for item in await store.list() if item["id"] == "image-previs")
+    assert entry["name"] == "image-previs" and entry["enabled"] is True
+    assert entry["builtin"] is True and entry["files"] == ["SKILL.md"]
+    body = await store.tool({"id": "image-previs"})
+    assert "director_image_previs" in body["instructions"]
+    assert "无法识图" in body["instructions"] and "确认方案" in body["instructions"]
+
+
+async def test_packaged_skill_disable_survives_restart_and_software_update(
+    tmp_path: Path,
+) -> None:
+    """随软件升级正文不能复活停用技能，也不能覆盖用户安装的其他技能。"""
+    folder = Path(skill_store.__file__).parent / "skill_packages" / "image-previs"
+    pack = package_from_folder(folder)
+    store = SkillStore(tmp_path, packaged_skills={"image-previs": pack})
+    await store.install(skill_package([SkillFile("SKILL.md", SKILL_MD.encode())]))
+    await store.enable("image-previs", False)
+    updated = skill_package([SkillFile("SKILL.md", (pack.instructions + "\n软件更新后的说明\n").encode())])
+    restarted = SkillStore(tmp_path, packaged_skills={"image-previs": updated})
+    entries = await restarted.list()
+    assert len(entries) == 2
+    assert next(entry for entry in entries if entry["id"] == "image-previs")["enabled"] is False
+    assert [entry["name"] for entry in await restarted.list(True)] == ["我的导演技能"]
+    with pytest.raises(SkillError, match="停用"):
+        await restarted.tool({"id": "image-previs"})
+    body = await handle_skill_request(restarted, {"action": "read", "id": "image-previs"})
+    assert "软件更新后的说明" in body["instructions"]
+    with pytest.raises(SkillError, match="随软件保留"):
+        await restarted.remove("image-previs")
+
+
 # ── 路径 ────────────────────────────────────────────────────────────────────
 
 

@@ -30,9 +30,14 @@ import {
   useManuscriptAction,
   useRepairManuscript,
   useSaveManuscriptImitation,
+  useDeleteWritingSkill,
+  useReshuffleWritingSkill,
+  useRestoreWritingSkill,
+  useSaveWritingSkill,
   useStartIngest,
   useUploadNovel,
   useWriteFirst,
+  useWritingSkills,
   type FormatCheck,
   type UploadResult,
 } from "@/lib/queries/ingest";
@@ -506,7 +511,7 @@ function UploadingOverlay() {
         <h2 className="text-lg font-semibold tracking-tight">
           {t("ingest.uploadingTitle")}
         </h2>
-        <p className="mt-2.5 max-w-[17rem] text-[13px] leading-6 text-muted-foreground">
+        <p className="mt-2.5 max-w-[17rem] text-xs leading-6 text-muted-foreground">
           {t("ingest.uploadingHint")}
         </p>
       </div>
@@ -665,7 +670,7 @@ function UploadedFileCard({
             </p>
             <span
               className={cn(
-                "inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[11px] font-medium leading-4",
+                "inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs font-medium leading-4",
                 statusStyles[status],
               )}
             >
@@ -1036,6 +1041,11 @@ export function IngestPageContent({ project }: { project: string }) {
   const repairMutation = useRepairManuscript(project);
   const writeFirstMutation = useWriteFirst(project);
   const saveImitationMutation = useSaveManuscriptImitation(project);
+  const writingSkillsQuery = useWritingSkills();
+  const saveWritingSkill = useSaveWritingSkill();
+  const deleteWritingSkill = useDeleteWritingSkill();
+  const restoreWritingSkill = useRestoreWritingSkill();
+  const reshuffleWritingSkill = useReshuffleWritingSkill();
   const repairRestartRef = useRef(false);
   const repairSourceFilenameRef = useRef<string | null>(null);
   const repairSourceStorageKey = `dramaclaw-repair-source:${project}`;
@@ -1774,6 +1784,19 @@ export function IngestPageContent({ project }: { project: string }) {
           upload.filename,
         );
       }}
+      skillLibrary={{
+        load: async () => {
+          const data = (await writingSkillsQuery.refetch()).data;
+          if (!data) throw new Error(t("ingest.askFirst.skillLoadFailed"));
+          return data;
+        },
+        save: async (params) => saveWritingSkill.mutateAsync(params),
+        remove: async (id) => {
+          await deleteWritingSkill.mutateAsync(id);
+        },
+        restore: async (id) => restoreWritingSkill.mutateAsync(id),
+        reshuffle: async (params) => reshuffleWritingSkill.mutateAsync(params),
+      }}
       retainConversation={retainAskConversation}
       className={shouldShowPreview ? "mt-0" : "mt-6"}
     />
@@ -2055,7 +2078,7 @@ export function IngestPageContent({ project }: { project: string }) {
                   <button
                     type="button"
                     onClick={() => setNovelFormatOpen(true)}
-                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[13px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground [&:hover>span]:underline"
+                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground [&:hover>span]:underline"
                   >
                     <Info className="size-3.5 shrink-0" />
                     <span>{t("ingest.novelFormat.button")}</span>

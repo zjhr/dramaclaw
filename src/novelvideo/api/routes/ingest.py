@@ -27,14 +27,24 @@ from novelvideo.api.schemas import (
     IngestStart,
     IngestWriteFirst,
     SaveManuscriptImitation,
+    SkillSuggestionsBody,
+    WritingSkillBody,
 )
 from novelvideo.ingest.manuscript_repair import (
     advance_manuscript_repair,
     default_repair_runner,
     fresh_progress,
 )
+from novelvideo.ingest.writing_skills import (
+    AD_BRIEF,
+    QUESTION_SYSTEM_PROMPT,
+    WritingSkillError,
+    generate_question,
+    get_writing_skill_store,
+)
 from novelvideo.ingest.zero_write import (
     ZERO_WRITE_SYSTEM_PROMPT,
+    ConfirmedAnswer,
     build_adapt_prompt,
     build_write_first_prompt,
     generate_first_manuscript,
@@ -941,6 +951,39 @@ async def save_manuscript_imitation(
             return {"ok": False, "error": str(exc)}
 
 
+def _writing_skill_directives(skill_ids: list[str]) -> list[str]:
+    """选中技能的提示词。库读不到时静默跳过：一条坏技能不该挡住开写。"""
+    try:
+        return get_writing_skill_store().prompts_for(skill_ids)
+    except WritingSkillError:
+        return []
+
+
+def _confirmed_answers(items: list) -> list[ConfirmedAnswer]:
+    """把前端传来的问答按技能库补上名称，只留下还说得清的那几条。"""
+    try:
+        library = {skill.id: skill.name for skill in get_writing_skill_store().list()}
+    except WritingSkillError:
+        library = {}
+    answers: list[ConfirmedAnswer] = []
+    for item in items:
+        name = library.get(item.skill_id) or (
+            AD_BRIEF["name"] if item.skill_id == AD_BRIEF["id"] else ""
+        )
+        if not item.question.strip() and not item.answer.strip():
+            continue
+        answers.append(
+            ConfirmedAnswer(
+                skill_id=item.skill_id,
+                skill_name=name,
+                question=item.question,
+                answer=item.answer,
+                filled_by_skill=item.filled_by_skill,
+            )
+        )
+    return answers
+
+
 @router.post("/projects/{project}/ingest/write-first")
 async def write_first_manuscript(
     project: str,
@@ -984,8 +1027,9 @@ async def write_first_manuscript(
         kind=body.kind,
         premise=body.premise,
         lead=body.lead,
-        count=body.count,
-        skills=body.skills,
+        count="1" if body.kind == "ad" else body.count,
+        directives=_writing_skill_directives(body.skills),
+        answers=_confirmed_answers(body.answers),
         episode=episode,
         previous_text=previous_text,
         note=body.note,
@@ -1078,7 +1122,10 @@ async def write_first_manuscript(
             target = uploads_dir / candidate
             _save_working_copy(target, full_text)
         else:
-            stem_prefix = f"第 1 {unit}-{body.premise[:12]}"
+            stem_source = body.premise.strip() or next(
+                (item.answer for item in body.answers if item.answer.strip()), ""
+            )
+            stem_prefix = f"第 1 {unit}-{stem_source[:12]}" if stem_source else f"第 1 {unit}"
             candidate = sanitize_upload_filename(f"{stem_prefix}.txt")
             suffix = 2
             while (uploads_dir / candidate).exists():
@@ -1132,6 +1179,182 @@ async def write_first_manuscript(
             status="failed",
         )
         return {"ok": False, "error": message}
+
+
+# ── 技能库 ──────────────────────────────────────────────────────────────────
+# 技能是手艺而不是某一本书的设定，所以这套库落在这台机器上，所有项目共用。
+
+
+async def _suggestion_runner(prompt: str, effort: str) -> str:
+    return await default_repair_runner(
+        prompt,
+        effort,
+        system_prompt=QUESTION_SYSTEM_PROMPT,
+        agent_name="生成提问与灵感",
+    )
+
+
+def _skill_payload(skill) -> dict:
+    return skill.to_json()
+
+
+async def _generated_question(
+    *,
+    name: str,
+    description: str,
+    prompt: str,
+    kind: str,
+    context: str,
+    fallback_question: str,
+    fallback_suggestions: list[str],
+) -> tuple[str, list[str]]:
+    """让模型重写一问和三句灵感；模型不通时回落到表单里已有的字。"""
+    question, suggestions = await generate_question(
+        _suggestion_runner,
+        name=name,
+        description=description,
+        prompt=prompt,
+        kind=kind,
+        context=context,
+    )
+    return question or fallback_question, list(suggestions or fallback_suggestions)
+
+
+@router.get("/writing-skills")
+async def list_writing_skills(user: dict = Depends(get_api_user)):
+    try:
+        skills = get_writing_skill_store().list()
+    except WritingSkillError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": True,
+        "data": {"skills": [_skill_payload(skill) for skill in skills], "ad_brief": AD_BRIEF},
+    }
+
+
+@router.post("/writing-skills")
+async def create_writing_skill(body: WritingSkillBody, user: dict = Depends(get_api_user)):
+    """新增一条技能。保存时让模型顺手写出这一问和三句灵感。"""
+    store = get_writing_skill_store()
+    try:
+        if not body.prompt.strip():
+            return {"ok": False, "error": "请填写提示词"}
+        question, suggestions = await _generated_question(
+            name=body.name,
+            description=body.description,
+            prompt=body.prompt,
+            kind=body.kind,
+            context=body.context,
+            fallback_question=body.question,
+            fallback_suggestions=body.suggestions,
+        )
+        skill = await store.create(
+            name=body.name,
+            description=body.description,
+            prompt=body.prompt,
+            question=question,
+            suggestions=suggestions,
+        )
+    except WritingSkillError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": {"skill": _skill_payload(skill)}}
+
+
+@router.put("/writing-skills/{skill_id}")
+async def update_writing_skill(
+    skill_id: str, body: WritingSkillBody, user: dict = Depends(get_api_user)
+):
+    """改一条技能。提示词变了就重写问题和三句，模型失败时保留原来那版。"""
+    store = get_writing_skill_store()
+    try:
+        current = store.get(skill_id)
+        if current is None:
+            return {"ok": False, "error": "技能不存在"}
+        prompt = body.prompt.strip() or current.prompt
+        prompt_changed = body.prompt.strip() != current.prompt
+        regenerate = body.regenerate or prompt_changed
+        if regenerate:
+            question: str | None
+            suggestions: list[str] | None
+            question, suggestions = await _generated_question(
+                name=body.name.strip() or current.name,
+                description=body.description if body.description else current.description,
+                prompt=prompt,
+                kind=body.kind,
+                context=body.context,
+                fallback_question=body.question.strip() or current.question,
+                fallback_suggestions=body.suggestions or list(current.suggestions),
+            )
+        else:
+            question = body.question if body.question else None
+            suggestions = body.suggestions or None
+        skill = await store.update(
+            skill_id,
+            name=body.name.strip() or None,
+            description=body.description,
+            prompt=body.prompt.strip() or None,
+            question=question,
+            suggestions=suggestions,
+        )
+    except WritingSkillError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": {"skill": _skill_payload(skill), "regenerated": regenerate}}
+
+
+@router.delete("/writing-skills/{skill_id}")
+async def delete_writing_skill(skill_id: str, user: dict = Depends(get_api_user)):
+    """删掉自己新增的技能。内置技能只能改，不能删。"""
+    try:
+        await get_writing_skill_store().remove(skill_id)
+    except WritingSkillError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": {"id": skill_id}}
+
+
+@router.post("/writing-skills/{skill_id}/restore")
+async def restore_writing_skill(skill_id: str, user: dict = Depends(get_api_user)):
+    """内置技能回到出厂那一版。"""
+    try:
+        skill = await get_writing_skill_store().restore(skill_id)
+    except WritingSkillError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": {"skill": _skill_payload(skill)}}
+
+
+@router.post("/writing-skills/{skill_id}/suggestions")
+async def reskill_suggestions(
+    skill_id: str, body: SkillSuggestionsBody, user: dict = Depends(get_api_user)
+):
+    """提问过程中的「换一批」：只换屏幕上这三句，技能库不动。"""
+    logger.info("[writing-skills] reshuffle: skill=%s kind=%s avoid=%d句", skill_id, body.kind, len(body.avoid))
+    store = get_writing_skill_store()
+    try:
+        skill = store.get(skill_id)
+        if skill_id == AD_BRIEF["id"]:
+            name, description, prompt = (
+                AD_BRIEF["name"],
+                AD_BRIEF["description"],
+                AD_BRIEF["question"],
+            )
+            question = AD_BRIEF["question"]
+        elif skill is None:
+            return {"ok": False, "error": "技能不存在"}
+        else:
+            name, description, prompt = skill.name, skill.description, skill.prompt
+            question = body.question.strip() or skill.question
+        _, suggestions = await generate_question(
+            _suggestion_runner,
+            name=name,
+            description=description,
+            prompt=prompt,
+            kind=body.kind,
+            context=body.context,
+            avoid=body.avoid,
+        )
+    except WritingSkillError as exc:
+        logger.warning("[writing-skills] reshuffle failed: skill=%s error=%s", skill_id, exc)
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "data": {"question": question, "suggestions": suggestions}}
 
 
 @router.post("/projects/{project}/ingest/start")

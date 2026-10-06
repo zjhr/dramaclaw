@@ -302,6 +302,17 @@ vi.mock("@/lib/queries/projects", () => ({
 }));
 
 vi.mock("@/lib/queries/ingest", () => ({
+  // 写法库接口在这条路由里只用来喂「另写一篇」，这里给一份空的库就够跑。
+  useWritingSkills: () => ({
+    data: { skills: [], ad_brief: { id: "ad-brief", name: "", description: "", question: "", suggestions: [] } },
+    refetch: async () => ({
+      data: { skills: [], ad_brief: { id: "ad-brief", name: "", description: "", question: "", suggestions: [] } },
+    }),
+  }),
+  useSaveWritingSkill: () => ({ mutateAsync: async () => ({ skill: null, regenerated: false }) }),
+  useDeleteWritingSkill: () => ({ mutateAsync: async () => ({ id: "" }) }),
+  useRestoreWritingSkill: () => ({ mutateAsync: async () => ({ skill: null }) }),
+  useReshuffleWritingSkill: () => ({ mutateAsync: async () => ({ question: "", suggestions: [] }) }),
   useChapters: () => ({ data: mocks.chaptersData, isFetching: false }),
   useKnowledgeGraph: (_project: string, enabled: boolean) => ({
     data: enabled

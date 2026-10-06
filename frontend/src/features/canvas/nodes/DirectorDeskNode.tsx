@@ -63,20 +63,19 @@ import {
   type DirectorDeskExportVideoResult,
   type DirectorDeskProjectSaveRequest,
   type DirectorDeskReadyInfo,
-  type DirectorDeskStoryboardPayload,
 } from './directorDeskBridge';
 import {
   DIRECTOR_DESK_PANORAMA_MAX_BYTES,
   DirectorDeskPanoramaError,
   directorDeskV2IframeSrc,
-  fetchDirectorDeskStoryboard,
   getDirectorDeskV2Session,
   markDirectorDeskV2SessionReady,
   registerDirectorDeskV2Session,
   subscribeDirectorDeskAgentEvents,
   withStoryboardContext,
 } from './directorDeskV2Session';
-import type { DirectorDeskAiOp, DirectorDeskStoryboard } from './directorDeskV2Session';
+import type { DirectorDeskAiOp } from './directorDeskV2Session';
+import { useDirectorStoryboard } from './useDirectorStoryboard';
 
 type DirectorDeskNodeProps = NodeProps & {
   id: string;
@@ -267,7 +266,11 @@ export const DIRECTOR_DESK_SNAPSHOT_MAX_BYTES = 5 * 1024 * 1024;
  * 一瞬间）。这个值只是防御「导演台卡死 / 不回话」—— 那种情况下用户不该被一个关不掉的
  * 弹窗困住，几秒已经是能忍的上限。
  */
-export const DIRECTOR_DESK_SAVE_TIMEOUT_MS = 5_000;
+/** 工程与封面需要完成两次上传，关闭时给足等待时间，超时保留编辑器。 */
+export const DIRECTOR_DESK_SAVE_TIMEOUT_MS = 60_000;
+
+/** 工程已存好但封面失败，不能把它误报成工程或 AI 改动没有落盘。 */
+class DirectorDeskPreviewSyncError extends Error {}
 
 /**
  * 缩略图的最长边（像素）。
@@ -299,16 +302,15 @@ export function directorDeskSnapshotSavedAt(projectRef: unknown): number | null 
 const VIDEO_EXTENSION = /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i;
 
 /**
- * 上游节点上有没有一张能当导演台全景图的**图片**。
- *
- * 只认图片：`upload` 节点早期版本装过视频（地址在 `data.videoUrl`），把 mp4 当全景图
- * 送进去导演台只会加载失败。上游自己的 `isSupportedHostImageUrl` 只看 scheme，拦不住
- * 这种情况，所以在这里按字段与扩展名先筛一遍。
+ * 只读取连入的 360° 全景查看器，不根据普通图片的文件名或链接推定球面投影。
+ * 全景节点也要按字段与扩展名排除视频和非图片数据，避免把视频海报当作场景环境。
  */
 export function directorDeskPanoramaSource(
-  upstreamNodes: ReadonlyArray<{ id: string; data: unknown }>,
+  upstreamNodes: ReadonlyArray<{ id: string; type: string; data: unknown }>,
 ): { sourceNodeId: string; imageUrl: string; fileName: string; displayName: string } | null {
   for (const node of upstreamNodes) {
+    // 只有明确的 360° 查看器才自动铺全景，普通图片留给识图共创，避免重开时改写预演。
+    if (node.type !== CANVAS_NODE_TYPES.pano360Viewer) continue;
     const data = (node.data ?? {}) as Record<string, unknown>;
     const videoUrl = typeof data.videoUrl === 'string' ? data.videoUrl.trim() : '';
     const candidates = [data.imageUrl, data.previewImageUrl];
@@ -445,7 +447,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   // 导演台 AI 面板的「去设置页管理渠道」按钮最终落在这里。
   const openSettingsDialog = useSettingsStore((state) => state.openSettings);
   // 一跳上游（按连线顺序、浅比较订阅）。导演台是「画布上的一个工作台」，上游接进来的
-  // 图片要真的进到它的场景里，否则接进来的线就是死的 —— 用户会立刻感到割裂。
+  // 360° 图片进入场景环境；普通图片由分镜来源送给模型，确认后再由模型制作预演。
   const upstreamNodes = useUpstreamNodes(id);
   const panoramaSource = useMemo(
     () => directorDeskPanoramaSource(upstreamNodes),
@@ -469,15 +471,6 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const [artifactError, setArtifactError] = useState<string | null>(null);
   const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null);
   /**
-   * 项目分镜目录与「当前在看哪条」。
-   *
-   * 这是导演台从「一个空的 3D 工具」变成「项目流程的一环」的关键：用户在这里说
-   * 「按第 3 场戏摆」，AI 靠这段上下文知道第 3 场戏是什么。刷新时机跟着弹窗
-   * 开关走 —— 关着的时候拉分镜没有任何用处，而分镜可能已经被别处改过。
-   */
-  const [storyboard, setStoryboard] = useState<DirectorDeskStoryboard | null>(null);
-  const [storyboardError, setStoryboardError] = useState<string | null>(null);
-  /**
    * AI 背景的状态：正在生成 / 最近一次落地的时间。
    *
    * 这条反馈以前是缺的 —— 用户点完「换背景」，agent 说一句「已开始生成」，然后
@@ -491,20 +484,6 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   // 已经送进导演台的那张全景图（来源节点 + 地址）。用它避免每次重开都把用户在导演台
   // 里自己换的背景覆盖掉；只有上游真的换图时才重发。
   const sentPanoramaRef = useRef<string | null>(null);
-  /**
-   * 最新一次读到的分镜上下文原文。`onAgentRequest` 在建桥时建一次、此后不重建，
-   * 所以它拿不到后续渲染的闭包 —— 走 ref。
-   */
-  const storyboardContextRef = useRef('');
-  /**
-   * 最新一次读到的分镜本体（面板通过 `storyboard.get` 要的就是它）。
-   *
-   * 与上面那个 ref 同一个理由：桥只建一次，闭包里的 `storyboard` 会停在建桥那一刻。
-   * 分镜选择搬进 AI 面板后，这张 ref 就是面板唯一的取数来源。
-   */
-  const storyboardRef = useRef<DirectorDeskStoryboard | null>(null);
-  /** 分镜读取失败的原因。与 `storyboardRef` 同一个理由：面板只能经载荷拿到它。 */
-  const storyboardErrorRef = useRef<string | null>(null);
   /**
    * 全景链路的反馈。**必须有**：v2 的全景要走三步工具调用，素材太大、格式不对、
    * 导演台正在忙这三种情况都会真失败 —— 界面毫无反应的话用户只会以为功能坏了。
@@ -542,11 +521,15 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
    * 缩略图是**当前取景**（子应用从自己的渲染画布截，宿主上传成项目资产），
    * 概况是子应用自己 `director_read` 报出来的实体数。
    *
-   * 都只在弹窗开着时刷新，且带去重（缩略图同尺寸不重传，概况同数量不重写节点）——
+   * 都只在弹窗开着时刷新，且带去重（缩略图内容相同不重传，概况同数量不重写节点）——
    * 画布上挂着一堆导演台节点时，刷新一次不该把每个节点都标成「已修改」。
    */
   const [sceneStatus, setSceneStatus] = useState<DirectorDeskSceneStatus | null>(null);
-  const previewBusyRef = useRef(false);
+  /** 保存和封面更新串行结算，关闭 iframe 前必须等到真实回执。 */
+  const projectSaveTaskRef = useRef<Promise<void> | null>(null);
+  const sceneSyncTaskRef = useRef<Promise<void> | null>(null);
+  const projectPreviewErrorRef = useRef<DirectorDeskPreviewSyncError | null>(null);
+  const previewTaskRef = useRef<Promise<void> | null>(null);
   const lastPreviewRef = useRef<string>('');
   const sceneSaveTimerRef = useRef<number | null>(null);
   /** 存档失败过一次。只有「曾经失败过」才需要在下次成功时清掉红字，
@@ -595,7 +578,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
    * v1 没有 `project.set`，宿主只能发 `session` 让导演台激活它自己那份 localStorage。
    * v2 换了存储：工程存在子应用的 IndexedDB 里，宿主拿不到也不该复述它的结构。所以
    * 回灌走 `project.load` —— 宿主把节点 `directorProjectRef` 指向的 `.director` 文档
-   * 原文推过去，子应用喂给**它自己的**导入入口（`#project-file`），由上游负责校验、
+   * 原文推过去，子应用与文件入口共用导入流程，由上游负责校验、
    * 模型预热与场景上下文切换。
    *
    * 快照取不到（404/网络错误）时只提示、不阻断 —— 用户还能继续用导演台的本地存档。
@@ -684,7 +667,6 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       });
       return;
     }
-    setConnection('connected');
     markDirectorDeskV2SessionReady(id);
     // 能力必须问出来再用：导演台的 `actions` 才是可用接口的唯一事实来源。
     void bridge
@@ -703,7 +685,10 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
           errorMessage: error instanceof Error ? error.message : String(error),
         });
       });
-    void restoreProjectSnapshot(bridge);
+    // 工程载入后再抓封面，避免把初始化场景覆盖到节点的最新缩略图上。
+    void restoreProjectSnapshot(bridge).finally(() => {
+      if (mountedRef.current) setConnection('connected');
+    });
   }, [clearReadyTimer, id, restoreProjectSnapshot, updateNodeData]);
 
   /**
@@ -715,12 +700,16 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
    * 宿主**不**在这里自己序列化工程：v2 的工程结构由上游定义，宿主复述一遍就是第二份
    * 会漂移的实现。节点 data 里只留引用（`directorProjectRef`），绝不存工程 JSON 本身。
    */
-  const persistProjectSnapshot = useCallback(async () => {
+  const persistProjectSnapshot = useCallback((): Promise<void> => {
+    if (projectSaveTaskRef.current) return projectSaveTaskRef.current;
     const bridge = bridgeRef.current;
-    if (!bridge || !bridge.isReady()) return;
-    const projectId = readUrl().project;
-    if (!projectId) throw new Error(t('node.directorDesk.noProject'));
-    await bridge.saveProject();
+    if (!bridge || !bridge.isReady()) return Promise.resolve();
+    const task = (async () => {
+      if (!readUrl().project) throw new Error(t('node.directorDesk.noProject'));
+      await bridge.saveProject();
+    })().finally(() => { projectSaveTaskRef.current = null; });
+    projectSaveTaskRef.current = task;
+    return task;
   }, [t]);
 
   /**
@@ -730,21 +719,25 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
    * `toDataURL` 出一张降过采样的 JPEG，宿主上传成**项目资产**后只把 URL 写进节点
    * —— 与截图回传、工程存档同一条落库路径，绝不把 base64 塞进画布 data（那是几 MB）。
    *
-   * 失败**不弹提示**：缩略图是锦上添花，用户没要求它；一条每次都失败的红字只会在
-   * 节点上留噪声。抓不到就保留上一张。
+   * 普通刷新失败时保留上一张并提示；保存触发的强制刷新必须把失败传回调用方，
+   * 避免把旧封面当成已经同步的结果，然后卸载编辑器。
    */
-  const refreshScenePreview = useCallback(async () => {
+  const refreshScenePreview = useCallback(async (force = false): Promise<void> => {
+    const previous = previewTaskRef.current;
+    if (previous && !force) return previous;
     const bridge = bridgeRef.current;
-    if (!bridge || !bridge.isReady() || previewBusyRef.current) return;
+    if (!bridge || !bridge.isReady()) return;
     const projectId = readUrl().project;
     if (!projectId) return;
-    previewBusyRef.current = true;
-    const stamp = Date.now();
-    try {
+    const task = (async () => { try {
+      // 强制刷新排在旧帧上传后面，防止旧请求晚返回，把新封面覆盖掉。
+      await previous?.catch(() => undefined);
+      const stamp = Date.now();
       const frame = await bridge.capturePreview({ size: DIRECTOR_DESK_PREVIEW_SIZE });
       // 同一帧不重传：agent 连着 apply 时每一帧都可能一样，逐张上传会在项目资产里
       // 堆出一串肉眼无法区分的封面。
-      const fingerprint = `${frame.width}x${frame.height}:${frame.dataUrl.length}`;
+      // 相同长度的 JPEG 也可能是完全不同的画面，必须比较内容。
+      const fingerprint = frame.dataUrl;
       if (fingerprint === lastPreviewRef.current) return;
       const uploaded = await uploadFreezoneImage(
         projectId,
@@ -756,12 +749,20 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       if (!assetUrl || !mountedRef.current) return;
       lastPreviewRef.current = fingerprint;
       updateNodeData(id, { previewImageUrl: assetUrl });
-    } catch {
-      // 取不到就保留上一张封面：节点上已经有的东西不该被一次失败抹掉。
+    } catch (error) {
+      // 关闭或重新握手后，旧桥的在途刷新已经失效，不给新窗口留错误提示。
+      if (!mountedRef.current || bridgeRef.current !== bridge) return;
+      console.warn('[director-desk] 节点封面同步失败', error);
+      if (mountedRef.current) setArtifactError(t('node.directorDesk.previewSyncFailed'));
+      if (force) throw new DirectorDeskPreviewSyncError(t('node.directorDesk.previewSyncFailed'));
+    } })();
+    previewTaskRef.current = task;
+    try {
+      await task;
     } finally {
-      previewBusyRef.current = false;
+      if (previewTaskRef.current === task) previewTaskRef.current = null;
     }
-  }, [id, updateNodeData]);
+  }, [id, t, updateNodeData]);
 
   /**
    * 读一次场景概况（实体数 / 机位数）。
@@ -785,6 +786,23 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       // 读不到就是读不到，不在节点上编一个数出来。
     }
   }, [id]);
+
+  /** 工程上传、场景概况、最新取景一起结算，返回画布时才有完整结果。 */
+  const persistAndSyncScene = useCallback((): Promise<void> => {
+    if (sceneSyncTaskRef.current) return sceneSyncTaskRef.current;
+    const task = (async () => {
+      // project.save 回执已经等过封面上传，不能在这里再抓一张，也不能嵌套读工具。
+      await persistProjectSnapshot();
+      await refreshSceneStatus();
+      if (projectPreviewErrorRef.current) throw projectPreviewErrorRef.current;
+      if (mountedRef.current && saveErrorRef.current) {
+        saveErrorRef.current = false;
+        updateNodeData(id, { errorMessage: null });
+      }
+    })().finally(() => { sceneSyncTaskRef.current = null; });
+    sceneSyncTaskRef.current = task;
+    return task;
+  }, [id, persistProjectSnapshot, refreshSceneStatus, updateNodeData]);
 
   /**
    * 弹窗一连上就取一次封面与场景概况。
@@ -815,6 +833,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
    * 只认 `director_apply` 的成功收据：那是唯一会改工程的工具，其余都是读。
    */
   useEffect(() => {
+    // 节点初次挂载时可能还没有 iframe 会话；握手完成后重新订阅，才能收到实际提交。
     const scheduleSceneSave = () => {
       if (sceneSaveTimerRef.current !== null) clearTimeout(sceneSaveTimerRef.current);
       // 延后落盘而不是立即：一次任务可能连续 apply 十几次，逐次上传会在项目资产里
@@ -824,7 +843,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         // 存档失败**必须显形**。这里原来写的是 `.catch(() => undefined)`，后果是
         // AI 改了几十轮、节点上看起来一切正常，关掉页面却什么都没留下，而且
         // 日志里一条线索都没有 —— 现场实测就是这样：无静默就无从定位。
-        void persistProjectSnapshot()
+        void persistAndSyncScene()
           .then(() => {
             if (mountedRef.current && saveErrorRef.current) {
               saveErrorRef.current = false;
@@ -834,10 +853,13 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
           .catch((error: unknown) => {
             saveErrorRef.current = true;
             const detail = error instanceof Error ? error.message : String(error);
-            console.error('[director-desk] 工程存档失败，AI 的改动没有落盘', detail);
+            const message = error instanceof DirectorDeskPreviewSyncError
+              ? error.message
+              : t('node.directorDesk.saveFailed', { detail });
+            console.error('[director-desk] 工程或封面同步未完成', detail);
             if (mountedRef.current) {
               updateNodeData(id, {
-                errorMessage: t('node.directorDesk.saveFailed', { detail }),
+                errorMessage: message,
               });
             }
           });
@@ -856,23 +878,16 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       } else if (type === 'text') setAiActivity({ kind: 'text', at: Date.now() });
       else if (type === 'done' || type === 'error') setAiActivity(null);
       if (type !== 'tool' || event.name !== 'director_apply' || event.status !== 'completed') return;
+      const summary = event.summary as { preview?: boolean; committed?: boolean; summary?: { hasChanges?: boolean } } | undefined;
+      if (summary?.preview === true || summary?.committed === false || summary?.summary?.hasChanges === false) return;
       if (mountedRef.current) setAiSceneAt(Date.now());
       scheduleSceneSave();
-      // 场景真的变了 → 封面与概况跟着变。这两个一起排在存档之后：工程存成功，
-      // 画布上才有一份可以回灌的真相；先改封面后存档失败，会出现「看着变了、
-      // 重开又没了」的假象。
-      void persistProjectSnapshot()
-        .catch(() => undefined)
-        .then(() => {
-          void refreshSceneStatus();
-          void refreshScenePreview();
-        });
     });
     return () => {
       unsubscribe();
       if (sceneSaveTimerRef.current !== null) clearTimeout(sceneSaveTimerRef.current);
     };
-  }, [id, persistProjectSnapshot, refreshScenePreview, refreshSceneStatus]);
+  }, [connection, isOpen, id, persistAndSyncScene, t, updateNodeData]);
 
   /**
    * 子应用请宿主落盘（`project.save`）。
@@ -915,9 +930,20 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       const ref = directorDeskAssetUrl(uploaded.url, stamp);
       if (!ref) throw new Error(t('node.directorDesk.uploadFailed', { message: 'no url' }));
       if (mountedRef.current) updateNodeData(id, { directorProjectRef: ref });
-      return { saved: true, url: ref, filename: request.name };
+      // 子应用自己的「保存」按钮也走这里。只等不经过工具队列的封面请求，
+      // 否则嵌套 director_read 会等外层保存工具，形成循环等待。
+      projectPreviewErrorRef.current = null;
+      try {
+        await refreshScenePreview(true);
+        setArtifactError(previous => previous === t('node.directorDesk.previewSyncFailed') ? null : previous);
+      } catch (error) {
+        projectPreviewErrorRef.current = error instanceof DirectorDeskPreviewSyncError
+          ? error : new DirectorDeskPreviewSyncError(t('node.directorDesk.previewSyncFailed'));
+      }
+      // 文件确实已保存；封面失败是单独的同步结果，宿主关闭流程会明确保留窗口。
+      return { saved: true, previewSynced: !projectPreviewErrorRef.current, url: ref, filename: request.name };
     },
-    [id, t, updateNodeData],
+    [id, refreshScenePreview, t, updateNodeData],
   );
 
   /**
@@ -932,14 +958,14 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
     if (!bridge || !bridge.isReady() || isSavingProject) return;
     setIsSavingProject(true);
     setArtifactError(null);
-    void persistProjectSnapshot()
+    void persistAndSyncScene()
       .then(() => {
         if (!mountedRef.current) return;
         toast.success(t('node.directorDesk.projectSaved'));
       })
       .catch((error: unknown) => {
         if (!mountedRef.current) return;
-        const message = t('node.directorDesk.projectSaveFailed', {
+        const message = error instanceof DirectorDeskPreviewSyncError ? error.message : t('node.directorDesk.projectSaveFailed', {
           message: error instanceof Error ? error.message : String(error),
         });
         setArtifactError(message);
@@ -948,15 +974,16 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       .finally(() => {
         if (mountedRef.current) setIsSavingProject(false);
       });
-  }, [isSavingProject, persistProjectSnapshot, t]);
+  }, [isSavingProject, persistAndSyncScene, t]);
 
   /**
    * 关窗：先把工程存档，再卸载 iframe。
    *
    * 顺序不能反 —— 桥随 iframe 一起销毁，卸载后就再也问不到工程了。
-   * 存档是尽力而为：超时或失败都照常关窗（提示一下），绝不把弹窗卡住。
+   * 工程和封面都结算成功才关闭；失败或超时保留窗口与内存状态，允许重试。
    */
   const closeDesk = useCallback(() => {
+    if (isSavingProject) return;
     const bridge = bridgeRef.current;
     const shouldSave = Boolean(bridge?.isReady());
     if (!shouldSave) {
@@ -964,36 +991,40 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
       return;
     }
     setIsSavingProject(true);
+    setArtifactError(null);
+    let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<'timeout'>((resolve) => {
-      setTimeout(() => resolve('timeout'), DIRECTOR_DESK_SAVE_TIMEOUT_MS);
+      timer = setTimeout(() => resolve('timeout'), DIRECTOR_DESK_SAVE_TIMEOUT_MS);
     });
-    void Promise.race([persistProjectSnapshot(), timeout])
+    let saved = false;
+    void Promise.race([persistAndSyncScene(), timeout])
       .then((outcome) => {
         if (!mountedRef.current) return;
         if (outcome === 'timeout') {
           const message = t('node.directorDesk.projectSaveTimeout');
           setArtifactError(message);
-          // 关窗后内联提示随弹窗一起卸掉，所以失败必须同时走 toast —— 否则用户
-          // 什么也看不到，只会以为工程存过了。
           toast.error(message);
         } else {
+          saved = true;
           toast.success(t('node.directorDesk.projectSaved'));
         }
       })
       .catch((error: unknown) => {
         if (!mountedRef.current) return;
-        const message = t('node.directorDesk.projectSaveFailed', {
+        const message = error instanceof DirectorDeskPreviewSyncError ? error.message : t('node.directorDesk.projectSaveFailed', {
           message: error instanceof Error ? error.message : String(error),
         });
         setArtifactError(message);
         toast.error(message);
       })
       .finally(() => {
+        clearTimeout(timer);
         if (!mountedRef.current) return;
         setIsSavingProject(false);
-        updateNodeData(id, { isOpen: false });
+        // 保存失败或尚未完成时保留编辑器，用户可以重试，避免把内存改动一起关掉。
+        if (saved) updateNodeData(id, { isOpen: false });
       });
-  }, [id, persistProjectSnapshot, t, updateNodeData]);
+  }, [id, isSavingProject, persistAndSyncScene, t, updateNodeData]);
 
   const handleDeskClose = useCallback(() => {
     closeDesk();
@@ -1151,148 +1182,15 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
   const handlersRef = useRef({ handleReady, handleDeskClose, handleCaptures, handleProjectSave });
   handlersRef.current = { handleReady, handleDeskClose, handleCaptures, handleProjectSave };
 
-  /**
-   * 读项目分镜。跟着弹窗开关走：关着时拉分镜没有用处，而分镜随时可能别处改过，
-   * 缓存一份到下次打开只会让 AI 拿着过期镜头说话。
-   *
-   * 读的是节点 data 里记住的那一集 / 那一条；没记住就让后端选最后一个有分镜的集。
-   */
-  const refreshStoryboard = useCallback(
-    (options: { episode?: number; beat?: number } = {}) => {
-      const project = readUrl().project;
-      if (!project) return Promise.resolve(null);
-      return fetchDirectorDeskStoryboard(project, {
-        episode: options.episode ?? data.storyboardEpisode ?? undefined,
-        beat: options.beat ?? data.storyboardBeat ?? undefined,
-      });
-    },
-    // `data.storyboardEpisode` / `data.storyboardBeat` 只在选择变化时读；
-    // 刻意不进依赖，否则每写一次节点数据都会重新拉一遍分镜。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
+  const storyboardState = useDirectorStoryboard(id, data, upstreamNodes, updateNodeData, t);
+  const storyboardBridgeRef = useRef(storyboardState);
+  storyboardBridgeRef.current = storyboardState;
   useEffect(() => {
-    if (!isOpen) {
-      setStoryboard(null);
-      setStoryboardError(null);
-      storyboardContextRef.current = '';
-      return undefined;
-    }
-    let cancelled = false;
-    void refreshStoryboard()
-      .then((loaded) => {
-        if (cancelled || !loaded) return;
-        setStoryboard(loaded);
-        setStoryboardError(null);
-        storyboardContextRef.current = loaded.context;
-        // 后端替我们选了集 / 镜头（第一次打开时是它决定的），把它落回节点，
-        // 下次打开面板显示的就是主人上次看到的那条。
-        if (loaded.episode && loaded.episode !== data.storyboardEpisode) {
-          updateNodeData(id, { storyboardEpisode: loaded.episode });
-        }
-        if (loaded.selected && loaded.selected !== data.storyboardBeat) {
-          updateNodeData(id, { storyboardBeat: loaded.selected });
-        }
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        // 分镜读不到不该挡住导演台：把话说明白，AI 这一轮就没有「第 N 场戏」的依据，
-        // 它会照工程现状回答，而不是拿一份不存在的分镜编。
-        setStoryboardError(error instanceof Error ? error.message : String(error));
-        storyboardContextRef.current = '';
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, id, refreshStoryboard]);
-
-  // 面板经 `storyboard.get` 取的是 ref，不是 state（桥只建一次，闭包会停在建桥那一刻）。
-  // 单独一条 effect 同步，而不是在每个写入点各写一遍 —— 三处写入少一处，ref 就会
-  // 悄悄留下一份旧分镜，面板看到的选中态与 AI 实际拿到的 context 会对不上。
-  useEffect(() => {
-    storyboardRef.current = storyboard;
-  }, [storyboard]);
-  useEffect(() => {
-    storyboardErrorRef.current = storyboardError;
-  }, [storyboardError]);
-
-  const selectStoryboardBeat = useCallback(
-    async (episode: number, beat: number): Promise<DirectorDeskStoryboard | null> => {
-      updateNodeData(id, { storyboardEpisode: episode, storyboardBeat: beat });
-      try {
-        const loaded = await refreshStoryboard({ episode, beat });
-        if (!loaded) return null;
-        setStoryboard(loaded);
-        // ref 同步写一次，不只依赖下面那条 effect：面板的 `storyboard.select` 在这个
-        // await 之后**立刻**回读载荷，那时 effect 还没跑（要等下一次 commit），
-        // 只靠 effect 会让面板拿到上一场的分镜。
-        storyboardRef.current = loaded;
-        setStoryboardError(null);
-        storyboardContextRef.current = loaded.context;
-        return loaded;
-      } catch (error: unknown) {
-        // 选中失败必须说出来，但不能把已经拿到的分镜清空：用户只是选了一场，
-        // 读不出来不等于这个项目没有分镜。
-        setStoryboardError(error instanceof Error ? error.message : String(error));
-        return null;
-      }
-    },
-    [id, refreshStoryboard, updateNodeData],
-  );
-
-  /**
-   * 面板看到的分镜载荷。
-   *
-   * **不带 `context`**（注释见 `DirectorDeskStoryboardPayload`）：那段拼接文本只进
-   * `/ai/run` 的 `context`，发进面板只会多一个泄漏面，面板也没有它的用途。
-   *
-   * 从 ref 读而不是闭包：桥只在 iframe 首帧前建一次，之后不再重建，闭包里的
-   * `storyboard` 会永远停在建桥那一刻。
-   */
-  const readStoryboardPayload = useCallback((): DirectorDeskStoryboardPayload => {
-    const current = storyboardRef.current;
-    const shots = (current?.beats ?? []).map((beat) => ({
-      beat_number: beat.beat_number,
-      scene: beat.scene,
-      duration_seconds: beat.duration_seconds,
-      speaker: beat.speaker,
-      synopsis: beat.synopsis,
-      spoken_text: beat.spoken_text,
-    }));
-    const error = storyboardErrorRef.current;
-    return {
-      episodes: current?.episodes ?? [],
-      episode: current?.episode ?? 0,
-      shots,
-      selected: current?.selected ?? null,
-      // 空项目也给一句人话：面板上不能是一块空白，那看起来像坏了而不是像「还没有」。
-      // 但**读失败时不发这句** —— 它会把一次接口故障说成「你没素材」，而真正该做的是
-      // 报出失败本身。两个字段互斥，面板按 error 优先显示。
-      hint: shots.length === 0 && !error ? t('node.directorDesk.storyboardEmptyHint') : '',
-      error,
-    };
-  }, [t]);
-
-  /**
-   * 桥的回调读最新闭包，所以这两张表每渲染一次就更新一次。桥本身不重建
-   * （重建会把 iframe 重新挂一遍），见 `attachIframe` 的注释。
-   */
-  const storyboardBridgeRef = useRef<{
-    get: typeof readStoryboardPayload;
-    select: (episode: number, beat: number) => Promise<DirectorDeskStoryboardPayload>;
-  }>({ get: readStoryboardPayload, select: async () => readStoryboardPayload() });
-  storyboardBridgeRef.current = {
-    get: readStoryboardPayload,
-    select: async (episode: number, beat: number) => {
-      const loaded = await selectStoryboardBeat(episode, beat);
-      // 读失败时 `loaded` 是 null，但面板仍要拿到一份**如实**的载荷（可能是上一次
-      // 成功读到的，也可能是空项目）—— 面板据此显示旧分镜而不是清空。
-      void loaded;
-      return readStoryboardPayload();
-    },
-  };
+    const bridge = bridgeRef.current;
+    if (!isOpen || connection !== 'connected' || !bridge || !directorDeskSupports(capabilities, 'storyboard.updated')) return;
+    // 来源变动和异步加载结束主动通知面板，避免它停在启动时拿到的旧快照。
+    void bridge.request('storyboard.updated', { ...storyboardState.get() }).catch(() => undefined);
+  }, [isOpen, connection, capabilities, storyboardState.version, storyboardState.sourceOptionsKey, storyboardState.get]);
 
   // 桥必须在 iframe 的文档开始执行之前就位，否则首帧 ready 会丢。
   //
@@ -1320,9 +1218,10 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
           // 挂进 run 的 `context` —— **不改 prompt**：那是用户原话，会原样落进共享
           // 对话历史，两个面板都会看到这段内部文本。
           if (op === 'run') {
+            const storyboardInput = await storyboardBridgeRef.current.inputForRun();
             return session.requestAgent(
               op as DirectorDeskAiOp,
-              withStoryboardContext(payload, storyboardContextRef.current),
+              withStoryboardContext(payload, storyboardInput.context, storyboardInput.images),
             );
           }
           return session.requestAgent(op as DirectorDeskAiOp, payload);
@@ -1331,6 +1230,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
         // 两个回调都走 ref：桥只在建桥那一刻创建，闭包会停在当时。
         onStoryboardGet: () => storyboardBridgeRef.current.get(),
         onStoryboardSelect: ({ episode, beat }) => storyboardBridgeRef.current.select(episode, beat),
+        onStoryboardSource: (sourceId) => storyboardBridgeRef.current.selectSource(sourceId),
         // 导演台 AI 面板只留渠道选择器与极简新建；完整渠道管理跳 DramaClaw 设置页。
         // 走 settingsStore 而不是事件总线：设置弹窗本来就由 header 渲染，store 是
         // 它已有的跨组件通道，再开一条只能多一处真相。
@@ -1492,12 +1392,18 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
     [upstreamNodes],
   );
   // 让「上游接了什么」在弹窗里看得见 —— 接了线却毫无反应是最容易让人以为坏掉的地方。
-  const upstreamMediaSummary = useMemo(() => {    if (panoramaSource) {
+  const upstreamMediaSummary = useMemo(() => {
+    if (panoramaSource) {
       return t('node.directorDesk.upstreamPanorama', { name: panoramaSource.displayName });
+    }
+    const storyboard = storyboardState.get();
+    const selectedShot = storyboard.shots.find(shot => shot.beat_number === storyboard.selected);
+    if (selectedShot?.reference_image_url) {
+      return t('node.directorDesk.upstreamImage', { name: storyboard.sourceLabel });
     }
     if (upstreamHasText) return t('node.directorDesk.upstreamText');
     return null;
-  }, [panoramaSource, upstreamHasText, t]);
+  }, [panoramaSource, storyboardState.get, storyboardState.version, upstreamHasText, t]);
 
   return (
     <div
@@ -1563,7 +1469,7 @@ export const DirectorDeskNode = memo(({ id, data, selected }: DirectorDeskNodePr
               })}
             </span>
           ) : (
-            <span>{t('node.directorDesk.sceneStatusUnknown')}</span>
+            <span>{t(savedAt === null ? 'node.directorDesk.sceneStatusUnknown' : 'node.directorDesk.sceneStatusSaved')}</span>
           )}
           {savedAt !== null && (
             <span className="rounded-full bg-cyan-300/[0.12] px-1.5 text-[11px] text-cyan-200/90">

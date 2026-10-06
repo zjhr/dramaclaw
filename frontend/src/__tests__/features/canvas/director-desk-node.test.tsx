@@ -9,7 +9,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DirectorDeskNodeData } from "@/features/canvas/domain/canvasNodes";
+import type { CanvasNode, DirectorDeskNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
   DirectorDeskNode,
   DIRECTOR_DESK_NODE_HEIGHT,
@@ -53,6 +53,9 @@ vi.mock("@/features/canvas/ui/NodeHeader", () => ({
   NODE_HEADER_FLOATING_POSITION_CLASS: "",
   NodeHeader: ({ titleText }: { titleText: string }) => <div data-testid="node-title">{titleText}</div>,
 }));
+
+const prepareReferenceImage = vi.hoisted(() => vi.fn<(source: string) => Promise<string>>());
+vi.mock("@/features/canvas/application/directorReferenceImage", () => ({ prepareDirectorReferenceImage: prepareReferenceImage }));
 
 const NODE_ID = "node_director_desk_1";
 
@@ -1013,6 +1016,8 @@ describe("导演台 AI 面板的渠道同步", () => {
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    // 最近渠道是跨节点浏览器偏好，每个测试应从没有用户选择的状态开始。
+    localStorage.removeItem("director-ai-last-channel-v1");
     mountHostDom();
   });
 
@@ -1180,7 +1185,9 @@ describe("导演台 AI 面板的渠道同步", () => {
     expect(roles()).toEqual(["error", "user", "assistant", "tool"]);
     expect(document.querySelector(".ai-msg-user .ai-bubble")?.textContent).toBe("继续");
     expect(document.querySelector(".ai-msg-assistant .ai-bubble")?.textContent).toBe("上次整批");
-    expect(document.querySelector(".ai-msg-tool summary")?.textContent).toContain("director_apply · ok");
+    expect(document.querySelector(".ai-msg-tool summary")?.textContent).toContain("布置场景");
+    expect(document.querySelector(".ai-msg-tool .ai-tool-state")?.textContent).toBe("已完成");
+    expect(document.querySelector(".ai-msg-tool")?.getAttribute("data-tool-status")).toBe("ok");
     expect(document.querySelector(".ai-msg-tool pre")?.textContent).toContain('"n": 1');
 
     promptBox().value = "再来";
@@ -1277,7 +1284,7 @@ function stubStoryboardFetch(options: { beats?: number; fail?: boolean } = {}) {
 }
 
 /**
- * 分镜按**当前项目**取（`readUrl().project`）。jsdom 的默认路径不是
+ * 用户显式选择「项目分镜目录」时按当前项目取；jsdom 的默认路径不是
  * `/projects/<id>/freezone`，不铺好这条 URL 的话 `refreshStoryboard` 直接 early-return，
  * 后面每一条断言都会看到「一个没有分镜的项目」—— 而不是它该看到的东西。
  */
@@ -1289,7 +1296,7 @@ function useProjectUrl(project = "P01ABCDEF") {
 async function openDeskWithStoryboard() {
   const user = userEvent.setup();
   useProjectUrl();
-  renderNode();
+  renderNode({ storyboardSourceId: '@project-storyboard' });
   await user.click(screen.getByRole("button", { name: /打开|Open|Mở/ }));
   await waitFor(() => expect(iframeEl()).not.toBeNull());
   const frames: unknown[] = [];
@@ -1318,6 +1325,48 @@ async function openDeskWithStoryboard() {
 }
 
 describe("分镜选择：搬进 AI 对话面板", () => {
+  it.each([false, true])('图片来源经过真实iframe桥发送，图片读取失败=%s', async fail => {
+    prepareReferenceImage.mockReset();
+    if (fail) prepareReferenceImage.mockRejectedValue(new Error('图片读取失败'));
+    else prepareReferenceImage.mockResolvedValue('data:image/jpeg;base64,actual-image');
+    const runs: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (url.endsWith('/storyboard/canvas')) return new Response(JSON.stringify({ ok: true, data: {
+        episodes: [], episode: 0, selected: 1,
+        beats: [{ ...beatPayload(1, '', '', ''), reference_image_url: body.beats[0].reference_image_url }],
+        context: '已关联图片来源的文字上下文',
+      } }));
+      if (url.endsWith('/ai/run')) runs.push(body);
+      return new Response(JSON.stringify({ accepted: true }));
+    }));
+    renderNode();
+    act(() => {
+      useCanvasStore.setState(state => ({
+        nodes: [...state.nodes, { id: 'picture', type: 'uploadNode', position: { x: 0, y: 0 },
+          data: { imageUrl: '/upstream.png', displayName: '参考画面' } } as CanvasNode],
+        edges: [{ id: 'picture-to-desk', source: 'picture', target: NODE_ID }],
+      }));
+    });
+    await userEvent.setup().click(screen.getByRole('button', { name: /打开|Open|Mở/ }));
+    await waitFor(() => expect(iframeEl()).not.toBeNull());
+    const frames: unknown[] = [];
+    installFrameRecorder(frames);
+    emitFromDirector({ type: DIRECTOR_DESK_MESSAGE_TYPES.ready });
+    await waitFor(() => expect(storedData().storyboardSourceId).toBe('picture'));
+    emitFromDirector({ type: DIRECTOR_DESK_MESSAGE_TYPES.request, payload: {
+      protocolVersion: 2, requestId: 'image-run', action: 'ai.request',
+      options: { op: 'run', payload: { profileId: 'vision', prompt: '按这张图摆' } },
+    } });
+    await waitFor(() => expect(frames.some(frame => (frame as { payload?: { requestId?: string; ok?: boolean } }).payload?.requestId === 'image-run')).toBe(true));
+    expect(prepareReferenceImage).toHaveBeenCalledExactlyOnceWith('/upstream.png');
+    if (fail) expect(runs).toEqual([]);
+    else expect(runs).toEqual([{
+      nodeId: NODE_ID, profileId: 'vision', prompt: '按这张图摆',
+      context: '已关联图片来源的文字上下文', images: ['data:image/jpeg;base64,actual-image'],
+    }]);
+  });
+
   it("两条动作进协议白名单，方向都是子→宿主", () => {
     expect(isDirectorDeskAction("storyboard.get")).toBe(true);
     expect(isDirectorDeskAction("storyboard.select")).toBe(true);
@@ -1328,7 +1377,7 @@ describe("分镜选择：搬进 AI 对话面板", () => {
   it("弹窗顶部不再有分镜卡片墙（搬走了，不是复制了一份）", async () => {
     stubStoryboardFetch();
     useProjectUrl();
-    renderNode();
+    renderNode({ storyboardSourceId: '@project-storyboard' });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /打开|Open|Mở/ }));
     await waitFor(() => expect(iframeEl()).not.toBeNull());

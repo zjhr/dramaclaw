@@ -3,7 +3,7 @@
 /**
  * 用户反馈的三个问题，逐条锁住：
  *
- * 1. 割裂感 —— 画布上游接进来的图片必须**真的进到导演台场景里**（panorama 消息），
+ * 1. 割裂感 —— 画布上游接进来的 360° 全景必须真的进到导演台场景里，
  *    而不是接了一根死线；并且弹窗里要看得出上游接了什么。
  * 2. 没有保存按钮 —— 有可点的「保存工程」，有进度，存完标签带上存档时间。
  * 3. 没有同步到节点小图 —— 封面 = 最近一次产物，截图回传后必须立刻变。
@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DirectorDeskNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
   DirectorDeskNode,
+  DIRECTOR_DESK_SAVE_TIMEOUT_MS,
   directorDeskPanoramaSource,
   directorDeskSnapshotSavedAt,
 } from "@/features/canvas/nodes/DirectorDeskNode";
@@ -32,8 +33,10 @@ import {
 import { useCanvasStore } from "@/stores/canvasStore";
 
 const uploadFreezoneImage = vi.fn();
+const uploadPreview = vi.fn();
 vi.mock("@/api/ops", () => ({
-  uploadFreezoneImage: (...args: unknown[]) => uploadFreezoneImage(...args),
+  uploadFreezoneImage: (...args: unknown[]) =>
+    String(args[2]).endsWith(".jpg") ? uploadPreview(...args) : uploadFreezoneImage(...args),
   uploadFreezoneVideo: vi.fn(),
 }));
 
@@ -132,7 +135,7 @@ function seedCanvas(
   if (upstream.image) {
     nodes.push({
       id: UPSTREAM_IMG,
-      type: "uploadNode",
+      type: "pano360ViewerNode",
       position: { x: 0, y: 0 },
       data: { displayName: "场景全景", imageUrl: PANORAMA_URL },
     });
@@ -188,6 +191,15 @@ function installFrameRecorder(frames: unknown[]) {
   const original = cw.postMessage.bind(cw);
   (cw as unknown as { postMessage: unknown }).postMessage = (message: unknown) => {
     frames.push(message);
+    const frame = message as { type?: string; payload?: { requestId: string; action: string } };
+    if (frame.type === DIRECTOR_DESK_MESSAGE_TYPES.request && frame.payload?.action === "preview.capture") {
+      const requestId = frame.payload.requestId;
+      queueMicrotask(() => emitFromDirector({
+        type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+        payload: { protocolVersion: 2, requestId, action: "preview.capture", ok: true,
+          data: { dataUrl: "data:image/jpeg;base64,YQ==", width: 640, height: 360 } },
+      }));
+    }
     return original(message as never, "*");
   };
 }
@@ -483,6 +495,7 @@ async function runChildProjectSave(frames: unknown[], content: string) {
   });
   await waitFor(() => expect(responseFrames(frames, saveRequestId)).toHaveLength(1));
 
+  const syncStart = frames.length;
   emitFromDirector({
     type: DIRECTOR_DESK_MESSAGE_TYPES.response,
     payload: {
@@ -493,6 +506,10 @@ async function runChildProjectSave(frames: unknown[], content: string) {
       data: { revision: 3, result: { saved: true } },
     },
   });
+  // 保存回执后才读场景概况，不能在子应用还等宿主落盘时嵌套另一条工具调用。
+  await waitFor(() => expect(toolCalls(frames.slice(syncStart)).some(call => call.name === "director_read")).toBe(true));
+  const read = toolCalls(frames.slice(syncStart)).find(call => call.name === "director_read")!;
+  answerToolCall(read.requestId, 3, { entities: [] });
   return { toolCall, saveRequestId };
 }
 
@@ -550,6 +567,7 @@ function storedData(): DirectorDeskNodeData {
 
 beforeEach(() => {
   uploadFreezoneImage.mockReset();
+  uploadPreview.mockReset().mockResolvedValue({ url: "/static/projects/proj_feedback/preview.jpg" });
   uploadFreezoneImage.mockResolvedValue({
     url: `/static/projects/${PROJECT_ID}/freezone/_uploads/director-desk-${DESK}-project-1789615646820.json`,
     filename: "snap.json",
@@ -580,7 +598,7 @@ afterEach(() => {
  * 语义回话的假工具层。这比「帧发出去了」强：参数错了上游会直接抛
  * 「工具参数类型或取值错误」，而旧断言对着一个没有接收方的帧，怎么都能绿。
  */
-describe("割裂感修复 — 上游图片真的进到导演台", () => {
+describe("割裂感修复 — 上游 360° 全景真的进到导演台", () => {
   const ENTITY_ID = directorDeskPanoramaEntityId(DESK);
 
   it("三步工具调用：导媒体 → 建 visual-panorama 内向球 → 挂 unlit 贴图层", async () => {
@@ -874,9 +892,9 @@ describe("directorDeskPanoramaSource（纯函数）", () => {
   it("跳过视频、跳过非图片 data URL，取第一张真图片", () => {
     expect(
       directorDeskPanoramaSource([
-        { id: "v1", data: { displayName: "片段", videoUrl: "/static/a.mp4", previewImageUrl: "/static/a.mp4" } },
-        { id: "d1", data: { imageUrl: "data:video/mp4;base64,AAAA" } },
-        { id: "i1", data: { displayName: "全景图", imageUrl: "/static/pano.png" } },
+        { id: "v1", type: "pano360ViewerNode", data: { displayName: "片段", videoUrl: "/static/a.mp4", previewImageUrl: "/static/a.mp4" } },
+        { id: "d1", type: "pano360ViewerNode", data: { imageUrl: "data:video/mp4;base64,AAAA" } },
+        { id: "i1", type: "pano360ViewerNode", data: { displayName: "全景图", imageUrl: "/static/pano.png" } },
       ]),
     ).toEqual({
       sourceNodeId: "i1",
@@ -887,12 +905,21 @@ describe("directorDeskPanoramaSource（纯函数）", () => {
   });
 
   it("一张图都没有时返回 null（不发空消息）", () => {
-    expect(directorDeskPanoramaSource([{ id: "t1", data: { content: "剧本" } }])).toBeNull();
+    expect(directorDeskPanoramaSource([{ id: "t1", type: "textAnnotationNode", data: { content: "剧本" } }])).toBeNull();
     expect(directorDeskPanoramaSource([])).toBeNull();
   });
 
   it("node.data 为空对象也不炸", () => {
-    expect(directorDeskPanoramaSource([{ id: "x", data: {} }])).toBeNull();
+    expect(directorDeskPanoramaSource([{ id: "x", type: "pano360ViewerNode", data: {} }])).toBeNull();
+  });
+
+  it("普通图片分镜不会在重开时变成球面背景，混接时仍读取明确的 360° 节点", () => {
+    const reference = { id: "reference", type: "uploadNode", data: { displayName: "参考分镜", imageUrl: "/static/reference.png" } };
+    expect(directorDeskPanoramaSource([reference])).toBeNull();
+    expect(directorDeskPanoramaSource([
+      reference,
+      { id: "panorama", type: "pano360ViewerNode", data: { displayName: "场景全景", imageUrl: "/static/panorama.png" } },
+    ])?.sourceNodeId).toBe("panorama");
   });
 });
 
@@ -987,8 +1014,8 @@ describe("封面同步到节点小图", () => {
  * 它们内部也等定时器，和假时钟混用会互相卡死（同文件前面的用例会被泄漏的假时钟拖垮）。
  * 一切都是同步 fireEvent + act，只把时钟推进到存档超时之后。
  */
-describe("存档超时不会把用户困在弹窗里", () => {
-  it("导演台不回话时，超时后仍然关窗", async () => {
+describe("保存超时保留编辑器", () => {
+  it("导演台不回话时保留窗口，明确告知保存尚未完成", async () => {
     vi.useFakeTimers();
     try {
       seedCanvas();
@@ -1013,15 +1040,14 @@ describe("存档超时不会把用户困在弹窗里", () => {
       act(() => {
         fireEvent.click(screen.getAllByRole("button", { name: /关闭|Close|Đóng/ }).pop()!);
       });
-      // project.get 一直不回：推进到存档超时之后
+      // 保存工具一直不回：推进到等待超时之后，未完成的工程不能假装保存成功。
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(6000);
+        await vi.advanceTimersByTimeAsync(DIRECTOR_DESK_SAVE_TIMEOUT_MS + 1);
       });
-      expect(document.querySelector("iframe")).toBeNull();
-      expect(useCanvasStore.getState().nodes.find((n) => n.id === DESK)?.data.isOpen).toBe(false);
-      // 关窗后内联提示随弹窗卸载，用户看到的是 toast
+      expect(document.querySelector("iframe")).not.toBeNull();
+      expect(useCanvasStore.getState().nodes.find((n) => n.id === DESK)?.data.isOpen).toBe(true);
       expect(toastError).toHaveBeenCalled();
-      expect(String(toastError.mock.calls[0][0])).toMatch(/超时|timed out|quá thời gian/);
+      expect(String(toastError.mock.calls[0][0])).toMatch(/尚未完成|not finished|Chưa lưu xong|timed out/);
     } finally {
       vi.useRealTimers();
     }

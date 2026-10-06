@@ -141,23 +141,6 @@ frontend/public/brand/dramaclaw-logo-login.png,Elastic-2.0,2026 SuperTale contri
 frontend/public/brand/dramaclaw-wordmark.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/brand/logo-d.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/brand/party-founding-105.mp4,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/public/director-desk-v2/assets/action-preview-DvzBK6hv.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/actors-BnjzUhfq.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/export-BICs6tHA.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/humanoid-v1-DqkEQiwj.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT) for the wrapper; embedded Quaternius Universal Animation Library Standard motion payload is CC0-1.0 (src/animation/library/NOTICE.txt); vendored build output
-frontend/public/director-desk-v2/assets/lens-projection-BpGCFhh5.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-DYsFCCeS.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-data-B0NOjcAx.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-import-worker-DR_wBiaJ.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-import.worker-BUhwLSeL.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-package-D6obP4ox.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/obj-geometry-CtbXvAZV.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/preload-helper-HclGiUj8.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/rolldown-runtime-hePW80VL.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/src-B3GMBj66.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/three.core-DMx6dk91.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/favicon.svg,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/index.html,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
 frontend/public/director-desk/UPSTREAM.md,MIT,2026 YZ,upstream xiaozangao/3d-director-desk v0.3.1 LICENSE (MIT); vendored build output
 frontend/public/director-desk/assets/SceneRoot-Coh679GW.js,MIT,2026 YZ,upstream xiaozangao/3d-director-desk v0.3.1 LICENSE (MIT); vendored build output
 frontend/public/director-desk/assets/actionRuntimeSmoke-DhkTKMOD.js,MIT,2026 YZ,upstream xiaozangao/3d-director-desk v0.3.1 LICENSE (MIT); vendored build output
@@ -3317,11 +3300,57 @@ tests/test_video_processing_request.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/public/director-desk-v2/assets/fbx-model-CBXQUlTm.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/gltf-model-DwjNPV5f.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/index-7TvRV21p.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/index-C-5KcWTn.css,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-loader-GxELb9pG.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/model-runtime-DSWZKd0L.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/obj-model-BC-G6xBW.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
-frontend/public/director-desk-v2/assets/thumbnails-BCHwkaZa.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/action-preview-COZ65EPc.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/actors-B9a0RSAd.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/export-DF-U8SPP.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/humanoid-v1-DqkEQiwj.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT) for the wrapper; embedded Quaternius Universal Animation Library Standard motion payload is CC0-1.0 (src/animation/library/NOTICE.txt); vendored build output
+frontend/public/director-desk-v2/assets/lens-projection-BpGCFhh5.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-UTwVbwzT.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-data-B0NOjcAx.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-import-worker-DR_wBiaJ.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-import.worker-BUhwLSeL.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-package-D6obP4ox.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-geometry-CtbXvAZV.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/preload-helper-HclGiUj8.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/rolldown-runtime-hePW80VL.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/src-B3GMBj66.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/three.core-DMx6dk91.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/favicon.svg,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/index.html,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/fbx-model-BYWRi9q_.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/gltf-model-BqIyf5fA.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-AdAYczWJ.css,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-DgRzGS5n.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-loader-Bts1anhP.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-runtime-ebee6wGf.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-model-CvX09oCw.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/thumbnails-C-KANiU0.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-loader-ChtFAjky.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-model-BLNm82WJ.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/thumbnails-BJ3eGJah.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/fbx-model-COWUFhpm.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-CX6eI2We.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-runtime-CeUsEmrL.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/gltf-model-B8NAtGM-.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/fbx-model-Cu0zdpep.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/gltf-model-ClScTVig.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-Dgfq2uGp.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-nqhH-47d.css,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-loader-BufUJOBN.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-runtime-Ce7tP7u7.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-model-a0riqs-G.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/thumbnails-v1DxBABH.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/fbx-model-CbwaNaQx.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/gltf-model-Cy8sYqqD.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-CRdkO-ub.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-loader-Bez4fvfp.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-runtime-VdWVNIc7.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-model-Dk9zmhEF.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/thumbnails-CS4ItNEQ.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/fbx-model-Dy9qICTN.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/gltf-model-DfnddbGD.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/index-W8W8LCKb.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-loader-DxSlD1qE.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/model-runtime-CKOeYqBS.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/obj-model-Tn8mZ_zn.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output
+frontend/public/director-desk-v2/assets/thumbnails-Delfd8KQ.js,MIT,2026 DirectorDesk contributors,upstream mangfufu/director-desk v0.4.10 LICENSE (MIT); vendored build output

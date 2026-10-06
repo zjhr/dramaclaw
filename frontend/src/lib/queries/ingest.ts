@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ResponsePromise } from "ky";
 import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
@@ -77,16 +78,77 @@ export interface ManuscriptActionResult {
   calls?: string[];
 }
 
+/** 「另写一篇」的三种成稿。ad 走精品剧脊，锁死 1 集。 */
+export type WriteKind = "novel" | "drama" | "ad";
+
+export interface WriteFirstAnswer {
+  skill_id: string;
+  question: string;
+  answer: string;
+  /** 没有生成出问题时为 true，模型按该写法的提示词自行补齐。 */
+  filled_by_skill: boolean;
+}
+
 export interface WriteFirstRequest {
-  kind: "novel" | "drama";
+  kind: WriteKind;
   premise: string;
   lead: string;
   count: string;
   skills: string[];
+  answers?: WriteFirstAnswer[];
   reasoning_effort?: "none" | "low" | "medium" | "high";
   filename?: string;
   episode?: number;
   note?: string;
+}
+
+/** 写法库里的一条写法：名称 + 说明 + 提示词 + 这一问 + 三句灵感。 */
+export interface WritingSkill {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  question: string;
+  suggestions: string[];
+  builtin: boolean;
+}
+
+/** 广告自带的那一问，由体裁决定，不进写法库。 */
+export interface WritingSkillBrief {
+  id: string;
+  name: string;
+  description: string;
+  question: string;
+  suggestions: string[];
+}
+
+export interface WritingSkillLibrary {
+  skills: WritingSkill[];
+  ad_brief: WritingSkillBrief;
+}
+
+export interface WritingSkillSave {
+  id?: string;
+  name: string;
+  description: string;
+  prompt: string;
+  question: string;
+  suggestions: string[];
+  /** 提示词改了会让模型重写问题和三句；这里显式要求再生成一次。 */
+  regenerate: boolean;
+  /** 生成时的体裁上下文。空串表示脱离具体成稿来写这条问句。 */
+  kind: WriteKind | "";
+  context: string;
+}
+
+export interface WritingSkillSaveResult {
+  skill: WritingSkill;
+  regenerated: boolean;
+}
+
+export interface SkillSuggestionsResult {
+  question: string;
+  suggestions: string[];
 }
 
 interface ChaptersResult {
@@ -346,5 +408,94 @@ export function useStartIngest(project: string) {
       }
       return response;
     },
+  });
+}
+
+// ── 写法库 ────────────────────────────────────────────────────────────────
+// 写法是手艺不是某一本书的设定，所以这套接口挂在 /api/v1 下面，不带 project：
+// 所有项目共用同一份 writing-skills.json。
+
+async function writingSkillCall<T>(request: ResponsePromise): Promise<T> {
+  const response = await jsonWithBackendError<
+    (OkResponse<T> & { error?: string }) | (ErrorResponse & { data?: T })
+  >(request);
+  if (!response.ok || !response.data) {
+    throw new Error(response.error || "failed to reach the writing skill library");
+  }
+  return response.data;
+}
+
+export function useWritingSkills() {
+  return useQuery({
+    queryKey: queryKeys.writingSkills(),
+    queryFn: ({ signal }) =>
+      writingSkillCall<WritingSkillLibrary>(
+        api.get(p`api/v1/writing-skills`, { signal, throwHttpErrors: false }),
+      ),
+  });
+}
+
+export function useSaveWritingSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: WritingSkillSave) =>
+      writingSkillCall<WritingSkillSaveResult>(
+        params.id
+          ? api.put(p`api/v1/writing-skills/${params.id}`, {
+              json: params,
+              throwHttpErrors: false,
+            })
+          : api.post(p`api/v1/writing-skills`, { json: params, throwHttpErrors: false }),
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.writingSkills() });
+    },
+  });
+}
+
+export function useDeleteWritingSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      writingSkillCall<{ id: string }>(
+        api.delete(p`api/v1/writing-skills/${id}`, { throwHttpErrors: false }),
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.writingSkills() });
+    },
+  });
+}
+
+export function useRestoreWritingSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      writingSkillCall<{ skill: WritingSkill }>(
+        api.post(p`api/v1/writing-skills/${id}/restore`, { throwHttpErrors: false }),
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.writingSkills() });
+    },
+  });
+}
+
+/** 提问过程中的「换一批」：只换屏幕上这三句，写法库不动。 */
+export function useReshuffleWritingSkill() {
+  return useMutation({
+    mutationFn: async (params: {
+      id: string;
+      question: string;
+      avoid: string[];
+      kind: WriteKind | "";
+      context: string;
+    }) =>
+      writingSkillCall<SkillSuggestionsResult>(
+        api.post(p`api/v1/writing-skills/${params.id}/suggestions`, {
+          json: params,
+          // 换一批走真实模型，实测 20s–190s；默认 30s 会在模型返回前掐断请求。
+          timeout: 300_000,
+          throwHttpErrors: false,
+        }),
+      ),
   });
 }

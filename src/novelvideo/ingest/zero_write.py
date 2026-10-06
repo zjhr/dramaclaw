@@ -1,62 +1,53 @@
 # SPDX-License-Identifier: Elastic-2.0
 # Copyright (c) 2026 ClaymoreLab
 
-"""从零写第 1 稿与续写：按四项回答和写法生成或续写章节/集数。
+"""从零写第 1 稿与续写：按已确认的设定和写法生成或续写章节/集数。
 
 第 1 稿不读取、不修改任何已上传文件；产物另存为新的上传文件。
 续写承接已有稿件的最后一集/章，追加写入同一份文件。
+
+写法提示词由 ``writing_skills`` 的写法库按选中的写法给出；这里只负责拼成一次写作指令。
 """
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 
 from novelvideo.ingest.manuscript_repair import _HEADER_LINE_RE, clean_model_text
 
 ZERO_WRITE_SYSTEM_PROMPT = (
-    "你是短剧和小说的执笔写手。全文用中文写作。只输出最终正文本身：第一行是章节标题，之后是正文。"
+    "你是短剧、小说和广告的执笔写手。全文用中文写作。只输出最终正文本身：第一行是章节标题，之后是正文。"
     "不输出解释、分析、计划、自检、大纲或任何过程说明，不使用 Markdown 代码块。"
 )
 
-# 从零写没有原文，洗稿、换角色、改性格、深挖仿写这类改稿写法不产生额外要求。
-# 指令蒸馏自 /Users/mac/Downloads/提示词/AI助手 的结构模板与字眼词库（剥掉转换外壳）。
-_SKILL_DIRECTIVES: dict[str, str] = {
-    "reversal": (
-        "剧情反转：本集至少一次反转，用「设定一件事（我一个…）→ 却被… → 就连… → 甚至… → "
-        "然而… → 我却…」的递进句式组织开场的钩子，并让反转贯穿到结尾，推翻观众前面的判断。"
-    ),
-    "contrast": (
-        "勾人反差：给主角或核心关系设计强烈对比，用「我明明…，却…」的句式"
-        "（身份、言行或处境的反差），并让反差直接推动冲突。"
-    ),
-    "emotion": (
-        "情绪牵引：先用铺垫把情绪拉满再进入事件——借口说一件离谱的事 → 没想到隔天就… → "
-        "就连… → 甚至… → 然而… → 此刻…；用具体细节调动情绪，不急着交代设定。"
-    ),
-    "burst": (
-        "爆点澎湃：开头几段每段埋一个爆点，至少两个爆点；用「半解」钩子——说了但没说完整，"
-        "持续往下钩；中段安排一个高能量爆点场面，节奏短促、冲击力强。"
-    ),
-    "setting": (
-        "设定结构：先立设定再反转，可用「做过…的都知道，不仅…而且…甚至…，而我却…」"
-        "或「全国人都以为…，其实…并不是…而是…」的句式，让事件从设定里自然长出来。"
-    ),
-    "rebirth": (
-        "穿越重生：主角带穿越、重生或系统类的开局优势，用「我意外（发现/穿越/获得/觉醒）… → "
-        "然而… → 就连… → 甚至… → 却… → 此刻…」的句式，并让这个优势在第 1 集就显出效果。"
-    ),
-    "sweet": (
-        "甜宠：甜为主、微虐做辅助；宠爱情节用细节说话——记住对方的喜好和习惯，"
-        "不声不响地准备好，偏爱要让周围的人都看见。"
-    ),
-    "revenge": (
-        "复仇打脸：压抑起势、爽感释放；打脸用「装 → 打脸 → 震惊 → 收获」的链条，"
-        "对方嚣张在前，打脸在后；打脸时主角必须刚好在场，亲眼看见对方的表情。"
-    ),
-    "warlord": (
-        "战神赘婿：隐藏身份受辱 → 亮身份打脸 → 登顶收束；受辱要具体（被谁、当众、因为什么），"
-        "亮身份的反转要干脆。"
-    ),
-}
+@dataclass(frozen=True)
+class ConfirmedAnswer:
+    """提问环节里用户确认过的一问一答。没生成出问题的写法标记为按写法补。"""
+
+    skill_id: str = ""
+    skill_name: str = ""
+    question: str = ""
+    answer: str = ""
+    filled_by_skill: bool = False
+
+
+def _setting_lines(
+    premise: str,
+    lead_line: str,
+    answers: Sequence[ConfirmedAnswer],
+) -> list[str]:
+    """把题材、主角和逐条确认过的问答摊成模型能直接读的设定清单。"""
+    lines = [f"- 题材一句话：{premise}"] if premise else []
+    lines.append(f"- {lead_line}")
+    lines.append(f"- 选中的写法：{'、'.join(a.skill_name for a in answers if a.skill_name)}"
+                 if any(a.skill_name for a in answers) else "")
+    for item in answers:
+        name = item.skill_name or item.skill_id or "这条写法"
+        if item.filled_by_skill:
+            lines.append(f"- {name}：这一问没有具体回答，请按该写法自行补齐一个有画面的设定。")
+        elif item.question and item.answer:
+            lines.append(f"- {item.question.rstrip('？?')}：{item.answer}")
+    return lines
 
 
 def build_write_first_prompt(
@@ -65,20 +56,38 @@ def build_write_first_prompt(
     premise: str,
     lead: str,
     count: str,
-    skills: list[str],
+    directives: Sequence[str] = (),
+    answers: Sequence["ConfirmedAnswer"] = (),
     episode: int = 1,
     previous_text: str = "",
     note: str = "",
 ) -> str:
-    """把四项回答、选中的写法和前情拼成一次写作指令。"""
+    """把已确认的设定、选中的写法和前情拼成一次写作指令。"""
     unit = "章" if kind == "novel" else "集"
-    directives = [text for skill_id, text in _SKILL_DIRECTIVES.items() if skill_id in skills]
-    skill_lines = "\n".join(f"- {text}" for text in directives) if directives else "- 按通用写法写。"
-    total = f"全剧大约 {count} {unit}" if count.strip() else "篇幅之后还可以调整"
+    skill_lines = "\n".join(f"- {text.strip()}" for text in directives if text.strip())
+    if not skill_lines:
+        skill_lines = "- 按通用写法写。"
+    if kind == "ad":
+        total = "全片只有 1 集"
+    else:
+        total = f"全剧大约 {count.strip()} {unit}" if count.strip() else "篇幅之后还可以调整"
     lead_line = f"主角：{lead.strip()}" if lead.strip() else "主角：未指定，请起一个中文名。"
     continuing = bool(previous_text.strip())
 
-    if kind == "novel":
+    setting_lines = [line for line in _setting_lines(premise.strip(), lead_line, answers) if line]
+    if kind == "ad":
+        craft = (
+            "广告工艺要求：\n"
+            f"1. 第一行写「第 {episode} {unit}」，单独成行。\n"
+            "2. 全片最多三场，每场以单独一行的场景头开始，场景头格式是「地点 日/夜 内/外」；"
+            "场景头就是这三段，不要加编号或 Scene 之类的前缀。\n"
+            "3. 开场前三行就是钩子：先戳中观众此刻的处境或欲望。\n"
+            "4. 全片只讲一个卖点，卖点要能被镜头拍出来。\n"
+            "5. 结尾有一句明确的行动号召，说清看完要人做什么。\n"
+            "6. 对白行格式是「角色：台词」：一句台词一行、一行只有一个说话人；出镜的人都要有具体角色名。\n"
+            "7. 全片正文约 600 到 1000 字。"
+        )
+    elif kind == "novel":
         craft = (
             "叙述要求：\n"
             f"1. 第一行写「第 {episode} {unit}」，单独成行。\n"
@@ -117,11 +126,11 @@ def build_write_first_prompt(
         previous_block = ""
         note_line = f"- 用户的额外要求：{note.strip()}\n" if note.strip() else ""
 
+    product = {"novel": "小说", "drama": "短剧"}.get(kind, "广告")
     return (
         f"请根据下面的设定，{'续写' if continuing else '写出'}"
-        f"这部{'小说' if kind == 'novel' else '短剧'}的第 {episode} {unit}完整正文。\n\n"
-        f"- 题材一句话：{premise.strip()}\n"
-        f"- {lead_line}\n"
+        f"这部{product}的第 {episode} {unit}完整正文。\n\n"
+        f"{chr(10).join(setting_lines)}\n"
         f"- {total}；这次只写第 {episode} {unit}，不要写后面各{unit}，也不要写大纲。\n"
         f"{note_line}"
         f"写法要求：\n{skill_lines}\n\n"
@@ -301,6 +310,7 @@ async def generate_first_manuscript(
 
 __all__ = [
     "ZERO_WRITE_SYSTEM_PROMPT",
+    "ConfirmedAnswer",
     "build_adapt_prompt",
     "build_write_first_prompt",
     "generate_first_manuscript",

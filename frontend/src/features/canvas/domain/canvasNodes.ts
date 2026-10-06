@@ -762,6 +762,8 @@ export interface DirectorDeskNodeData extends NodeDisplayData {
    */
   storyboardEpisode?: number | null;
   storyboardBeat?: number | null;
+  /** 分镜的直接上游节点 ID，或用户显式选择的项目目录；无来源时不自动读取项目。 */
+  storyboardSourceId?: string | null;
   [key: string]: unknown;
 }
 

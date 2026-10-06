@@ -26,6 +26,7 @@ import pytest
 
 from novelvideo.director_desk.ai_host import (
     Channel,
+    Conversation,
     DirectorDeskAiService,
     ProfileError,
     ToolContract,
@@ -34,6 +35,18 @@ from novelvideo.director_desk.tool_transport import DirectorDeskToolTransport
 
 NODE = "node-unified"
 BASE_URL = "https://api.example.com/v1"
+
+
+def test_transcript_notice_has_explicit_error_boundary(tmp_path: Path) -> None:
+    """错误记录带独立标记，不能把工具后的换行误当成失败。"""
+    conversation = Conversation(tmp_path / "history.json")
+    notice = "连接中断\n已提交操作保留。 对话已保留，可继续。"
+    asyncio.run(conversation.notice(notice))
+    transcript = conversation.snapshot()["transcript"]
+    assert transcript == f"\n[notice：error]{json.dumps(notice, ensure_ascii=False)}\n"
+    # 正文中的换行由 JSON 转义，恢复时仍能完整读回同一条错误。
+    assert json.loads(transcript.split("[notice：error]", 1)[1]) == notice
+    assert Conversation(tmp_path / "history.json").snapshot()["transcript"] == transcript
 
 
 def channel(**overrides: Any) -> Channel:

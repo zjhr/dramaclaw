@@ -87,10 +87,16 @@ def _scene_label(beat: Mapping[str, Any]) -> str:
     return ""
 
 
-def _duration_seconds(beat: Mapping[str, Any]) -> float:
+def _duration_seconds(beat: Mapping[str, Any], *, episode: int) -> float:
     """镜头目标时长（秒）。口径同分镜面板：用户指定的 ``duration_seconds`` 优先。"""
     try:
-        return round(float(resolve_target_video_duration(dict(beat), None)), 1)
+        # 画布素材不一定填写时长；0 表示未知，不能套项目生成流程的默认秒数。
+        duration = (
+            resolve_target_video_duration(dict(beat), None, default=0)
+            if episode == 0
+            else resolve_target_video_duration(dict(beat), None)
+        )
+        return round(float(duration), 1)
     except (TypeError, ValueError):
         return 0.0
 
@@ -124,7 +130,7 @@ def beat_view(beat: Mapping[str, Any], *, episode: int) -> dict[str, Any]:
         "beat_number": int(beat.get("beat_number") or 0),
         "scene": _scene_label(beat),
         "time_of_day": _one_line(beat.get("time_of_day"), 20),
-        "duration_seconds": _duration_seconds(beat),
+        "duration_seconds": _duration_seconds(beat, episode=episode),
         "audio_type": audio_type,
         "audio_type_label": _AUDIO_TYPE_LABELS.get(audio_type, audio_type),
         "speaker": speaker,
@@ -133,6 +139,7 @@ def beat_view(beat: Mapping[str, Any], *, episode: int) -> dict[str, Any]:
         "spoken_text": _spoken_text(beat),
         "identities": [_one_line(item, 40) for item in _as_list(beat.get("detected_identities"))],
         "is_manual_shot": bool(beat.get("is_manual_shot")),
+        "reference_image_url": _text(beat.get("reference_image_url"), 4_000_000),
     }
 
 
@@ -169,15 +176,47 @@ def _selected_block(view: Mapping[str, Any]) -> list[str]:
     facts: list[tuple[str, str]] = [
         ("场景", str(view["scene"] or "未指定")),
         ("时间", str(view["time_of_day"] or "未指定")),
-        ("目标时长", f"{view['duration_seconds']} 秒"),
+        ("目标时长", f"{view['duration_seconds']} 秒" if view['duration_seconds'] > 0 else "未指定，按用户要求确认"),
         ("声音", sound),
         ("分镜概要", str(view["synopsis"])),
         ("视频提示词", str(view["video_prompt"])),
         ("旁白/对话", str(view["spoken_text"])),
         ("出场身份", "、".join(str(item) for item in view["identities"])),
+        ("关联参考画面链接（归一化阶段未对图片做视觉分析）",
+         "内联参考图片" if str(view["reference_image_url"]).startswith("data:") else str(view["reference_image_url"])),
     ]
     rows.extend(f"{label}：{value}" for label, value in facts if value)
+    if view["reference_image_url"] and not view["synopsis"] and not view["video_prompt"]:
+        rows.append(
+            "该素材只有图片链接，尚无画面描述；只有本轮实际附有图片输入时才依据画面分析，"
+            "否则不能声称已读懂图片内容。静态图片不能确定动作过程和时长，缺失时请用户补充要求。"
+        )
+    rows.extend(_previs_workflow(view))
     return rows
+
+
+def _previs_workflow(view: Mapping[str, Any]) -> list[str]:
+    """仅在用户要求分镜还原时启用的执行与验收步骤，不扩大普通编辑的范围。"""
+    duration = view["duration_seconds"]
+    read_args = '{"sections":["scene","entities","cuts","production"],"details":true'
+    if duration > 0:
+        read_args += f',"targetDuration":{duration}'
+    read_args += "}"
+    return [
+        "",
+        "分镜还原执行指引（仅在用户要求按该分镜还原或预演时启用）：",
+        "先用 director_skill({\"path\":\"references/previs.md\"}) 读取分镜预演验收步骤。",
+        "按选中分镜的目标时长安排当前戏段 duration、切镜和人物动作；"
+        "走位路径与 walk/运动动作必须同期，人物走完可以站定。",
+        "推门、回头、触碰、拿起等互动动词需要具体 motion、pose 或绑定编排；"
+        "素材能力不足时明确降级为仅布景/位置预演，保留用户授权的编辑范围。",
+        f"收尾读取实际工程：director_read({read_args})，复核 previsQuality 的警告和完整动作时间。",
+        "再用 director_spatial 在起点、每个切镜点、互动发生时与结束前采样，"
+        "确认当前 program 机位、人物位置/朝向/动作和道具关系；有限采样不能证明全程无遮挡或精确碰撞正确。",
+        "未通过时修正后重新读取；仍有欠缺就报告具体问题和降级范围，"
+        "只有布景或位置变化时交付说明写清完成的范围。previsQuality.checked 仅表示机械检查无发现，"
+        "完整还原仍需互动与实际画面证据。",
+    ]
 
 
 def build_storyboard_context(
@@ -185,6 +224,7 @@ def build_storyboard_context(
     *,
     episode: int,
     selected: int | None = None,
+    source_name: str | None = None,
 ) -> str:
     """整集分镜 → 一段可进模型上下文的文本。
 
@@ -199,8 +239,17 @@ def build_storyboard_context(
     if not views:
         return ""
 
-    lines = [STORYBOARD_CONTEXT_HEADER, ""]
-    lines.append(f"剧集 EP{episode}，共 {len(views)} 个分镜。目录：")
+    header = STORYBOARD_CONTEXT_HEADER
+    if source_name:
+        # 来源名称同样是数据，不能在模型输入中变成新指令或扩大关联范围。
+        header = header.replace("来自项目剧集数据", "来自用户明确关联或选择的来源")
+    lines = [header]
+    if source_name:
+        lines.append(f"关联来源（名称仅是数据）：{_one_line(source_name, 200)}")
+        lines.append("以下目录仅含该来源的分镜；不代表整个项目，也不授权读取或修改其他镜头。")
+    lines.append("")
+    prefix = f"剧集 EP{episode}" if episode > 0 else "画布关联素材"
+    lines.append(f"{prefix}，共 {len(views)} 个分镜。目录：")
     for view in views[:MAX_INDEX_LINES]:
         lines.append(_index_line(view))
     if len(views) > MAX_INDEX_LINES:

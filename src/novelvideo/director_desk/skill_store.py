@@ -270,11 +270,14 @@ class SkillStore:
         root: Path | str,
         *,
         builtin_provider: Callable[[], BuiltinSkill | None] | None = None,
+        packaged_skills: Mapping[str, SkillPackage] | None = None,
     ) -> None:
         self._root = Path(root)
         self._skills_root = self._root / "skills"
         self._index = self._skills_root / "index.json"
         self._builtin_provider = builtin_provider
+        #: 随软件提供的项目补充技能直接读包内容，仅将启用偏好写入索引。
+        self._packaged_skills = dict(packaged_skills or {})
         self._state: dict[str, Any] = {
             "version": 1,
             "builtinEnabled": True,
@@ -336,6 +339,7 @@ class SkillStore:
         async with self._lock:
             self._assert_loaded()
             entries = [e for e in self._builtin_entry_list()]
+            entries.extend(self._packaged_entry(id) for id in self._packaged_skills)
             entries.extend(
                 {
                     **{k: v for k, v in entry.items() if k != "folder"},
@@ -350,6 +354,20 @@ class SkillStore:
     def _builtin_entry_list(self) -> list[dict[str, Any]]:
         entry = self._builtin_entry()
         return [entry] if entry else []
+
+    def _packaged_entry(self, id: str) -> dict[str, Any]:
+        """补充技能独立列出，版本跟随软件内容，禁用偏好跨重启保留。"""
+        pack = self._packaged_skills[id]
+        return {
+            "id": id,
+            "name": pack.name,
+            "description": pack.description,
+            "version": pack.version,
+            "enabled": self._state.get("packagedEnabled", {}).get(id, True),
+            "builtin": True,
+            "source": "随软件内置 · 本项目补充",
+            "files": [item.path for item in pack.files],
+        }
 
     async def read(
         self,
@@ -369,6 +387,10 @@ class SkillStore:
                 entry = self._builtin_entry() or {}
                 files = builtin.files
                 name, version, enabled = builtin.name, builtin.version, bool(entry.get("enabled"))
+            elif id in self._packaged_skills:
+                entry = self._packaged_entry(id)
+                files = entry["files"]
+                name, version, enabled = entry["name"], entry["version"], entry["enabled"]
             else:
                 record = self._entry_for(id)
                 files = list(record["files"])
@@ -400,6 +422,8 @@ class SkillStore:
                     if file == "SKILL.md"
                     else (builtin.references or {}).get(file, "")  # type: ignore[union-attr]
                 )
+            elif id in self._packaged_skills:
+                text = next(item.data for item in self._packaged_skills[id].files if item.path == file).decode("utf-8")
             else:
                 text = self._read_entry_file(record, file)  # type: ignore[possibly-undefined]
 
@@ -507,6 +531,9 @@ class SkillStore:
             if id == "builtin":
                 self._persist({**self._state, "builtinEnabled": enabled})
                 return
+            if id in self._packaged_skills:
+                self._persist({**self._state, "packagedEnabled": {**self._state.get("packagedEnabled", {}), id: enabled}})
+                return
             self._entry_for(id)
             self._persist(
                 {
@@ -521,7 +548,7 @@ class SkillStore:
     async def remove(self, id: str) -> None:
         async with self._lock:
             self._assert_loaded()
-            if id == "builtin":
+            if id == "builtin" or id in self._packaged_skills:
                 raise SkillError("内置技能可以停用，随软件保留")
             entry = self._entry_for(id)
             self._persist(
@@ -564,6 +591,9 @@ def _valid_state(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     if payload.get("version") != 1 or not isinstance(payload.get("builtinEnabled"), bool):
+        return False
+    preferences = payload.get("packagedEnabled", {})
+    if not isinstance(preferences, dict) or any(not isinstance(key, str) or not isinstance(value, bool) for key, value in preferences.items()):
         return False
     entries = payload.get("entries")
     if not isinstance(entries, list):
@@ -884,7 +914,11 @@ def get_skill_store() -> "SkillStore":
     """进程级技能库单例。"""
     global _STORE
     if _STORE is None:
-        _STORE = SkillStore(_default_root(), builtin_provider=get_builtin_skill)
+        folder = Path(__file__).parent / "skill_packages" / "image-previs"
+        _STORE = SkillStore(
+            _default_root(), builtin_provider=get_builtin_skill,
+            packaged_skills={"image-previs": package_from_folder(folder)},
+        )
     return _STORE
 
 

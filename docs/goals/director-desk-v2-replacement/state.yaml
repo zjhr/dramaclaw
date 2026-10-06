@@ -1,0 +1,679 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "导演台 v2 完全替换（mangfufu/director-desk 接入 DramaClaw）"
+  slug: director-desk-v2-replacement
+  kind: existing_plan
+  tranche: "完整替换：五层 AI 能力全部接入 + agent 功能正常 + 节点/全局配置/相对节点保存语义 + UI/UX 高保真 + MONOFORM 出主链路。连续执行直到原始 outcome 完整达成。"
+  status: done
+  oracle:
+    signal: "浏览器端到端：新节点能打开、内置 AI 面板真实对话并改动场景、自定义技能可导入/启用/被读取、agent 通道真实跑通一次 director_apply 并落盘、关重开工程恢复、配置跨节点共享；tsc --noEmit 退出 0；导演台 vitest 全绿"
+    cadence: "after each Worker package and at final audit"
+    final_proof: "Judge 终审 receipt + 四条 oracle 断言的机械复跑输出 + 浏览器走查记录 + 变更文件清单 + verify 命令结果，全部映射回 goal.md 的 Goal Oracle"
+  intake:
+    original_request: "目标是完全的新项目替换，并且agent功能正常支持，原新项目的ai能力和skill这些都需要接入兼容文我的项目，你可以通过改造接入，兼容使用它的ai面板，和自定义技能管理等等（一至五大点功能），注意，它是一个节点，配置是全局，保存是相对节点。你自己评估架构设计，UI/UX高保真，做到合理，方便灵活使用。"
+    interpreted_outcome: "画布上的白模导演台节点完全替换为 mangfufu/director-desk，其五层 AI 能力（AI 对话面板、18 个 director_* 工具、内置技能包、自定义技能管理、提示词工程产出）在 DramaClaw 内全部可用，现有 agent 能正常驱动它，配置全局、保存相对节点，UI/UX 高保真，MONOFORM 出主链路"
+    input_shape: existing_plan
+    audience: "主人（DramaClaw 自用）"
+    authority: approved
+    proof_type: demo
+    completion_proof: "浏览器实操四项（打开/对话改场景/技能导入启用被读取/agent 真实调用落盘）+ 关重开工程恢复 + 配置跨节点共享 + tsc 退出 0 + 导演台 vitest 全绿 + 素材许可门通过"
+    likely_misfire: "只嵌入没接 agent；只接 agent 没做面板与技能；配置/保存语义做反；dev 能跑 prod 挂；丢 MONOFORM 独有价值；只做到能编译就宣布完成"
+    blind_spots_considered:
+      - "上游 AI 面板 / MCP / 自定义技能管理三者全绑 Electron（safeStorage + ipcMain + window.directorDesktop），Web 版需自建宿主层"
+      - "nginx 缺 /monoform-desk/ 配置段是已存在的生产 bug，新路径必须配齐且旧 bug 需处理"
+      - "上游纯中文，无 en/vi，DramaClaw 有多语言要求"
+      - "素材许可门：Quaternius 动作库 CC0-1.0、代码 MIT，逐条过 license-inventory"
+      - "上游单人维护（4 提交者、主体 1 人），fork 后需自跟版本"
+      - "多个导演台节点同时打开时的工程与会话隔离"
+      - "已有 MONOFORM 节点的用户数据迁移"
+      - "DramaClaw dd-scene 协议与 director_* 操作数组的映射表"
+      - "上游 exportVideo 在 Web 版走 window.directorDesktop.files 会 undefined，需另接 blob 回传"
+    existing_plan_facts:
+      - "上游 mangfufu/director-desk v0.4.10，MIT，329★，2026-09-29 仍在推，纯原生 TS，无 CDN 依赖，实测构建 5.3MB / 4.8s"
+      - "18 个 director_* 工具定义在 src/automation/contract.ts；createToolService 在 src/main.ts:317 无条件创建，不依赖 Electron"
+      - "src/main.ts:345-348 的 window.__director 宿主 API 被 if (import.meta.env.DEV) 门禁包住，生产构建不暴露；去掉是一行改动"
+      - "MCP server 本体是纯 node:http（desktop/mcp-server.cjs），仅 callTool 经 Electron IPC 打到渲染进程，可自建宿主绕过"
+      - ".director 是纯 UTF-8 JSON v3；skills/director-desk/scripts/project-tool.mjs 离线 apply 接受与在线相同的操作数组，不需要 revision/requestId，Node 22+，不联网不填 key"
+      - "DramaClaw 已有 proven vendored 流程：frontend/vendor/monoform/ + PATCHES.md + frontend/public/monoform-desk/，经 frontend/vite.config.ts 的 vendoredDesks"
+      - "frontend/public/director-desk/（80MB 死代码）已 git rm，nginx 与 vite 引用已清"
+      - "frontend/src/features/canvas/nodes/directorDeskSkills.ts 已有 engine: 'director' | 'monoform' 分叉设计，director 分支为此预留"
+      - "上游内置技能包：SKILL.md 27 行 + 6 references（project-format 25.9KB / prompt-writing 16.5KB / camera 9.2KB / editing 7KB / media 5KB / online-workflow 4.2KB）"
+      - "目标 node 形态：节点；配置全局；保存相对节点"
+      - "mangfufu 在多机位切镜、14 个运镜预设、Quaternius 动作库+重定向+足部IK、群众阵列、建筑模块拼接、多层楼板/区域、多戏段+末帧接拍、真深度视频、GLB/FBX/OBJ 导入、提示词工程上全面胜过 MONOFORM；MONOFORM 独有语音气泡上游没有"
+      - "聊天归档路由 api/v1/chat/director-desk/restore 是活代码，与被删的静态目录无关，不得误删"
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  exact_human_approval_can_terminal_wait: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  selected: local
+  local:
+    status: live
+    url: "http://goalbuddy.localhost:41737/director-desk-v2-replacement/"
+    command: "node /Users/mac/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/director-desk-v2-replacement"
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: high
+    objective: "验证上游计划事实并产出接入架构地图"
+    receipt:
+      result: done
+      note: notes/T001-ai-capability-and-integration-map.md
+      summary: "上游实测完成：18 个 director_* 工具在生产构建中 18/18 存活，dist 5.3MB；__director 调试口被 DEV 门禁整块剔除但工具层完整；AI 宿主与技能存储均为纯 fetch/纯 JSON，可搬到 DramaClaw 后端。PM 复核否决 Scout 的『自建 HTTP 端点直调 createToolService』建议——ctx.engine 引用 20 次且深度绑定 Three.js 渲染引擎，工具层必须在 iframe 内经 postMessage 桥调用。定位 6 项待修、4 个决策点、3 条被证伪的既有假设。"
+      open_items:
+        - "F1 vite.config.ts:108 vendoredDesks 含死路径 director-desk（已在 T003 修）"
+        - "F2 license-inventory.csv 992 条 director-desk 死条目（待清账）"
+        - "F3 canvasNodes.ts:731-736 注释指向已删目录（待清账）"
+        - "F4 nginx 缺 /monoform-desk/ 段，既有生产 bug（待清账）"
+        - "F5 license-inventory.csv 无 monoform 条目，既有缺口（待清账）"
+        - "F6 test_license_inventory_covers_current_git_index 既有红，与本任务无关"
+      decision_points_for_judge:
+        - "接入路径"
+        - "工具层暴露方式"
+        - "monoformScenePatch.ts 复用边界"
+        - "AI 宿主位置"
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "基于 T001 证据定架构"
+    receipt:
+      result: done
+      decision: approved
+      note: notes/T002-architecture-decision.md
+      rationale: "四个决策点全部收敛，无需主人拍板。Judge 补上 T001 未覆盖的三个决定性事实：window.directorDesktop 是完整声明的 19 方法接口；上游无 vite.config.ts 且 dist 走绝对 /assets/ 与宿主 assets 同名冲突；nginx location / 带 X-Frame-Options DENY + CSP sha256 + frame-ancestors none。"
+      decisions:
+        接入路径: "(a) vendored 全量改造。最小改动面 4 处约 30 行，全在新增文件：vite.config.ts（base:'./'）、index.html（+1 行 shim script）、src/host-bridge.ts。不动 src/main.ts。不碰 DEV 门禁、不暴露 __director。"
+        工具层暴露: "(c) 双通道共用同一个 iframe 内 toolService。宿主 UI 走 postMessage，外部 agent 走 MCP 工具 director_desk_call。调用跳数 2 跳。"
+        monoformPatch边界: "(c) 部分复用。新节点主链路完全走 director 引擎，engine:'monoform' 分支保留但撤出默认位。语音气泡移植成 director 侧表现层。新增 toDirectorOperations(intent) -> operations[] 调 director_apply。"
+        AI宿主位置: "(d) 混合。内置面板的 agent 循环搬进 DramaClaw 后端，工具执行留在 iframe。配置读写既有全局 model_gateway_settings，不新建 ai-channels.json。"
+      pm_amendment: "Judge 说『注入真值 shim 即整块面板复活』不完整——19 方法中 AI 通道方法必须有真实实现，空壳会让面板从灰掉变成点了没反应。已固化为 T003 约束。"
+
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: high
+    objective: "vendored 进仓 + 宿主桥 + nginx + 一条真实工具链路"
+    allowed_files:
+      - frontend/vendor/director-desk/
+      - frontend/vendor/director-desk/vite.config.ts
+      - frontend/vendor/director-desk/index.html
+      - frontend/vendor/director-desk/src/host-bridge.ts
+      - frontend/public/director-desk-v2/
+      - frontend/src/features/canvas/nodes/directorDeskBridge.ts
+      - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+      - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+      - frontend/vite.config.ts
+      - frontend/docker/nginx.conf.template
+      - license-inventory.csv
+      - tests/test_director_desk_v2_bridge.py
+    receipt:
+      result: blocked
+      note: notes/T003-vendored-build-and-host-bridge.md
+      blocked_reason: "verify 中 vitest 红。PM 独立复核：当前 5 files / 29 tests failed，HEAD 基线 1 file / 2 tests failed，故本次引入 27 例，分布在 director-desk-node(4)、hardening(12)、project(9)、feedback(2)。它们断言被替换的 v1 契约，修复需改 frontend/src/__tests__/features/canvas/ 下测试，该目录不在本切片 allowed_files。"
+      commands_pass:
+        - "npm ci && npm run build（vendor，exit 0，5.3MB）"
+        - "test -f frontend/vendor/director-desk/src/automation/builtin-skill.json"
+        - "产物拷贝到 frontend/public/director-desk-v2/"
+        - "base 已改：产物 index.html 资源全为 ./assets/*"
+        - "grep -q directorDesktop 产物（14 处命中）"
+        - "nginx location ^~ /director-desk-v2/ 已配"
+        - "npx tsc -b --noEmit"
+        - "pytest tests/test_director_desk_v2_bridge.py"
+      commands_fail:
+        - "cd frontend && npx vitest run director-desk（29 failed / 176 passed）"
+      pm_findings:
+        - "PM 复核 base 已修，消除 Judge 标记的 prod-only 404 风险"
+        - "PM 复核 tsconfig.app.json:34 的 include 只有 src，vendor/ 不会被主类型检查扫到"
+        - "遗留：license-inventory.csv 992 条死条目待清账"
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "重写 4 个 v1 契约测试文件匹配 v2 协议"
+    allowed_files:
+      - frontend/src/__tests__/features/canvas/director-desk-node.test.tsx
+      - frontend/src/__tests__/features/canvas/director-desk-hardening.test.tsx
+      - frontend/src/__tests__/features/canvas/director-desk-project.test.tsx
+      - frontend/src/__tests__/features/canvas/director-desk-feedback.test.tsx
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/__tests__/features/canvas/director-desk-node.test.tsx
+        - frontend/src/__tests__/features/canvas/director-desk-hardening.test.tsx
+        - frontend/src/__tests__/features/canvas/director-desk-project.test.tsx
+        - frontend/src/__tests__/features/canvas/director-desk-feedback.test.tsx
+      commands:
+        - cmd: "npx vitest run director-desk-node director-desk-hardening director-desk-project director-desk-feedback"
+          status: pass
+        - cmd: "cd frontend && npx tsc -b"
+          status: pass
+      summary: "失败数 29 → 2（176 → 209 passed，4 files → 1）。改法：iframe 前缀 /director-desk/ → /director-desk-v2/，instanceId → node_id；保存断言从 project.get 换成 tool.call{director_export,kind:project} → 子应用回请 project.save（child-to-host）；回灌断言从 session 帧换成 project.load.document。新增上传字节逐字节相等断言、project.load 回执 submitted 后不得改写节点字段、方向守卫。"
+      found_bugs:
+        - id: BUG-1
+          severity: high
+          location: frontend/src/features/canvas/nodes/DirectorDeskNode.tsx:837
+          detail: "onReady: () => handlersRef.current.handleReady() 丢掉 info 参数，而 handleReady 签名是 (info: DirectorDeskReadyInfo = {})，导致 :501 的 info.nodeId 校验恒假——T003 新增的握手身份校验是死代码。"
+          pm_verified: true
+          impact: "落盘按 node_id 写进画布，写错节点不会被拦，是静默数据损坏。"
+          disposition: "已在 T005 修"
+        - id: BUG-2
+          severity: medium
+          location: frontend/src/features/canvas/nodes/DirectorDeskNode.tsx:485 与 :889
+          detail: "v2 子应用只监听 ready/request/response，宿主主动调 bridge.sendPanorama 是发给空气。feedback 的『割裂感修复』用例仍绿是因为它断言的是宿主侧发帧，上游图片实际已不再进到场景。"
+          pm_verified: true
+          disposition: "已在 T005/T006 处理"
+        - id: OBS-1
+          severity: low
+          location: frontend/src/features/canvas/nodes/directorDeskBridge.ts
+          detail: "宿主回 project.save 回执用 protocolVersion=1 而子应用说 2，子应用只校验 ok 不校验版本号。"
+          pm_verified: true
+          disposition: "T005 判定回 1 是对的（回执由宿主发），只写注释"
+
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: medium
+    objective: "修 BUG-1 / BUG-2 / 剩余 2 例既有红 / OBS-1"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+      - frontend/src/features/canvas/nodes/directorDeskBridge.ts
+      - frontend/vendor/director-desk/src/host-bridge.ts
+      - frontend/src/__tests__/features/canvas/director-desk-bridge.test.ts
+      - frontend/src/__tests__/features/canvas/director-desk-hardening.test.tsx
+      - frontend/src/__tests__/features/canvas/director-desk-feedback.test.tsx
+    receipt:
+      result: blocked
+      blocked_reason: "BUG-2 的两条修法各自需要改 allowed_files 之外的文件：宿主侧需改 director-desk-ai-background.test.tsx + 三份 locales 文案；vendor 侧需重建 public/director-desk-v2/。其余三个缺口已修完并验证。"
+      commands:
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+      summary: "套件 2 failed → 0 failed（213 passed，PM 独立复核 10 files / 213 tests 全绿）。BUG-1 修好，hardening 里那条 it.fails 翻回正向 it。既有红 2 例改测试反映 v1..v2 窗口（非法样本 2→3），新增窗口边界用例。sendSession 零调用已摘。OBS-1 判定回 1 是对的，只写注释。"
+      capability_finding: "v2 没有任何场景背景图片入口（lighting.background 是 #RRGGBB 十六进制色，engine.ts:546 用 new T.Color 消费），但 media/help.ts 末行给出 official 做法：Panorama uses an inward-facing sphere; add an unlit surface layer。v2 能做全景背景，只是表达方式变了——BUG-2 是改造不是砍功能。"
+      director_media_import_contract:
+        revision_handshake: "revision 须等于 currentRevision()，否则 REVISION_CONFLICT；宿主须先 action:list 拿 revision"
+        idle_guard: "编辑/绘制/导出中直接抛错"
+        big_payload: "mediaGuide 明确 Large bytes should use the desktop path, never generate base64 in model output"
+        limits: "png/jpeg/webp/mp4/webm，≤512MB，单边 ≤16384px"
+      pm_verification:
+        - "PM 复核 BUG-1：:837 现为 onReady: (info) => handlersRef.current.handleReady(info)"
+        - "PM 复核 v2 无背景图片入口：lighting/model.ts:22-25 的 color() 校验；engine.ts:546 用 new T.Color()"
+        - "PM 复核 v2 能表达全景背景：visuals/model.ts:8 的 panorama 是内向球体预设"
+
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: medium
+    objective: "按 v2 正确表达方式接全景图"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+      - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+      - frontend/src/__tests__/features/canvas/director-desk-ai-background.test.tsx
+      - frontend/src/__tests__/features/canvas/director-desk-feedback.test.tsx
+      - frontend/public/locales/zh/translation.json
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+        - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+        - frontend/src/__tests__/features/canvas/director-desk-ai-background.test.tsx
+        - frontend/src/__tests__/features/canvas/director-desk-feedback.test.tsx
+        - frontend/public/locales/zh/translation.json
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+      commands:
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+        - cmd: "node -e locales 三语校验"
+          status: pass
+      summary: "全景图在 v2 里接通。链路：director_media{action:list 取 revision} → director_media{action:import, data:data:<mime>;base64} → 单次 director_apply{add visual-panorama + patch.surface unlit layer}，已有实体走 update。两个 sendPanorama 调用点已摘除。revision 冲突重试最多 3 轮，每轮重读版本并换新 requestId；idle 守卫命中时不重试如实报 busy。另加 SHA-256 内容寻址短路。大文件超 12MB 明确报错。三份 locales 文案如实描述。"
+      evidence:
+        - "asset id visual-panorama：visuals/catalog.ts:3 生成 'visual-'+id；实跑 queryAssetCatalog 返回 found:true"
+        - "内向球不需特殊参数：visuals/runtime.ts:73 SphereGeometry(1,48,24)；:80 已强制 side=T.BackSide。半径走 spread（:99）而非 size"
+        - "mapping:'sphere' 是等距圆柱投影：media/surface-runtime.ts:27 用 atan/asin"
+        - "正向验证：宿主参数喂进上游 validateToolInput 与 applyOperations+assertProject 全部通过"
+        - "反向验证：mapping:'spherical'、unlit:'yes' 被上游真实拒绝"
+      deviations:
+        - "detectPanoramaMime 改严：初版对任意非白名单 Content-Type 回落扩展名，会把 image/gif 用 .png 掩盖；现只有 application/octet-stream 才回落"
+        - "add 与 patch.surface 合并为一次 director_apply，避免留下没有背景的空球"
+        - "新增 SHA-256 内容寻址复用短路"
+      unverified: "没有浏览器实测。参数形状与上游接受度已用真实上游代码验证，但 Three.js 里球体实际渲染的样子只在代码层确认了映射关系。终审需补。"
+      pm_verification:
+        - "PM 独立复核：tsc 退出 0；npx vitest run director-desk → 220 passed；locales 三语校验通过"
+
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "接 AI 宿主：agent 循环搬进 Python 后端 + 技能落盘 + 专用传输层"
+    allowed_files:
+      - src/novelvideo/director_desk/__init__.py
+      - src/novelvideo/director_desk/tool_transport.py
+      - src/novelvideo/director_desk/skill_store.py
+      - src/novelvideo/director_desk/ai_host.py
+      - src/novelvideo/director_desk/routes.py
+      - src/novelvideo/api/__init__.py
+      - frontend/vendor/director-desk/src/host-bridge.ts
+      - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+      - frontend/src/features/canvas/nodes/directorDeskBridge.ts
+      - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+      - frontend/public/director-desk-v2/
+      - tests/test_director_desk_ai_host.py
+      - tests/test_director_desk_skill_store.py
+      - tests/test_director_desk_tool_transport.py
+    receipt:
+      result: done
+      changed_files:
+        - src/novelvideo/director_desk/__init__.py
+        - src/novelvideo/director_desk/tool_transport.py
+        - src/novelvideo/director_desk/skill_store.py
+        - src/novelvideo/director_desk/ai_host.py
+        - src/novelvideo/director_desk/routes.py
+        - src/novelvideo/api/__init__.py
+        - frontend/vendor/director-desk/src/host-bridge.ts
+        - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+        - frontend/src/features/canvas/nodes/directorDeskBridge.ts
+        - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+        - frontend/public/director-desk-v2/
+        - tests/test_director_desk_ai_host.py
+        - tests/test_director_desk_skill_store.py
+        - tests/test_director_desk_tool_transport.py
+      commands:
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_ai_host.py tests/test_director_desk_skill_store.py tests/test_director_desk_tool_transport.py -q"
+          status: pass
+        - cmd: "git diff --exit-code src/novelvideo/api/routes/chat.py frontend/src/features/superchat/"
+          status: pass
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+        - cmd: "cd frontend/vendor/director-desk && npm run build"
+          status: pass
+        - cmd: "test -f frontend/public/director-desk-v2/index.html"
+          status: pass
+      summary: "上游 agent 循环整体搬进 src/novelvideo/director_desk/ai_host.py：双模式（execute/discuss）、执行层 isDiscussionToolCall 二次校验、REVISION_CONFLICT 断轮、非法参数重试 2 次、maxRounds=0 无限轮、启动自动读工程快照、事件流、按节点持久化会话。三种模型协议用 httpx 实现（chat/responses/anthropic 各自端点后缀、请求体、SSE 解析与 tool_result 回填分支）。传输层是本模块自有 HTTP 端点，不触碰 /chat/ws。技能落盘在 skill_store.py。配置读写既有 model_gateway_settings，密钥只以 hasKey 出现。101 个 Python 测试通过，director-desk 保持 220 passed。"
+      transport_design:
+        handshake: "POST /ai/session {nodeId, contract, builtinSkill} -> {sessionId}"
+        poll: "POST /ai/poll {nodeId, sessionId, wait} 长轮询 -> {calls, events}"
+        tool_result: "POST /ai/tool-result {nodeId, requestId, result} -> {accepted}"
+        pairing: "服务端 pending[request_id] -> Future；会话各带调用 FIFO、事件队列与 asyncio.Event 唤醒挂起的 poll"
+        no_session: "会话不存在返回 execution not-started；中途关闭或 60s 超时返回 execution unknown 并提示先读状态、不要重放写入"
+      found_bugs:
+        - id: "deque 无限重发"
+          severity: high
+          location: src/novelvideo/director_desk/tool_transport.py:292
+          detail: "_drain 里 del list(deque)[:n] 切的是临时副本，队列永远排不空，poll 会把同一个 request_id 无限重发给画布。已修并补了回归测试。"
+          pm_verified: true
+      deviations:
+        - "保存渠道强制要求 API 密钥（复用全局 settings 的代价），无鉴权本地端点如 http://127.0.0.1:11434/v1 存不进去。留给主人决策。"
+        - "新路由放在 novelvideo/director_desk/routes.py，api/routes/ 不在 allowed_files 内"
+        - "MCP 未实现，mcp() 故意返回 ok:true/data:{enabled:false} 占位（上游 ai-panel.ts:104 把 profiles() 与 mcp() 放在同一 Promise.all）"
+      unverified:
+        - "没有浏览器端到端验证：没有真实模型调用、没有真 iframe 跑一轮"
+        - "GitHub 技能导入只用 mock HTTP 层测过"
+      pm_verification:
+        - "PM 独立复核硬闸：git diff --exit-code chat.py superchat/ 退出 0，共享主干零改动"
+        - "PM 独立复核 101 passed in 0.58s"
+        - "PM 独立复核密钥不外泄：ai_host.py:246 只输出 hasKey"
+
+  - id: T008
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "接 MCP 工具面：注册 director_desk_call，并实现上游 AI 面板的 mcp()/update()/copyMcp()/mcpLan()/resetMcp()"
+    allowed_files:
+      - .hermes/plugins/dramaclaw/__init__.py
+      - src/novelvideo/chat/dramaclaw_mcp.py
+      - src/novelvideo/director_desk/mcp_tools.py
+      - src/novelvideo/director_desk/routes.py
+      - frontend/vendor/director-desk/src/host-bridge.ts
+      - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+      - frontend/public/director-desk-v2/
+      - tests/test_director_desk_mcp_tools.py
+    receipt:
+      result: done
+      changed_files:
+        - .hermes/plugins/dramaclaw/__init__.py
+        - src/novelvideo/chat/dramaclaw_mcp.py
+        - src/novelvideo/director_desk/mcp_tools.py
+        - src/novelvideo/director_desk/routes.py
+        - frontend/vendor/director-desk/src/host-bridge.ts
+        - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+        - frontend/public/director-desk-v2/
+        - tests/test_director_desk_mcp_tools.py
+      commands:
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_mcp_tools.py -q"
+          status: pass
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_ai_host.py tests/test_director_desk_skill_store.py tests/test_director_desk_tool_transport.py -q"
+          status: pass
+        - cmd: "grep -q director_desk_call .hermes/plugins/dramaclaw/__init__.py"
+          status: pass
+        - cmd: "git diff --exit-code src/novelvideo/api/routes/chat.py frontend/src/features/superchat/"
+          status: pass
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+        - cmd: "cd frontend/vendor/director-desk && npm run build"
+          status: pass
+        - cmd: "test -f frontend/public/director-desk-v2/index.html"
+          status: pass
+        - cmd: ".venv/bin/python -m ruff check（改动的 python 文件）"
+          status: pass
+      summary: "新增 director_desk_call 注册进插件 TOOLS 与 _DIRECTOR_DESK_TOOLS，走 _request → POST /api/v1/director-desk/mcp/tool → mcp_tools → tool_transport → 画布长轮询 → iframe tool.call → main.ts:318 的 toolService，与 T007 面板共用同一实现，工具执行一行都没在 Python/Node 侧重建。新模块做节点解析、director_ 前缀 + 节点自报清单双重校验、无会话 not-started / 已派发未回 unknown（HTTP 恒 200）。面板 mcp()/copyMcp/update() 接真实后端。129 Python 测试 + 220 vitest 全绿。"
+      call_chain: "外部 MCP client → stdio → python -m novelvideo.chat.dramaclaw_mcp → SERVER.call_tool（asyncio.to_thread） → plugin._handle_director_desk_call → _request POST /api/v1/director-desk/mcp/tool（Bearer agent token, 75s） → routes.mcp_tool → mcp_tools.call_director_desk_tool（形状校验 + 节点解析 + 工具名白名单） → tool_transport.call（入队 + 唤醒长轮询） → 画布 POST /ai/poll 取走 → session.callTool → bridge tool.call → iframe handleHostRequest → toolService.call（真工具跑在 Three.js 里） → POST /ai/tool-result → future resolve → MCP TextContent"
+      whitelist_security: "放行方式：加进 _DIRECTOR_DESK_TOOLS，_allowed_tool_names() 在 directorDesk scope 下返回它，注册循环因此放行；其它 scope 本就返回 None（全量），语义不变。不破坏防穿透：新工具走 _request 照样过 _guard_chat_scope_write，守卫从一条扩为两条精确路径（独立函数 _is_director_desk_mcp_path，逐段精确匹配而非通配前缀），测试钉死 /director-desk/ai/run、/mcp/tool/extra、/mcp、/projects/*/scripts/* 全部仍被拒。无穿透面：新路由只收 (nodeId, name, args) 三元组，没有 path 参数，args 里任何字段都改写不了目标路径。"
+      deviations:
+        - "_guard_chat_scope_write 的写路径白名单从一条扩到两条（新增 /api/v1/director-desk/mcp/tool），独立函数逐段精确匹配，已加测试钉死其余路径仍被拒"
+        - "dramaclaw_mcp.call_tool 改用 asyncio.to_thread：导演台工具可阻塞 75s，内联会冻结 tools/list"
+        - "_request 增加可选 timeout 参数，导演台调用显式用 75s（> 传输层 60s），否则先掐 HTTP 会把『结果未知』降级成 network_error，模型就会重放写入"
+      open_items:
+        - "保存渠道强制 upstreamKey：规则在产品级网关保存路径且 model_gateway_settings.py / ai_host.py 均不在可改文件内，如实报告未改，交主人决策"
+        - "未在真实浏览器中验证 iframe 内 toolService 端到端执行（服务端链路已用 ASGI 替身跑通，canvas 一侧是替身）；T007 已验过 iframe 半边，两半各自有证据，合起来的端到端留给终审"
+      pm_verification:
+        - "PM 独立复核硬闸：git diff --exit-code chat.py superchat/ 退出 0，共享主干零改动"
+        - "PM 独立复核白名单：.hermes/plugins/dramaclaw/__init__.py:324-333 的 _DIRECTOR_DESK_TOOLS 已含 director_desk_call，注释写明作用范围天然锁在该节点画布窗口内"
+        - "PM 独立复核守卫边界：:356 _is_director_desk_mcp_path 是独立函数，文档字符串明确『没有 path 参数』的防穿透理由"
+        - "PM 独立复核测试：129 passed in 0.85s（T007 的 101 + T008 的 28）；前端 220 passed"
+        - "PM 独立复核无会话语义：mcp_tools.py:23-24 文档与 :86/:124/:181 的实现一致，not-started 与 unknown 分类明确且注明『抛出去就只剩一句异常文本』"
+
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "dd-scene 迁移 + 语音气泡移植 + 提示词双稿接入 + 清账收尾"
+    allowed_files:
+      - src/novelvideo/director_desk/routes.py
+      - src/novelvideo/director_desk/mcp_tools.py
+      - frontend/src/features/canvas/nodes/directorDeskSkills.ts
+      - frontend/src/features/canvas/nodes/directorScenePatch.ts
+      - frontend/src/features/canvas/nodes/DirectorDeskChatPanel.tsx
+      - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+      - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+      - frontend/vendor/director-desk/src/host-bridge.ts
+      - frontend/vendor/director-desk/src/ui/speech-bubbles.ts
+      - frontend/vendor/director-desk/src/ui/speech-bubbles.css
+      - frontend/vendor/director-desk/src/ui/events.ts
+      - frontend/public/director-desk-v2/
+      - frontend/src/features/canvas/domain/canvasNodes.ts
+      - frontend/docker/nginx.conf.template
+      - frontend/public/locales/zh/translation.json
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+      - license-inventory.csv
+      - tests/test_director_desk_dd_scene.py
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/directorScenePatch.ts
+        - frontend/src/features/canvas/nodes/DirectorDeskChatPanel.tsx
+        - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+        - frontend/src/features/canvas/nodes/directorDeskSkills.ts
+        - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+        - frontend/src/features/canvas/domain/canvasNodes.ts
+        - frontend/docker/nginx.conf.template
+        - frontend/vendor/director-desk/src/ui/speech-bubbles.ts
+        - frontend/vendor/director-desk/src/ui/speech-bubbles.css
+        - frontend/vendor/director-desk/src/ui/events.ts
+        - frontend/public/director-desk-v2/
+        - frontend/public/locales/zh/translation.json
+        - frontend/public/locales/en/translation.json
+        - frontend/public/locales/vi/translation.json
+        - license-inventory.csv
+        - tests/test_director_desk_dd_scene.py
+      commands:
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_dd_scene.py -q"
+          status: pass
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_ai_host.py tests/test_director_desk_skill_store.py tests/test_director_desk_tool_transport.py tests/test_director_desk_mcp_tools.py -q"
+          status: pass
+        - cmd: "grep -c 'frontend/public/director-desk-v2/' license-inventory.csv"
+          status: pass
+        - cmd: "! grep -c 'frontend/public/director-desk/' license-inventory.csv"
+          status: pass
+        - cmd: "grep -q 'location ^~ /monoform-desk/' frontend/docker/nginx.conf.template"
+          status: pass
+        - cmd: "git diff --exit-code src/novelvideo/api/routes/chat.py frontend/src/features/superchat/"
+          status: pass
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+        - cmd: "cd frontend/vendor/director-desk && npm run build"
+          status: pass
+        - cmd: "test -f frontend/public/director-desk-v2/index.html"
+          status: pass
+        - cmd: ".venv/bin/python -m ruff check tests/test_director_desk_dd_scene.py"
+          status: pass
+        - cmd: "ego-browser 加载 /director-desk-v2/ 导入含台词工程，播放采样气泡"
+          status: pass
+      summary: "dd-scene 新增 toDirectorOperations（纯函数）把 intent 翻成 director_apply 增量操作；applyDirectorSceneIntent 降级为 MONOFORM 专用并保留。气泡：lines 翻成 production.notes 拍点，vendor 侧新增 ui/speech-bubbles.ts DOM 叠加层读同一份 notes 渲染（已浏览器实测）。提示词双稿：新增 directorPromptField/writeDirectorPromptDraft 与会话读写方法，切模式不搬运任何一份。清账：删 992 条死条目、补 v2/monoform 条目、nginx 补 /monoform-desk/ 三段、过期注释更正。"
+      speech_bubble_implementation: "数据侧没造新东西：dd-scene characters[].lines → toDirectorOperations → director_apply{operation:'notes'} → 上游 production.notes（model.ts:134 的 ProductionNote{id,start,end,actorId,story,emotion,dialogue,action} 已完整表达定位/时长/台词/交接）。渲染侧新增 ui/speech-bubbles.ts + .css，由 ui/events.ts 的 bindEvents 调 mountSpeechBubbles(ctx) 挂载（与既有 installDepthControls 同模式，因 main.ts 不在 allowed_files）。选 DOM 而非 Three.js sprite：气泡是给导演读台词的辅助信息，不是成片内容——sprite 会跟着 renderShot 进截图与导出（ReferenceLabels 就明确写着 should not be reproduced as final-film text）。定位：每帧把 actorId 对应实体的 entityPosition 抬到 y + entity.height + 0.35，用 ctx.engine.getShotCamera 做 .project()，按 canvas.getBoundingClientRect() 换算像素；深度越界/实体不可见/画布未布局一律不画。fade 照搬 vendor/monoform/src/speechBubble.js 口径（SPEECH_FADE_SECONDS=0.25，短句按一半压缩，后一句开始即截断前一句 end）。自跑 requestAnimationFrame 不占 engine.onFrame（那归 main.ts 的镜头 HUD）。"
+      speech_bubble_browser_evidence: "ego-browser 加载 http://127.0.0.1:5173/director-desk-v2/，用上游 createScene+readSceneDocument 生成含一条台词拍点的 .director 经 #project-file 导入，播放采样：t=0:05 opacity=0.739 scale=0.979，t=1:03 起 opacity=1.0，文本「我在这儿等你」，盒模型 [1033,270,96,28] 落在拍摄视口内。t=0 处无气泡正确（淡入起点 progress=0）。host-bridge 的 19 个方法在产物里齐全。"
+      prompt_layer: "上游 production-panel.ts 的双稿语义本来就对（:139 切模式只写 promptMode，:143 fillPrompt 重读当前模式那一份，从不搬运）。缺口是 DramaClaw 侧没有命名这四样东西的表面。新增 DIRECTOR_PROMPT_MODES / directorPromptField / directorPromptMode / readDirectorPromptDrafts / writeDirectorPromptDraft / parseDirectorPromptReadback，加会话方法 readPromptDrafts（director_read sections:['production']，只读工具不走 idle() 守卫）与 writePromptDraft（读-改-写整份 production，REVISION_CONFLICT 最多重试 3 轮，每轮重读以免旧快照覆盖用户新写的另一份）。不变量：mode 与两份文稿是三个互不相干的键，测试断言切模式后 promptText/textOnlyPrompt/fixedPrompt 原封不动。没有新建 DramaClaw 侧提示词编辑 UI——v2 子应用自带面板已覆盖读写入口。"
+      cleanup_F2: "删掉 992 条 frontend/public/director-desk/ 死条目；v2 按重建后实际哈希补齐 25 条；另存 23 条 monoform-desk 条目（board 记为 F5，同属入库产物）。git ls-files 的条目全部有对应行。"
+      cleanup_F4: "nginx 补 /monoform-desk/ 三段（= /monoform-desk 301、^~ /monoform-desk/assets/ immutable、^~ /monoform-desk/ 带 SAMEORIGIN + frame-ancestors self），修既有生产 bug：全局 location / 的 X-Frame-Options DENY 与 CSP frame-ancestors none 连同源 iframe 一起拒，dev 无这些头所以只在生产白屏。"
+      cleanup_engine: "directorDeskSkills.ts 五处默认值本已是 director，DirectorDeskNode 不传 engine。补注释说明 monoform 分支为何保留且可达（MonoformDeskNode 显式传 engine、两条翻译层语义相反、.director 单向不可逆）。测试钉死默认值为 director 且 MonoformDeskNode 仍传 engine='monoform'。"
+      found_bugs:
+        - id: BUG-3
+          severity: high
+          location: frontend/src/features/canvas/nodes/directorScenePatch.ts:847 allocateId
+          detail: "合成 id 按『前缀+批内序号』生成（dd-char1、dd-char2…），agent 连着两轮说『摆两个人』时第二轮第一个角色又拿到 dd-char1，而它已存在。上游 model.ts:256 的 ids.has(e.id) 判『对象标识重复』→ 整批 director_apply 原子回滚，用户第二轮说什么都白说。"
+          how_found: "跑真实上游 applyOperations 时报『项目文件无效：对象标识或类型错误』。validateToolInput 查不出来（它不管 id 重复），只有 assertProject 管。"
+          fix: "allocateId 接受宿主从 director_read 拿到的已占用 id 集合，顺延到下一个空位；toDirectorOperations 新增第 4 参 occupiedIds，批内也逐个占位。"
+          regression_test: "tests/test_director_desk_dd_scene.py::test_synthetic_ids_do_not_collide_across_turns —— 移除 allocateId 的循环后该用例复现上游原始报错，6 个用例连带变红。"
+          pm_verified: true
+          pm_evidence: "directorScenePatch.ts:847-853 的 allocateId 已含 while (occupied.has(id)) { slot += 1; ... } 顺延循环；:1156 调用处传 occupied。"
+      verification_approach: "参数形状不靠字段名猜：19 条测试全部经 node --experimental-strip-types 拉起上游 validateToolInput（JSON Schema 层）+ applyOperations + assertProject（语义层）真跑。做过两次变异验证——把 orbit-left 的 side 改成 +1 断言失败；把 allocateId 退回无脑序号报上游原始错误——确认测试真的会抓。"
+      deviations:
+        - "DirectorDeskChatPanel 的 director 引擎保留 onSceneIntent 回退：director-desk-chat-panel.test.tsx 有 6 条 v1 契约用例只传 onSceneIntent，该文件不在 allowed_files。DirectorDeskNode 始终传 onDirectorScene，主链路是 v2。"
+        - "frontend/vendor/director-desk/PATCHES.md 不在 allowed_files，无法登记第 3 条补丁；已在源码文件头注明。"
+        - "design hook 报 speech-bubbles.css 的 9px 圆角 / 13px 字号超出 DESIGN.md：未改也未 suppress。vendored 上游自有字号体系（13px 见 dialog-shell/settings-panel/workspace-shell），按上游惯例保持。"
+        - "存了 23 条 monoform-desk 许可条目（board F5）——任务表只列了 F2/F3/F4，但两套 desk 同为入库产物，缺条目是同一类账。"
+      known_test_debt: "tests/test_director_desk_v2_bridge.py::test_host_bridge_declares_explicit_failure_for_deferred_electron_capabilities 断言 profiles 等能力必须『显式失败』，但 T007/T009 已把它们接成真实现（host-bridge.ts:562 的 profiles: () => agentCall('profiles')）。这是 T003 遗留的测试债，不是产品回归——PM 已独立复跑确认：1 failed, 158 passed，且失败原因正是该断言过时。留待终审一并清。"
+      unverified:
+        - "dd-scene → director_apply 的浏览器端到端未做：后端未启动（127.0.0.1:8000 不通）无法登录画布；host-bridge 有 event.source === window 守卫，独立打开的子应用拒绝自发自收消息，tool.call 探针无效。翻译层已用真实上游 validateToolInput + applyOperations + assertProject 验证。"
+        - "frontend/vendor/ 被 .gitignore:104 整个排除（git ls-files 计数 0）。气泡源码不入库，只有构建产物入库。fresh clone 重跑 vendor 构建会丢气泡。新测试已加 requires_vendor 标记。"
+      preexisting_failures:
+        - "test_dependency_license_gate.py 仍红（pillow_heif/da2/sharp/plyfile 的 Python 包许可），是 board 已记的 F6，改前改后一致。"
+      pm_verification:
+        - "PM 独立复核硬闸：git diff --exit-code chat.py superchat/ 退出 0"
+        - "PM 独立复核清账 F2：旧条目 0、v2 条目 25、monoform 条目 23"
+        - "PM 独立复核 F4：nginx.conf.template:131-146 有 /monoform-desk/ 三段"
+        - "PM 独立复核 BUG-3：directorScenePatch.ts:847-853 allocateId 已含 while (occupied.has(id)) 顺延循环，:1156 传 occupied"
+        - "PM 独立复核 tsc 退出 0；前端 220 passed"
+        - "PM 发现一处测试债：全量 Python 158 passed / 1 failed，失败的是 T003 遗留的 test_host_bridge_declares_explicit_failure_for_deferred_electron_capabilities，它断言 profiles 必须显式失败而 T007 已接成真实现——测试过时而非产品回归，留待终审清"
+
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: xhigh
+    objective: "把 nodeTypes.directorDeskNode 切回 DirectorDeskNode，并跑完终审列出的 6 条浏览器实测"
+    allowed_files:
+      - frontend/src/features/canvas/nodes/index.ts
+      - frontend/src/features/canvas/nodes/DirectorDeskNode.tsx
+      - frontend/src/features/canvas/nodes/MonoformDeskNode.tsx
+      - frontend/src/features/canvas/nodes/directorDeskV2Session.ts
+      - frontend/src/features/canvas/nodes/DirectorDeskChatPanel.tsx
+      - frontend/src/features/canvas/nodes/directorScenePatch.ts
+      - frontend/src/features/canvas/nodes/directorDeskSkills.ts
+      - frontend/src/features/canvas/nodes/directorDeskBridge.ts
+      - frontend/src/__tests__/features/canvas/director-desk-node.test.tsx
+      - frontend/src/__tests__/features/canvas/director-desk-chat-panel.test.tsx
+      - frontend/src/__tests__/features/canvas/monoform-desk-node.test.tsx
+      - frontend/public/locales/zh/translation.json
+      - frontend/public/locales/en/translation.json
+      - frontend/public/locales/vi/translation.json
+    receipt:
+      result: done
+      changed_files:
+        - frontend/src/features/canvas/nodes/index.ts
+        - frontend/src/__tests__/features/canvas/director-desk-node.test.tsx
+      commands:
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_*.py -q"
+          status: pass
+        - cmd: "git diff --exit-code src/novelvideo/api/routes/chat.py frontend/src/features/superchat/"
+          status: pass
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+        - cmd: "cd frontend && npx vitest run monoform"
+          status: pass
+        - cmd: "grep -n \"directorDeskNode: withLodShell('directorDeskNode', DirectorDeskNode)\" frontend/src/features/canvas/nodes/index.ts"
+          status: pass
+      browser_verification:
+        - "第1条 verified — iframe title「光影舞台 · 导演台」、2 个 canvas、宿主栏显示「已连接 · 协议 v2 / 可用接口 7 个」。prod-only 404 单独验过：用模拟 nginx「缺文件必须 404」的静态服务逐个请求 index.html 引用的 12 个产物，全部 200；performance 里 11 条资源 decodedBodySize 全 >0。另证尾斜杠是真依赖（去掉斜杠解析成 /assets/… 即 404）。按钮文案已是「打开」，全页无「打开白模台」。"
+        - "第2条 verified — 浏览器内 configure 写入使渠道 2→3 并持久化；回读只含 hasKey:true 无明文 key；设置页 4 个 director-desk 渠道均为 type=password、valueLength=0，DOM 里搜不到明文。"
+        - "第3条 verified — 接上本机真实网关（18780）后收到真模型回复「镜头已改成缓缓推近主角：8 秒匀速推近…」，并产出 dd-scene 卡片（已应用 / 推近·8秒），时间轴新增「运镜 1 · 8.00s」、提示「场景已应用·22:04」。"
+        - "第4条 verified — 导入自定义技能后可 read/enable/disable；模型逐字回出 PROBE_SKILL_READ_9f3a，该串只存在于导入的技能里，证明确实被 AI 读取。"
+        - "第5条 verified — 节点 data 只存项目相对引用（/static/projects/.../director-desk-<nodeId>-project-….json，非内联 JSON）；全量重载应用后再打开，人物 A/B 复原且显示「工程已存档·21:44」。"
+        - "第6条 verified — 第二个节点独立渲染（不同 node_id、无存档标记 = 按节点隔离正确），其 iframe「渠道设置」下拉列全部 4 个渠道含节点 1 上配置的 T010 real gateway·DC-cognee-LLM；节点 2 实测也真跑出 NODE2_OK_7c1d。"
+      summary: "切换 nodes/index.ts:35 并改掉过时注释。真正的根因修复是补上缺失的接线守卫测试——既有测试全部直接 import 组件，绕过了 nodeTypes 这张表，所以没有任何断言能发现映射错了；新测试真实渲染 nodeTypes.directorDeskNode，且实测能抓回归（把行改回 MonoformDeskNode 断言失败）。六条浏览器实测全部通过，含 prod-only 404 排查。MONOFORM 保留可达：导出完好、三个跨组件 import 符号仍在、158 测试全过、bundle 独立启动正常（2 canvas、0 失败资源）。共用文件在真实挂载下无问题。"
+      known_limitation_unchanged: "monoform 的 3 个 file failed 是既有问题非回归——vendor/monoform/tests/*.test.mjs 是 node:test 写的 .mjs 被 vitest 按名字误收（No test suite found）。用 stash 对比确认改动前后完全一致，且这些文件不引用 nodeTypes。"
+      findings_not_fixed:
+        - "settings.db 里的 upstreamKey 是明文落盘。不影响『密钥不进前端』（该条已证），但若要求静态加密属后端存储策略，超出本切片与允许文件范围，交主人判断。"
+        - "src/novelvideo/chat/dramaclaw_mcp.py 有一处改动是前序任务留下的（把同步 handler 挪进 asyncio.to_thread），非本切片所改。禁改区 chat.py 与 superchat/ 本身 git diff 为空。"
+      pm_verification:
+        - "PM 独立复核 index.ts:32-35 注释与切换均正确"
+        - "PM 独立复核硬闸：git diff --exit-code chat.py superchat/ 退出 0"
+        - "PM 独立复核全绿：tsc 退出 0；director-desk 221 passed；Python 160 passed"
+        - "PM 独立复核 monoform 3 个 file failed 的性质：vendor/monoform/tests/*.test.mjs 被 vitest 误收，非本次回归"
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "终审（第二次）：复核 T010 证据、补验全景图与语音气泡真实画布、判定原始 outcome 是否完整达成"
+    inputs:
+      - "全部 done 任务 receipt"
+      - "T010 的六条浏览器实测与 T999 第一次终审的 missing_evidence"
+    constraints:
+      - "不得实现。"
+      - "只有编译通过、无浏览器证据时必须拒绝。"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      summary: "T010 的接线修复属实且经独立复核通过；五层能力全部拿到产品内功能证据，三条语义与九条硬约束在真实浏览器链路里逐条落地；补验的全景图内向球与语音气泡真实画布两项也都通过——插件真的插上了。"
+      oracle_verification:
+        五层能力:
+          内置AI面板: "verified — iframe 内原生面板，会话由后端持久化；读到 T010 留下的真实模型回复；Judge 自己发的探针触发 /ai/run 200 + /ai/tool-result 200，轮次推进到「第 1 轮」"
+          18个工具: "verified — vendor contract.ts 恰好 18 条，入库产物里 18 个 director_* 全存活；真实 iframe 上跑通 director_media(import/list)、director_apply(add/notes/update)、director_read、director_view、director_history(undo)，并从错误里反向确认识别到未知资产与 REVISION_CONFLICT"
+          内置技能包: "verified — 面板技能下拉列出 director-desk + SKILL.md + 6 份 references（project-format/prompt-writing/camera/editing/media/online-workflow）"
+          自定义技能管理: "verified — 渠道可增删改查启停；skills 面板显示已导入技能；T010 的探针串 PROBE_SKILL_READ_9f3a 被模型逐字回出，证明技能正文确实进了上下文"
+          提示词工程产出: "verified — 提示词面板有「参考视频 / 纯文本」双稿页签；Judge 用真实 director_apply 写入 promptText=JUDGE_DRAFT_REF_VIDEO、textOnlyPrompt=JUDGE_DRAFT_TEXT_ONLY、fixedPrompt=JUDGE_FIXED，再用 director_read 读回三个互不相同的值"
+        三条语义:
+          节点形态: "verified — index.ts:35 nodeTypes.directorDeskNode → DirectorDeskNode；画布节点显示「3D 导演台」+「打开」；点开是全屏弹窗 + 同源 iframe"
+          配置全局: "verified — 持久化画布 JSON 里导演台节点 data 只有 directorProjectRef/isOpen/videoUrl 等，零个渠道/模型/密钥字段；/ai/profiles 路由签名不收 nodeId；新开的节点面板照样列出全部 4 个全局渠道"
+          保存相对节点: "verified — 节点 data 存 directorProjectRef = /static/projects/<proj>/freezone/_uploads/..._director-desk-<nodeId>-project-<stamp>.json，相对路径 + nodeId 命名，非内联 JSON；第二节点 ref 为 null；落盘文件实读为 format=director-desk version=3 的 17928 字节合法文档"
+        硬约束:
+          完全替换: "verified — nodeTypes 不再指向 MonoformDeskNode；整页「白模」出现 0 次；iframe title「光影舞台 · 导演台」、2 canvas、11 条资源零 404；工具栏是上游原生全套（文件/编辑/场景/帮助/戏段/提示词/AI/资产/精细模型/楼层/区域/动作/走位）"
+          许可合规: "verified — 25 个入库产物 100% 有 license-inventory 条目，旧 director-desk/ 死条目归零"
+          生产可用: "verified — nginx 三段齐全（无斜杠 301、assets immutable、frame-ancestors self）；产物 base='./'，index.html 引用的 12 个资源逐个 200；/monoform-desk/ 既有生产 bug 一并修好"
+          不破坏既有: "verified — chat.py + superchat/ git diff 为空；chat restore 路由仍在 chat.py:165；360 导演台与 3GS 未触碰；9 例既有前端失败逐一核对源文件未被本目标碰过"
+          UI高保真: "verified — 无降级、无灰化、无裸 iframe，宿主栏「已连接 · 协议 v2 / 可用接口 7 个」与「工程已存档」正常显示"
+          agent兼容: "verified — Judge 补上了上轮没做的活体验证：从页面打 /api/v1/director-desk/mcp/tool，director_apply 真的经传输层派发到 iframe 的 toolService 并落盘（added judge-mcp-marker，director_read 复核到 position [0,0.4,2]），再用同一路径 remove 复原"
+        补充实测:
+          全景图渲染: "verified — 走真实 director_media import（拿到 media-ca616c…，revision 握手正确）+ 真实 director_apply 加 visual-panorama（mapping:'sphere'、unlit:true、spread:120），Three.js 在活画布里真渲染出全景贴图：像素采样命中 (53,246,59) 纯绿带 + 白标记块，12×9 网格同时采到绿区与蓝区；vendor 源码确证 SphereGeometry(1,48,24) + material.side=BackSide + scale=spread，即内向球。背景其余部分被房间自身几何遮挡属正确行为"
+          语音气泡真实画布: "verified — 经真实 director_apply notes 写入含 dialogue 的拍点，播放头移到 t=2 后 iframe 内 #shot-canvas > .speech-bubbles 出现 .speech-bubble，文本「JUDGE_BUBBLE_OK_7c1d 我在这儿等你」、opacity=1、盒模型 [969,195,258,45]，截图确认气泡悬在人物 A 头顶、时间轴「剧情备注」轨同步显示台词"
+      t010_evidence_audit:
+        - "第1条 verified — Judge 独立复现：iframe src=/director-desk-v2/?node_id=…、title「光影舞台 · 导演台」、2 canvas、宿主栏「已连接 · 协议 v2」、全页「白模」0 次、performance 11 条资源无 404，并把 index.html 引用的 12 个产物逐个 HTTP 打到全 200。T010 关于尾斜杠是真依赖的补充判断也成立"
+        - "第2条 verified — /ai/profiles 与 /model-gateway/config 全量响应做了非掩码字段扫描：0 个未掩码密钥字段；唯一出现的 sk- 长串是 4 个渠道的 provider UUID，不是密钥"
+        - "第3条 verified — 后端持久化 transcript 里存着真模型回复；Judge 另起一轮 /ai/run 也拿到 200 + /ai/tool-result 200。补充：18780 的 DC-cognee-LLM 延迟很高，探针 5 分钟仍停在「第 1 轮」，链路通但延迟高"
+        - "第4条 verified — transcript 存有「探针：只回复 PROBE_SKILL_READ_9f3a」→「AI：PROBE_SKILL_READ_9f3a」，该串只存在于导入的技能里"
+        - "第5条 verified — 落盘文件实读为合法 .director v3；工程已存档指示器在截图里可见；Judge 用 director_history undo 把自己加的全景/备注/提示词全部回滚，实体数回到 14"
+        - "第6条 结论修正（非产品缺陷）— Judge 最初看到面板只列 1 个渠道，排查后是自己环境的锅：vite 默认代理到 8780，那里跑着一个比 T010 渠道更早启动的僵留后端进程，内存里只有上一轮 Judge 建的渠道。改绑新后端 8000 后完整列出 4 个渠道含 T010 real gateway。T010 的主张成立"
+      commands:
+        - cmd: ".venv/bin/python -m pytest tests/test_director_desk_*.py -q"
+          status: pass
+        - cmd: "cd frontend && npx tsc -b --noEmit"
+          status: pass
+        - cmd: "cd frontend && npx vitest run director-desk"
+          status: pass
+        - cmd: "git diff --exit-code src/novelvideo/api/routes/chat.py frontend/src/features/superchat/"
+          status: pass
+        - cmd: "cd frontend && npx vitest run"
+          status: pass
+        - cmd: ".venv/bin/python -m pytest tests/test_dependency_license_gate.py -q"
+          status: fail
+      known_limits:
+        - "全量前端 9 failed / 6 files 全部是既有失败，逐一核对源文件未被本目标触碰：3 个 vendor/monoform/*.test.mjs（node:test 写的 .mjs 被 vitest 误收）、5 例 localStorage quota、3 例 CE credits、1 例 ingest"
+        - "test_dependency_license_gate.py 仍红（pillow_heif/da2/sharp/plyfile 的包许可），是看板 F6；pyproject/requirements/package.json 本目标零改动，改前改后一致"
+        - "保存渠道强制 API key 的限制未变；放宽会让无密钥渠道对全产品 UI 开放，风险大于收益"
+        - "MONOFORM 组件仍从 index.ts 导出（第 9 行 import、第 54 行 re-export）以保既有工程数据可开，但已不在 nodeTypes 里，画布造不出白模节点"
+      open_questions:
+        - id: A
+          judgment: "frontend/vendor/ 被 gitignore:104 —— 无恶化，维持上次判断为可接受的已知债。25 个产物仍全部 tracked 且内容完整：入库 CSS 里 .speech-bubbles / .speech-bubble 规则完整在，JS 产物里标识齐全，气泡代码确实入库。建议单开治理任务"
+        - id: B
+          judgment: "保存渠道强制 API key —— 无恶化，维持 known limit"
+        - id: B2
+          judgment: "settings.db 明文落盘 upstreamKey —— 不构成阻塞项，且不是本目标引入的。model_gateway_settings.py 在本目标 diff 里是空的，明文存储是全产品既有策略，覆盖 elevenlabs/fal_ai/openai/qianka/senseaudio/sharellm/siliconflow/stepfun/yyds 等全部渠道。对外接口侧非掩码字段扫描 0 泄漏，「密钥不进前端」成立。建议单开产品级密钥静态加密任务"
+      remaining_risks:
+        - "18780 网关的 DC-cognee-LLM 延迟很高，Judge 探针 5 分钟仍停在「第 1 轮」。链路通但主人实际用会等得不耐烦，值得换一个更快的模型做默认"
+        - "8780 上有个比 T010 渠道更早启动的僵留后端进程，内存里的渠道列表已过期，前端默认就代理到它。不重启它，主人在面板里会看到渠道缺失且百思不得其解"
+        - "settings.db 被实测污染了 4 条渠道（JUDGE-Secret-Key-12345、T010 probe channel、T010 browser probe，另 3 条指向 127.0.0.1:9 死地址），建议清掉"
+        - "MONOFORM 的 vendor 源码与 monoform-desk 产物尚未清理。goal.md 硬约束写明『旧 vendor/产物在终审通过后清理』，本闸通过后这就是下一个动作"
+        - "多导演台节点同时打开时的会话隔离只验到『节点各自 ref 独立』，未做两个节点同时开着的并发场景"
+      missing_evidence: []
+      pm_verification:
+        - "PM 独立复核硬闸：git diff --exit-code chat.py superchat/ 退出 0"
+        - "PM 独立复核全绿：tsc 退出 0；director-desk 221 passed；Python 160 passed"
+        - "PM 独立复核产物完整性：JS 产物含 speech-bubble 代码、CSS 含 .speech-bubbles 规则——气泡与全景确已入库"
+      first_audit_note: "第一次终审判 not_complete，根因是 index.ts 从未改过导致画布侧成果全部悬空；该问题已由 T010 修复并经本次终审独立复核通过。"
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []

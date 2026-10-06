@@ -28,7 +28,9 @@
 | POST | `/ai/run` | 发起一次任务（**立即返回**，进度走 poll 的事件流） |
 | POST | `/ai/stop` | 停止 |
 | POST | `/ai/conversation` | 读当前对话 |
-| POST | `/ai/conversation/new` | 重置对话 |
+| POST | `/ai/conversation/new` | 归档当前对话并新建 |
+| POST | `/ai/conversation/history` | 当前节点的历史会话列表 |
+| POST | `/ai/conversation/select` | 切回当前节点的一份历史会话 |
 | POST | `/ai/blender/status` | 本机能否跑 AI 建模（Blender 路径、护栏路径、可用 kind） |
 | POST | `/ai/blender/run` | 跑一段 AI 写的 bpy 脚本 → 护栏 → GLB |
 | POST | `/ai/blender/tool` | 同上，但回**工具结果**形状并内联 base64 |
@@ -55,10 +57,12 @@ ID，后者的回包形状与 ``/ai/configure`` 一致。``/ai/profile-models`` 
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+import math
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from novelvideo.director_desk.ai_director_desk_context import (
     beat_view,
@@ -91,6 +95,7 @@ from novelvideo.director_desk.mcp_tools import (
     unregister_node,
     update_state,
 )
+from novelvideo.director_desk.reference_images import normalize_reference_images
 from novelvideo.director_desk.skill_store import (
     SkillError,
     get_skill_store,
@@ -139,6 +144,12 @@ class ToolResult(BaseModel):
 
 class NodeRequest(BaseModel):
     nodeId: str
+
+
+class ConversationSelectRequest(NodeRequest):
+    """会话 ID 只允许引用本节点归档，服务层再次校验其路径安全与归属。"""
+
+    sessionId: str = Field(min_length=1, max_length=160)
 
 
 class ConfigureRequest(BaseModel):
@@ -208,6 +219,17 @@ class RunRequest(NodeRequest):
 
     iframe 侧的面板不传这个字段：它自己就是主入口，上下文由循环自己读工程快照生成。
     """
+
+    images: list[str] = Field(default_factory=list, max_length=1)
+    """当前关联来源中选中的真实图片，独立于用户原话与文字上下文。"""
+
+    imagePrevisConfirmation: str = Field(default="", max_length=100)
+    """用户点击确认的方案编号，后端核对活动会话、图片、模型与来源。"""
+
+    @field_validator("images")
+    @classmethod
+    def valid_images(cls, images: list[str]) -> list[str]:
+        return normalize_reference_images(images)
 
 
 class TestRequest(BaseModel):
@@ -474,6 +496,8 @@ async def run(payload: RunRequest) -> dict[str, Any]:
             use_selection=payload.useSelection,
             mode=payload.mode,
             context=payload.context,
+            images=payload.images,
+            image_previs_confirmation=payload.imagePrevisConfirmation,
         )
     )
     task.add_done_callback(
@@ -499,6 +523,22 @@ def conversation(payload: NodeRequest) -> dict[str, Any]:
 async def new_conversation(payload: NodeRequest) -> dict[str, Any]:
     try:
         return {"conversation": await get_ai_service().new_conversation(payload.nodeId)}
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ai/conversation/history")
+def conversation_history(payload: NodeRequest) -> dict[str, Any]:
+    try:
+        return {"conversations": get_ai_service().conversation_history(payload.nodeId)}
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ai/conversation/select")
+async def select_conversation(payload: ConversationSelectRequest) -> dict[str, Any]:
+    try:
+        return {"conversation": await get_ai_service().select_conversation(payload.nodeId, payload.sessionId)}
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -582,6 +622,10 @@ async def blender_tool(payload: BlenderRunRequest) -> dict[str, Any]:
 # ── 分镜上下文 ──────────────────────────────────────────────────────────────
 
 
+#: 分镜编号保持整数语义；布尔值或浮点编号不作为画布来源定位依据。
+PositiveBeatNumber = Annotated[int, Field(gt=0, strict=True)]
+
+
 class StoryboardRequest(BaseModel):
     """读项目分镜，供导演台面板选镜头与拼上下文。
 
@@ -590,8 +634,48 @@ class StoryboardRequest(BaseModel):
     """
 
     project: str
-    episode: int = 0
-    beat: int = 0
+    episode: int = Field(default=0, ge=0)
+    beat: int = Field(default=0, ge=0)
+    beatNumbers: list[PositiveBeatNumber] | None = Field(default=None, max_length=200)
+    """指定上游镜组时只读取这些编号；空列表保持空来源，不回落整集。"""
+
+    sourceName: str = Field(default="", max_length=200)
+    """画布来源的可读名，仅作为数据标签，不构成工具指令。"""
+
+
+class CanvasStoryboardRequest(BaseModel):
+    """一个画布上游的原始分镜数据，和 beat_view 的项目字段共用口径。"""
+
+    sourceName: str = Field(default="", max_length=200)
+    beats: list[dict[str, Any]] = Field(max_length=200)
+    beat: PositiveBeatNumber | None = None
+
+    @field_validator("beats")
+    @classmethod
+    def valid_beats(cls, beats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """拒绝不稳定编号、非有限时长与明显错误字段，保留未消费的上游数据。"""
+        numbers: set[int] = set()
+        text_fields = ("synopsis", "visual_description", "video_prompt", "keyframe_prompt", "narration_segment",
+                       "dialogue", "narration", "time_of_day", "speaker", "audio_type", "reference_image_url")
+        for index, beat in enumerate(beats):
+            number = beat.get("beat_number")
+            if type(number) is not int or number <= 0 or number in numbers:
+                raise ValueError(f"beats[{index}].beat_number 必须是唯一的正整数")
+            numbers.add(number)
+            duration = beat.get("duration_seconds")
+            if duration is not None:
+                try:
+                    valid_duration = type(duration) in (int, float) and math.isfinite(duration) and duration >= 0
+                except OverflowError:
+                    valid_duration = False
+                if not valid_duration:
+                    raise ValueError(f"beats[{index}].duration_seconds 必须是有限的非负秒数")
+            if beat.get("scene_ref") is not None and not isinstance(beat["scene_ref"], dict):
+                raise ValueError(f"beats[{index}].scene_ref 必须是场景对象或空值")
+            for field in text_fields:
+                if beat.get(field) is not None and not isinstance(beat[field], str):
+                    raise ValueError(f"beats[{index}].{field} 必须是文本或空值")
+        return beats
 
 
 async def _api_user(request: Request) -> dict:
@@ -628,14 +712,37 @@ async def storyboard(payload: StoryboardRequest, user: dict = Depends(_api_user)
     )
     async with scope as store:
         counts = await store.count_beats_by_episode()
-        available = storyboard_episodes_with_beats(counts)
+        # 目录必须与虾镜的剧集入口一致：单独残留在 beats 表的验收或历史记录
+        # 没有可访问的剧集来源，不能仅因数据库里有行就混进卡片和模型上下文。
+        # 此 scope 未加载图状态，需从 SQLite 读剧集，不能使用空的内存缓存。
+        episode_numbers = {episode.number for episode in await store.list_episodes()}
+        beat_episodes = storyboard_episodes_with_beats(counts)
+        available = [number for number in beat_episodes if number in episode_numbers]
+        orphaned = [number for number in beat_episodes if number not in episode_numbers]
+        if orphaned:
+            logging.getLogger(__name__).warning(
+                "导演台忽略无对应剧集的分镜记录: project=%s episodes=%s",
+                resolved.project_name, orphaned,
+            )
+        if payload.episode and payload.episode not in available:
+            raise HTTPException(status_code=404, detail="指定剧集不存在或没有分镜，请检查虾镜或画布上游来源")
         if not available:
+            if payload.beat or payload.beatNumbers:
+                raise HTTPException(status_code=404, detail="指定分镜不存在，请检查画布上游来源")
             return {"ok": True, "data": {"episode": 0, "episodes": [], "beats": [], "context": ""}}
-        episode = payload.episode if payload.episode in available else available[-1]
+        episode = payload.episode or available[-1]
         beats = await store.get_beats_as_dicts(episode)
 
+    if payload.beatNumbers is not None:
+        available_numbers = {int(beat.get("beat_number") or 0) for beat in beats}
+        wanted = set(payload.beatNumbers)
+        if wanted - available_numbers:
+            raise HTTPException(status_code=404, detail="画布上游指定的分镜不存在，请重新关联来源")
+        beats = [beat for beat in beats if int(beat.get("beat_number") or 0) in wanted]
     views = [beat_view(beat, episode=episode) for beat in beats]
     views = [view for view in views if view["beat_number"]]
+    if payload.beat and not any(view["beat_number"] == payload.beat for view in views):
+        raise HTTPException(status_code=404, detail="选中分镜不属于当前来源，请重新选择")
     selected = payload.beat or (views[0]["beat_number"] if views else None)
     return {
         "ok": True,
@@ -644,9 +751,22 @@ async def storyboard(payload: StoryboardRequest, user: dict = Depends(_api_user)
             "episodes": available,
             "beats": views,
             "selected": selected,
-            "context": build_storyboard_context(beats, episode=episode, selected=selected),
+            "context": build_storyboard_context(beats, episode=episode, selected=selected, source_name=payload.sourceName or None),
         },
     }
+
+
+@router.post("/storyboard/canvas")
+async def canvas_storyboard(payload: CanvasStoryboardRequest, user: dict = Depends(_api_user)) -> dict[str, Any]:
+    """只归一化一个已关联的画布上游，不扫描或自动回落到项目分镜。"""
+    views = [beat_view(beat, episode=0) for beat in payload.beats]
+    if payload.beat is not None and not any(view["beat_number"] == payload.beat for view in views):
+        raise HTTPException(status_code=404, detail="选中分镜不属于当前画布来源，请重新选择")
+    selected = payload.beat or (views[0]["beat_number"] if views else None)
+    return {"ok": True, "data": {
+        "episode": 0, "episodes": [], "beats": views, "selected": selected,
+        "context": build_storyboard_context(payload.beats, episode=0, selected=selected, source_name=payload.sourceName or None),
+    }}
 
 
 # ── 技能 ────────────────────────────────────────────────────────────────────

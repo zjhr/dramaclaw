@@ -98,6 +98,8 @@ export type DirectorDeskAiOp =
   | 'profiles'
   | 'conversation'
   | 'newConversation'
+  | 'conversationHistory'
+  | 'selectConversation'
   | 'configure'
   | 'channelModels'
   | 'channelQuickCreate'
@@ -801,6 +803,8 @@ async function startAgentSession(
   record.agentSessionId = sessionId;
   record.agentStopped = false;
   void pumpAgentSession(nodeId, record);
+  // 技能刷新只通知界面，不能等待它的回包而阻塞工具轮询和自动保存事件。
+  if (record.bridge.isReady()) void record.bridge.request('skills.sync', { entries: [] }).catch(() => undefined);
   return { sessionId };
 }
 
@@ -909,6 +913,8 @@ const AGENT_ENDPOINTS: Record<DirectorDeskAiOp, string> = {
   profiles: '/ai/profiles',
   conversation: '/ai/conversation',
   newConversation: '/ai/conversation/new',
+  conversationHistory: '/ai/conversation/history',
+  selectConversation: '/ai/conversation/select',
   configure: '/ai/configure',
   // 面板「极简新建渠道」向导的两步。试拉列表是只读的，建渠道落全局 settings 库。
   channelModels: '/ai/channel-models',
@@ -1028,6 +1034,8 @@ export function resetDirectorDeskV2SessionsForTests(): void {
  * 一场分镜。字段与后端 `beat_view` 的输出一一对应，只多一个 `episode`。
  */
 export interface DirectorDeskStoryboardShot {
+  /** 画布分格的真实参考画面；存在链接不表示模型已做视觉分析。 */
+  reference_image_url?: string;
   beat_number: number;
   scene: string;
   duration_seconds: number;
@@ -1063,7 +1071,7 @@ export interface DirectorDeskStoryboard {
  */
 export async function fetchDirectorDeskStoryboard(
   project: string,
-  options?: { episode?: number; beat?: number; signal?: AbortSignal },
+  options?: { episode?: number; beat?: number; beatNumbers?: number[]; sourceName?: string; signal?: AbortSignal },
 ): Promise<DirectorDeskStoryboard | null> {
   const response = await fetch(`${DIRECTOR_DESK_API_BASE}/storyboard`, {
     method: 'POST',
@@ -1076,9 +1084,29 @@ export async function fetchDirectorDeskStoryboard(
       project,
       episode: options?.episode,
       beat: options?.beat,
+      beatNumbers: options?.beatNumbers,
+      sourceName: options?.sourceName,
     }),
     signal: options?.signal,
   });
+  return readStoryboardResponse(response);
+}
+
+/** 画布节点自己的分镜输出，只把关联来源交后端生成同一套上下文。 */
+export async function fetchDirectorDeskCanvasStoryboard(
+  sourceName: string,
+  beats: Record<string, unknown>[],
+  options?: { beat?: number; signal?: AbortSignal },
+): Promise<DirectorDeskStoryboard> {
+  const response = await fetch(`${DIRECTOR_DESK_API_BASE}/storyboard/canvas`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sourceName, beats, beat: options?.beat }), signal: options?.signal,
+  });
+  return readStoryboardResponse(response);
+}
+
+/** 两种来源共用回包校验；畸形数据按读取失败呈现，不能伪装成无素材。 */
+async function readStoryboardResponse(response: Response): Promise<DirectorDeskStoryboard> {
   const text = await response.text();
   let payload: unknown = null;
   try {
@@ -1092,10 +1120,11 @@ export async function fetchDirectorDeskStoryboard(
   }
   // 回包是 `{ok:true, data:{…}}`，和 `postJson` 同一层壳。
   const data = readRecord(readRecord(payload).data);
-  const episodes = (data.episodes as unknown[]).filter(
+  if (!Array.isArray(data.beats) || !Array.isArray(data.episodes)) throw new Error('分镜接口没有返回有效目录');
+  const episodes = data.episodes.filter(
     (value): value is number => typeof value === 'number',
   );
-  const beats = (data.beats as unknown[]).filter(isShot);
+  const beats = data.beats.filter(isShot);
   const selected = data.selected;
   return {
     episode: typeof data.episode === 'number' ? data.episode : 0,
@@ -1122,9 +1151,10 @@ function isShot(value: unknown): value is DirectorDeskStoryboardShot {
 export function withStoryboardContext(
   payload: unknown,
   context: string | null | undefined,
+  images?: readonly string[],
 ): Record<string, unknown> {
-  if (!context) return readRecord(payload);
   const record = readRecord(payload);
-  if (record.context === context) return record;
-  return { ...record, context };
+  if ((!context || record.context === context) && images === undefined) return record;
+  // 宿主明确传入本轮附件时，空来源也要撤掉旧文字与图片。
+  return { ...record, ...(context || images !== undefined ? { context: context || '' } : {}), ...(images !== undefined ? { images: [...images] } : {}) };
 }

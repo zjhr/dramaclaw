@@ -126,6 +126,8 @@ export const DIRECTOR_DESK_ACTIONS = [
   'storyboard.get',
   // 面板选中某场后回写宿主。返回重读后的同一份载荷，让面板按事实重画而不是自己乐观更新。
   'storyboard.select',
+  'storyboard.source',
+  'storyboard.updated',
 ] as const;
 
 export type DirectorDeskAction = (typeof DIRECTOR_DESK_ACTIONS)[number];
@@ -168,6 +170,8 @@ export const DIRECTOR_DESK_ACTION_DIRECTION: Record<
   'preview.capture': 'host-to-child',
   'storyboard.get': 'child-to-host',
   'storyboard.select': 'child-to-host',
+  'storyboard.source': 'child-to-host',
+  'storyboard.updated': 'host-to-child',
 };
 
 export const DIRECTOR_DESK_MESSAGE_TYPES = {
@@ -280,6 +284,7 @@ export interface DirectorDeskToolResult {
  * 一份翻译表就能画卡片。
  */
 export interface DirectorDeskStoryboardShot {
+  reference_image_url?: string;
   beat_number: number;
   scene: string;
   duration_seconds: number;
@@ -295,6 +300,11 @@ export interface DirectorDeskStoryboardShot {
  * 那条路。发进面板等于让一段本不该出现在界面上的拼接文本多一个泄漏面，面板也没有用它。
  */
 export interface DirectorDeskStoryboardPayload {
+  /** 仅含当前导演台的直接上游，以及用户可主动选择的项目目录。 */
+  sources?: { id: string; label: string }[];
+  sourceId?: string | null;
+  sourceLabel?: string;
+  loading?: boolean;
   /** 有分镜的集号，升序。空数组 = 这个项目还没有分镜。 */
   episodes: number[];
   episode: number;
@@ -456,6 +466,8 @@ export interface DirectorDeskBridgeHandlers {
   onStoryboardSelect?: (
     shot: { episode: number; beat: number },
   ) => Promise<DirectorDeskStoryboardPayload> | DirectorDeskStoryboardPayload;
+  /** 用户显式切换关联来源；空值表示取消，不自动选择别的项目数据。 */
+  onStoryboardSource?: (sourceId: string | null) => Promise<DirectorDeskStoryboardPayload> | DirectorDeskStoryboardPayload;
   /** 协议/传输层错误（超时、非法请求、非致命来源丢弃不计入）。 */
   onError?: (error: Error) => void;
 }
@@ -688,7 +700,16 @@ export function createDirectorDeskBridge(
     // 分镜选择（子 → 宿主）。与 `ai.request` 同方向，但**不经过 Python 后端**：
     // 分镜宿主自己已经读到了，再绕一圈后端只会让选镜头这件事多一次网络往返，
     // 还要求后端开一条只为转发本地取数的端点。
-    if (action === 'storyboard.get' || action === 'storyboard.select') {
+    if (action === 'storyboard.get' || action === 'storyboard.select' || action === 'storyboard.source') {
+      if (action === 'storyboard.source') {
+        if (!options.onStoryboardSource) { settle(false, undefined, '宿主未提供来源选择'); return; }
+        const sourceId = typeof requestOptions.sourceId === 'string' ? requestOptions.sourceId : null;
+        void Promise.resolve(options.onStoryboardSource(sourceId)).then(
+          result => settle(true, result),
+          (error: unknown) => settle(false, undefined, error instanceof Error ? error.message : String(error)),
+        );
+        return;
+      }
       if (action === 'storyboard.get') {
         if (!options.onStoryboardGet) {
           settle(false, undefined, '宿主未提供分镜数据');
@@ -709,8 +730,8 @@ export function createDirectorDeskBridge(
       // 「没选中」被当成「第 0 场」，而第 0 场不存在。
       const episode = Number(requestOptions.episode);
       const beat = Number(requestOptions.beat);
-      if (!Number.isInteger(episode) || episode < 1 || !Number.isInteger(beat) || beat < 1) {
-        settle(false, undefined, 'storyboard.select 需要正整数的 episode 与 beat');
+      if (!Number.isInteger(episode) || episode < 0 || !Number.isInteger(beat) || beat < 1) {
+        settle(false, undefined, 'storyboard.select 需要非负整数的 episode 与正整数的 beat');
         return;
       }
       void Promise.resolve(options.onStoryboardSelect({ episode, beat })).then(

@@ -3,7 +3,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Download, Loader2, PencilLine } from "lucide-react";
+import { ArrowUp, Download, Loader2, PencilLine, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { downloadUrlAsFile } from "@/lib/browserDownload";
 import { p } from "@/lib/api-path";
 import {
@@ -12,13 +13,22 @@ import {
   type ManuscriptCharacterMapping,
   type UploadResult,
   type WriteFirstRequest,
+  type WritingSkill,
+  type WritingSkillBrief,
 } from "@/lib/queries/ingest";
+import {
+  WritingSkillQuietPicker,
+  skillName,
+  type WritingSkillBridge,
+} from "@/features/ingest/writing-skill-library";
 import type { SpineTemplate } from "@/types/project";
 
 type Role = "agent" | "user";
 type Step = "path" | "kind" | "premise" | "lead" | "count" | "skills" | "chat";
 type ThreadId = "edit" | "zero";
-type Kind = "novel" | "drama";
+type Kind = "novel" | "drama" | "ad";
+/** 另写一篇的五个台阶：选体裁 → 多选写法 → 一次问一题 → 复述 → 开写。 */
+type ZeroStep = "kind" | "skills" | "ask" | "recap" | "chat";
 type Msg = {
   id: string;
   role: Role;
@@ -29,6 +39,14 @@ type Msg = {
   downloadFilename?: string;
   viewText?: string;
   warnings?: string[];
+};
+
+/** 提问队列里的一问一答。question 为空的写法在复述里标「按写法补」。 */
+type AskItem = {
+  skillId: string;
+  question: string;
+  suggestions: string[];
+  answer: string;
 };
 
 type ThinkingEffort = "none" | "low" | "medium" | "high";
@@ -43,24 +61,19 @@ const HOOK_STYLES = [
   "rebirth",
 ] as const;
 
-const SKILL_IDS = [
-  "default",
-  "reversal",
-  "contrast",
-  "emotion",
-  "burst",
-  "setting",
-  "rebirth",
-  "sweet",
-  "revenge",
-  "warlord",
-  "imitate",
-  "wash",
-  "gender",
-  "rename",
-] as const;
+/** 三种成稿：卷数和落盘格式都定死在这里，前端不再问。 */
+const KINDS: readonly { id: Kind; unitKey: string; titleKey: string; detailKey: string }[] = [
+  { id: "drama", unitKey: "ingest.askFirst.unitEpisode", titleKey: "ingest.askFirst.drama", detailKey: "ingest.askFirst.dramaDetail" },
+  { id: "novel", unitKey: "ingest.askFirst.unitChapter", titleKey: "ingest.askFirst.comic", detailKey: "ingest.askFirst.comicDetail" },
+  { id: "ad", unitKey: "ingest.askFirst.unitEpisode", titleKey: "ingest.askFirst.ad", detailKey: "ingest.askFirst.adDetail" },
+];
 
-type SkillId = (typeof SKILL_IDS)[number];
+const COUNT_PRESETS: Record<Kind, readonly string[]> = {
+  drama: ["4", "8", "12"],
+  novel: ["6", "12", "24"],
+  ad: [],
+};
+const DEFAULT_COUNT: Record<Kind, string> = { drama: "8", novel: "12", ad: "1" };
 
 const STEPS: readonly Step[] = ["path", "kind", "premise", "lead", "count", "skills", "chat"];
 const OPEN_EDIT: Msg = { id: "edit-open", role: "agent", key: "ingest.askFirst.question" };
@@ -69,25 +82,31 @@ const OPEN_ZERO: Msg = { id: "zero-open", role: "agent", key: "ingest.askFirst.z
 type Persisted = {
   active: ThreadId;
   editStep: Step;
-  zeroStep: Step;
+  zeroStep: ZeroStep;
   editMessages: Msg[];
   zeroMessages: Msg[];
   kind: Kind;
-  premise: string;
-  lead: string;
   count: string;
-  skills: SkillId[];
+  picked: string[];
+  queue: AskItem[];
+  askIndex: number;
   hasWork: boolean;
   writtenFile: string;
   writtenUnit: number;
 };
 
-function isSkillId(value: string): value is SkillId {
-  return (SKILL_IDS as readonly string[]).includes(value);
+function isSkillId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }
 
 function isStep(value: unknown): value is Step {
   return typeof value === "string" && (STEPS as readonly string[]).includes(value);
+}
+
+function isZeroStep(value: unknown): value is ZeroStep {
+  return (
+    typeof value === "string" && ["kind", "skills", "ask", "recap", "chat"].includes(value)
+  );
 }
 
 function defaultState(): Persisted {
@@ -98,10 +117,10 @@ function defaultState(): Persisted {
     editMessages: [OPEN_EDIT],
     zeroMessages: [OPEN_ZERO],
     kind: "drama",
-    premise: "",
-    lead: "",
-    count: "",
-    skills: ["reversal"],
+    count: DEFAULT_COUNT.drama,
+    picked: [],
+    queue: [],
+    askIndex: 0,
     hasWork: false,
     writtenFile: "",
     writtenUnit: 0,
@@ -142,9 +161,10 @@ function parseMessage(value: unknown, index: number, thread: ThreadId): Msg | nu
 function parseSaved(value: unknown): Persisted | null {
   if (!value || typeof value !== "object") return null;
   const saved = value as Partial<Persisted>;
-  if ((saved.active !== "edit" && saved.active !== "zero") || !isStep(saved.editStep) || !isStep(saved.zeroStep)) {
+  if ((saved.active !== "edit" && saved.active !== "zero") || !isStep(saved.editStep)) {
     return null;
   }
+  if (!isZeroStep(saved.zeroStep)) return null;
   if (!Array.isArray(saved.editMessages) || !Array.isArray(saved.zeroMessages)) return null;
   const editMessages = saved.editMessages
     .map((item, index) => parseMessage(item, index, "edit"))
@@ -152,10 +172,28 @@ function parseSaved(value: unknown): Persisted | null {
   const zeroMessages = saved.zeroMessages
     .map((item, index) => parseMessage(item, index, "zero"))
     .filter((item): item is Msg => item !== null);
-  const skills = Array.isArray(saved.skills)
-    ? saved.skills.filter((item): item is SkillId => typeof item === "string" && isSkillId(item))
+  const picked = Array.isArray(saved.picked)
+    ? saved.picked.filter((item): item is string => isSkillId(item))
     : [];
-  const kind: Kind = saved.kind === "novel" || saved.kind === "drama" ? saved.kind : "drama";
+  const queue = Array.isArray(saved.queue)
+    ? saved.queue
+        .map((item): AskItem | null => {
+          if (!item || typeof item !== "object") return null;
+          const row = item as Partial<AskItem>;
+          if (typeof row.skillId !== "string" || !row.skillId) return null;
+          return {
+            skillId: row.skillId,
+            question: typeof row.question === "string" ? row.question : "",
+            suggestions: Array.isArray(row.suggestions)
+              ? row.suggestions.filter((line): line is string => typeof line === "string")
+              : [],
+            answer: typeof row.answer === "string" ? row.answer : "",
+          };
+        })
+        .filter((item): item is AskItem => item !== null)
+    : [];
+  const kind: Kind =
+    saved.kind === "novel" || saved.kind === "ad" || saved.kind === "drama" ? saved.kind : "drama";
   return {
     active: saved.active,
     editStep: saved.editStep,
@@ -163,10 +201,11 @@ function parseSaved(value: unknown): Persisted | null {
     editMessages: editMessages.length > 0 ? editMessages : [OPEN_EDIT],
     zeroMessages: zeroMessages.length > 0 ? zeroMessages : [OPEN_ZERO],
     kind,
-    premise: typeof saved.premise === "string" ? saved.premise : "",
-    lead: typeof saved.lead === "string" ? saved.lead : "",
-    count: typeof saved.count === "string" ? saved.count : "",
-    skills: skills.length > 0 ? skills : ["reversal"],
+    count: typeof saved.count === "string" && saved.count ? saved.count : DEFAULT_COUNT[kind],
+    picked,
+    queue,
+    askIndex:
+      typeof saved.askIndex === "number" && saved.askIndex > 0 ? Math.floor(saved.askIndex) : 0,
     hasWork: saved.hasWork === true,
     writtenFile: typeof saved.writtenFile === "string" ? saved.writtenFile : "",
     writtenUnit: typeof saved.writtenUnit === "number" && saved.writtenUnit > 0 ? Math.floor(saved.writtenUnit) : 0,
@@ -194,6 +233,7 @@ export function AskFirstPanel({
   onSaveImitation,
   onWriteFirst,
   onManuscriptFileChanged,
+  skillLibrary,
   retainConversation = true,
   className = "mt-6",
 }: {
@@ -223,6 +263,8 @@ export function AskFirstPanel({
     quality_issues?: string[];
   }>;
   onManuscriptFileChanged?: (upload: UploadResult) => void;
+  /** 写法库的入口：开问、换一批、编辑、新增、删除、恢复默认都走它。 */
+  skillLibrary?: WritingSkillBridge;
   /** Null while the page is still checking whether this project already has a manuscript. */
   retainConversation?: boolean | null;
   className?: string;
@@ -234,14 +276,19 @@ export function AskFirstPanel({
   const [readyKey, setReadyKey] = useState<string | null>(null);
   const [active, setActive] = useState<ThreadId>("edit");
   const [editStep, setEditStep] = useState<Step>("path");
-  const [zeroStep, setZeroStep] = useState<Step>("kind");
+  const [zeroStep, setZeroStep] = useState<ZeroStep>("kind");
   const [draft, setDraft] = useState("");
   const [pinned, setPinned] = useState<string | null>(null);
-  const [skills, setSkills] = useState<SkillId[]>(["reversal"]);
   const [kind, setKind] = useState<Kind>("drama");
-  const [premise, setPremise] = useState("");
-  const [lead, setLead] = useState("");
-  const [count, setCount] = useState("");
+  const [count, setCount] = useState(DEFAULT_COUNT.drama);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [queue, setQueue] = useState<AskItem[]>([]);
+  const [askIndex, setAskIndex] = useState(0);
+  const [askDraft, setAskDraft] = useState("");
+  const [library, setLibrary] = useState<WritingSkill[]>([]);
+  const [adBrief, setAdBrief] = useState<WritingSkillBrief | null>(null);
+  const [libraryState, setLibraryState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [reshuffling, setReshuffling] = useState(false);
   const [hasWork, setHasWork] = useState(false);
   const [writtenFile, setWrittenFile] = useState("");
   const [writtenUnit, setWrittenUnit] = useState(0);
@@ -286,10 +333,10 @@ export function AskFirstPanel({
     setEditMessages(next.editMessages);
     setZeroMessages(next.zeroMessages);
     setKind(next.kind);
-    setPremise(next.premise);
-    setLead(next.lead);
     setCount(next.count);
-    setSkills(next.skills);
+    setPicked(next.picked);
+    setQueue(next.queue);
+    setAskIndex(next.askIndex);
     setWrittenFile(next.writtenFile);
     setWrittenUnit(next.writtenUnit);
     setHasWork(
@@ -309,10 +356,10 @@ export function AskFirstPanel({
       editMessages,
       zeroMessages,
       kind,
-      premise,
-      lead,
       count,
-      skills,
+      picked,
+      queue,
+      askIndex,
       hasWork,
       writtenFile,
       writtenUnit,
@@ -327,10 +374,10 @@ export function AskFirstPanel({
     editMessages,
     zeroMessages,
     kind,
-    premise,
-    lead,
     count,
-    skills,
+    picked,
+    queue,
+    askIndex,
     hasWork,
     writtenFile,
     writtenUnit,
@@ -339,8 +386,30 @@ export function AskFirstPanel({
   const messages = active === "edit" ? editMessages : zeroMessages;
   const step = active === "edit" ? editStep : zeroStep;
   const sent = messages.filter((message) => message.role === "user");
-  const unitKey = kind === "novel" ? "ingest.askFirst.unitChapter" : "ingest.askFirst.unitEpisode";
-  const unit = t(unitKey);
+  const unit = t(KINDS.find((item) => item.id === kind)?.unitKey ?? "ingest.askFirst.unitEpisode");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!skillLibrary) {
+      setLibraryState("error");
+      return;
+    }
+    setLibraryState("loading");
+    void skillLibrary
+      .load()
+      .then((data) => {
+        if (cancelled) return;
+        setLibrary(data.skills);
+        setAdBrief(data.ad_brief);
+        setLibraryState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setLibraryState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [skillLibrary]);
 
   useEffect(() => {
     const node = scroller.current;
@@ -367,6 +436,87 @@ export function AskFirstPanel({
         ? items
         : [...items, { id: `zero-user-${items.length}`, role: "user", key: "ingest.askFirst.newPiece" }],
     );
+  };
+
+  // ── 另写一篇：体裁 → 多选写法 → 一次问一题 → 复述 ──────────────────
+
+  /** 换体裁或重选写法都会换掉整条队列，已答的一并清掉：半套答案比全错答案干净。 */
+  const resetQueue = (next: ZeroStep, nextKind?: Kind) => {
+    setQueue([]);
+    setAskIndex(0);
+    setAskDraft("");
+    setZeroStep(next);
+    if (nextKind) {
+      setKind(nextKind);
+      setCount(DEFAULT_COUNT[nextKind]);
+    }
+  };
+
+  const chooseKind = (next: Kind) => {
+    resetQueue("skills", next);
+    push("user", { key: KINDS.find((item) => item.id === next)?.titleKey ?? "ingest.askFirst.drama" });
+  };
+
+  const toggleSkill = (id: string) =>
+    setPicked((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+
+  /** 点「开始问」才把当前选中的写法锁成队列，之后按选中顺序一次问一个。 */
+  const startAsking = () => {
+    const own: AskItem[] = picked
+      .map((id) => library.find((skill) => skill.id === id))
+      .filter((skill): skill is WritingSkill => Boolean(skill))
+      .map((skill) => ({
+        skillId: skill.id,
+        question: skill.question,
+        suggestions: [...skill.suggestions],
+        answer: "",
+      }));
+    // 广告不问篇幅（锁死 1 集），但必须先知道在卖什么：自带的那一问排在最前面。
+    const items = kind === "ad" && adBrief ? [{ ...adBrief, skillId: adBrief.id, answer: "" }, ...own] : own;
+    setQueue(items);
+    setAskIndex(0);
+    setAskDraft("");
+    setZeroStep(items.length > 0 ? "ask" : "recap");
+  };
+
+  const answerCurrent = () => {
+    const text = askDraft.trim();
+    if (!text) return;
+    setQueue((items) => items.map((item, index) => (index === askIndex ? { ...item, answer: text } : item)));
+    setAskDraft("");
+    const next = askIndex + 1;
+    setAskIndex(next);
+    if (next >= queue.length) setZeroStep("recap");
+  };
+
+
+  /** 「换一批」只换屏幕上这三句，写法库不动。 */
+  const reshuffleCurrent = async () => {
+    const item = queue[askIndex];
+    if (!item || !skillLibrary || reshuffling) return;
+    setReshuffling(true);
+    try {
+      const result = await skillLibrary.reshuffle({
+        id: item.skillId,
+        question: item.question,
+        avoid: item.suggestions,
+        kind,
+        context: queue
+          .slice(0, askIndex)
+          .map((row) => `${row.question} ${row.answer}`)
+          .join("\n"),
+      });
+      setQueue((items) =>
+        items.map((row, index) => (index === askIndex ? { ...row, suggestions: result.suggestions } : row)),
+      );
+    } catch {
+      // 换一批不通就留着原来这三句，但要让人知道失败了。
+      toast.error(t("ingest.askFirst.reshuffleFailed"));
+    } finally {
+      setReshuffling(false);
+    }
   };
 
   const sceneHeaderLine = /^[\u4e00-\u9fffA-Za-z0-9·《》、 ]{2,40}\s+(?:日|夜|白天|深夜|黄昏|清晨|凌晨|上午|下午|傍晚|夜晚)\s+(?:内|外)$/;
@@ -413,22 +563,6 @@ export function AskFirstPanel({
       }
       push("user", { text });
       push("agent", { key: "ingest.askFirst.repairHeaderAdvice" });
-      return;
-    }
-    if (step === "premise") {
-      setPremise(text);
-      push("user", { text });
-      push("agent", { key: "ingest.askFirst.askLead" });
-      setZeroStep("lead");
-      return;
-    }
-    if (step === "lead") {
-      setLead(text);
-      push("user", { text });
-      push("agent", {
-        key: kind === "novel" ? "ingest.askFirst.askCountNovel" : "ingest.askFirst.askCountDrama",
-      });
-      setZeroStep("count");
       return;
     }
     push("user", { text });
@@ -655,10 +789,16 @@ export function AskFirstPanel({
       if (!onWriteFirst) throw new Error(t("ingest.askFirst.actionFailed"));
       const data = await onWriteFirst({
         kind,
-        premise,
-        lead,
+        premise: "",
+        lead: "",
         count,
-        skills,
+        skills: queue.map((item) => item.skillId).filter((id) => id !== adBrief?.id),
+        answers: queue.map((item) => ({
+          skill_id: item.skillId,
+          question: item.question,
+          answer: item.answer,
+          filled_by_skill: !item.question,
+        })),
         reasoning_effort: thinking,
         ...(continuing
           ? { filename: writtenFile, episode: nextUnit, note: note ?? "" }
@@ -695,6 +835,8 @@ export function AskFirstPanel({
         error instanceof Error && error.message
           ? error.message
           : t("ingest.askFirst.actionFailed");
+      // 第 1 稿没写出来就退回复述：用户还能改答案再点一次，不用从头走一遍。
+      if (!continuing) setZeroStep("recap");
       setZeroMessages((items) =>
         items.map((item) =>
           item.id === progressId ? { ...item, text: message, key: undefined } : item,
@@ -906,70 +1048,260 @@ export function AskFirstPanel({
               </button>
             )}
             {active === "zero" && zeroStep === "kind" && (
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Choice
-                  title={t("ingest.askFirst.novel")}
-                  detail={t("ingest.askFirst.novelDetail")}
-                  onClick={() => {
-                    setKind("novel");
-                    push("user", { key: "ingest.askFirst.novel" });
-                    push("agent", { key: "ingest.askFirst.askPremiseNovel" });
-                    setZeroStep("premise");
-                  }}
-                />
-                <Choice
-                  title={t("ingest.askFirst.drama")}
-                  detail={t("ingest.askFirst.dramaDetail")}
-                  onClick={() => {
-                    setKind("drama");
-                    push("user", { key: "ingest.askFirst.drama" });
-                    push("agent", { key: "ingest.askFirst.askPremiseDrama" });
-                    setZeroStep("premise");
-                  }}
-                />
-              </div>
-            )}
-            {active === "zero" && zeroStep === "count" && (
-              <div className="flex flex-wrap gap-2">
-                {(kind === "novel" ? ["6", "12", "24"] : ["4", "8", "12"]).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => {
-                      setCount(value);
-                      push("user", {
-                        key: kind === "novel" ? "ingest.askFirst.countNovel" : "ingest.askFirst.countDrama",
-                        vars: { count: value },
-                      });
-                      push("agent", { key: "ingest.askFirst.afterCount" });
-                      setZeroStep("skills");
-                    }}
-                    className="h-8 rounded-full border border-white/10 px-3 text-sm"
-                  >
-                    {t(kind === "novel" ? "ingest.askFirst.countNovel" : "ingest.askFirst.countDrama", {
-                      count: value,
-                    })}
-                  </button>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {KINDS.map((item) => (
+                  <Choice
+                    key={item.id}
+                    title={t(item.titleKey)}
+                    detail={t(item.detailKey)}
+                    onClick={() => chooseKind(item.id)}
+                  />
                 ))}
               </div>
             )}
-            {active === "zero" && (zeroStep === "skills" || zeroStep === "chat") && (
+            {active === "zero" && zeroStep === "skills" && (
+              <div className="space-y-3">
+                {libraryState === "loading" && (
+                  <p className="text-xs text-muted-foreground">{t("ingest.askFirst.skillLoading")}</p>
+                )}
+                {libraryState === "error" && (
+                  <p className="text-xs text-red-300">{t("ingest.askFirst.skillLoadFailed")}</p>
+                )}
+                {skillLibrary && (
+                  <WritingSkillQuietPicker
+                    api={{
+                      skills: library,
+                      picked,
+                      pickedSkills: picked
+                        .map((id) => library.find((skill) => skill.id === id))
+                        .filter((skill): skill is WritingSkill => Boolean(skill)),
+                      toggle: toggleSkill,
+                      remove: (id) =>
+                        setLibrary((items) => items.filter((skill) => skill.id !== id)),
+                      edit: (id, patch) =>
+                        setLibrary((items) =>
+                          items.map((skill) => (skill.id === id ? { ...skill, ...patch } : skill)),
+                        ),
+                      add: (skill) =>
+                        setLibrary((items) =>
+                          items.some((item) => item.id === skill.id) ? items : [...items, skill],
+                        ),
+                    }}
+                    bridge={skillLibrary}
+                    kind={kind}
+                    onAsk={startAsking}
+                  />
+                )}
+              </div>
+            )}
+            {active === "zero" && zeroStep === "ask" && queue[askIndex] && (
+              <div className="space-y-3">
+                <p className="text-sm leading-6">
+                  {queue[askIndex].question || t("ingest.askFirst.skillNoQuestionHint")}
+                </p>
+                <div className="space-y-1.5">
+                  {queue[askIndex].suggestions.map((line, index) => (
+                    <button
+                      key={line}
+                      type="button"
+                      onClick={() => setAskDraft(line)}
+                      className="flex w-full items-start gap-2 rounded-xl border border-white/10 px-3 py-2 text-left text-sm leading-6 hover:border-white/20"
+                    >
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {t("ingest.askFirst.suggestionIndex", { index: index + 1 })}
+                      </span>
+                      <span className="min-w-0">{line}</span>
+                      {index === 0 && (
+                        <span className="ml-auto shrink-0 text-xs text-primary">
+                          {t("ingest.askFirst.suggestionRecommended")}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={askDraft}
+                    onChange={(event) => setAskDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        answerCurrent();
+                      }
+                    }}
+                    placeholder={t("ingest.askFirst.placeholderAnswer")}
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.022] px-3 text-sm outline-none placeholder:text-muted-foreground/70 focus-visible:border-primary"
+                  />
+                  <button
+                    type="button"
+                    disabled={!askDraft.trim()}
+                    onClick={answerCurrent}
+                    className="h-9 rounded-full bg-primary px-4 text-sm text-primary-foreground disabled:opacity-40"
+                  >
+                    {askIndex + 1 < queue.length
+                      ? t("ingest.askFirst.answerAndNext")
+                      : t("ingest.askFirst.answerAndRecap")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reshuffling}
+                    onClick={() => void reshuffleCurrent()}
+                    className="h-9 rounded-full border border-white/10 px-3 text-sm disabled:opacity-40"
+                  >
+                    {reshuffling ? (
+                      <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
+                    ) : (
+                      t("ingest.askFirst.reshuffle")
+                    )}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => resetQueue("skills")}
+                    className="h-8 rounded-full border border-white/10 px-3 text-xs"
+                  >
+                    {t("ingest.askFirst.reselectSkills")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetQueue("kind")}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs"
+                  >
+                    <RotateCcw className="size-3.5" />
+                    {t("ingest.askFirst.changeKind")}
+                  </button>
+                </div>
+              </div>
+            )}
+            {active === "zero" && zeroStep === "recap" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">{t("ingest.askFirst.recapTitle")}</p>
+                <dl className="space-y-1.5 text-sm leading-6">
+                  <div className="flex gap-2">
+                    <dt className="shrink-0 text-muted-foreground">{t("ingest.askFirst.recapKind")}</dt>
+                    <dd>{t(KINDS.find((item) => item.id === kind)?.titleKey ?? "ingest.askFirst.drama")}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="shrink-0 text-muted-foreground">{t("ingest.askFirst.skillListLabel")}</dt>
+                    <dd className="min-w-0">
+                      {picked.length > 0
+                        ? picked
+                            .map((id) => library.find((skill) => skill.id === id))
+                            .filter((skill): skill is WritingSkill => Boolean(skill))
+                            .map((skill) => skillName(skill, t))
+                            .join("、")
+                        : t("ingest.askFirst.recapNoSkills")}
+                    </dd>
+                  </div>
+                </dl>
+                {queue.map((item) => (
+                  <label key={item.skillId} className="block space-y-1 text-xs text-muted-foreground">
+                    <span>
+                      {item.question || t("ingest.askFirst.recapBySkill", {
+                        name: skillName(
+                          library.find((skill) => skill.id === item.skillId) ?? {
+                            id: item.skillId,
+                            name: item.skillId,
+                            description: "",
+                            prompt: "",
+                            question: "",
+                            suggestions: [],
+                            builtin: false,
+                          },
+                          t,
+                        ),
+                      })}
+                    </span>
+                    {item.question ? (
+                      <input
+                        value={item.answer}
+                        onChange={(event) =>
+                          setQueue((items) =>
+                            items.map((row) =>
+                              row.skillId === item.skillId ? { ...row, answer: event.target.value } : row,
+                            ),
+                          )
+                        }
+                        className="h-8 w-full rounded-lg border border-white/10 bg-black/20 px-2 text-sm text-foreground outline-none focus-visible:border-primary"
+                      />
+                    ) : (
+                      <p className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-sm text-muted-foreground">
+                        {t("ingest.askFirst.recapFilledBySkill")}
+                      </p>
+                    )}
+                  </label>
+                ))}
+                {kind === "ad" ? (
+                  <p className="text-xs text-muted-foreground">{t("ingest.askFirst.adLockedLength")}</p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground">
+                      {t(kind === "novel" ? "ingest.askFirst.countNovel" : "ingest.askFirst.countDrama", {
+                        count: count,
+                      })}
+                    </span>
+                    {COUNT_PRESETS[kind].map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setCount(value)}
+                        className={`h-8 rounded-full border px-3 text-sm ${count === value ? "border-primary bg-primary/15 text-primary" : "border-white/10"}`}
+                      >
+                        {value}
+                      </button>
+                    ))}
+                    <input
+                      value={count}
+                      onChange={(event) => setCount(event.target.value.replace(/[^\d]/g, ""))}
+                      inputMode="numeric"
+                      aria-label={t("ingest.askFirst.recapCountLabel")}
+                      className="h-8 w-16 rounded-lg border border-white/10 bg-black/20 px-2 text-center text-sm outline-none focus-visible:border-primary"
+                    />
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() => void askWrite(1)}
+                    className="h-8 rounded-full bg-primary px-3 text-sm text-primary-foreground disabled:opacity-40"
+                  >
+                    {kind === "ad"
+                      ? t("ingest.askFirst.writeAd")
+                      : t("ingest.askFirst.writeFirst", { unit })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetQueue("skills")}
+                    className="h-8 rounded-full border border-white/10 px-3 text-xs"
+                  >
+                    {t("ingest.askFirst.reselectSkills")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetQueue("kind")}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs"
+                  >
+                    <RotateCcw className="size-3.5" />
+                    {t("ingest.askFirst.changeKind")}
+                  </button>
+                </div>
+              </div>
+            )}
+            {active === "zero" && zeroStep === "chat" && writtenUnit > 0 && kind !== "ad" && (
               <button
                 type="button"
                 disabled={actionBusy}
                 onClick={() =>
                   void askWrite(writtenUnit + 1, undefined, {
-                    key: writtenUnit
-                      ? "ingest.askFirst.writeNextUser"
-                      : "ingest.askFirst.writeFirstUser",
+                    key: "ingest.askFirst.writeNextUser",
                     vars: { next: String(writtenUnit + 1), unit },
                   })
                 }
                 className="h-8 rounded-full bg-primary px-3 text-sm text-primary-foreground disabled:opacity-40"
               >
-                {writtenUnit
-                  ? t("ingest.askFirst.writeNext", { next: writtenUnit + 1, unit })
-                  : t("ingest.askFirst.writeFirst", { unit })}
+                {t("ingest.askFirst.writeNext", { next: writtenUnit + 1, unit })}
               </button>
             )}
             {active === "edit" && editStep === "chat" && (
@@ -1144,22 +1476,6 @@ export function AskFirstPanel({
                 )}
               </div>
             )}
-            {active === "zero" && (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">{t("ingest.askFirst.skillsLabel")}</p>
-                <OptionRow
-                  items={SKILL_IDS.map((id) => ({
-                    title: t(`ingest.askFirst.skills.${id}.title`),
-                    detail: t(`ingest.askFirst.skills.${id}.detail`),
-                    active: skills.includes(id),
-                    onClick: () =>
-                      setSkills((current) =>
-                        current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-                      ),
-                  }))}
-                />
-              </div>
-            )}
             {step === "chat" && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">{t("ingest.askFirst.thinkingLabel")}</p>
@@ -1179,7 +1495,7 @@ export function AskFirstPanel({
                 </div>
               </div>
             )}
-            {(step === "chat" || step === "premise" || step === "lead") && (
+            {step === "chat" && (
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -1191,13 +1507,7 @@ export function AskFirstPanel({
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   rows={2}
-                  placeholder={
-                    step === "premise"
-                      ? t("ingest.askFirst.placeholderPremise")
-                      : step === "lead"
-                        ? t("ingest.askFirst.placeholderLead")
-                        : t("ingest.askFirst.placeholderChat")
-                  }
+                  placeholder={t("ingest.askFirst.placeholderChat")}
                   className="min-h-14 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 outline-none placeholder:text-muted-foreground/70"
                 />
                 <div className="flex justify-end px-3 py-2">

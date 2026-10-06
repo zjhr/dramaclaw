@@ -4,6 +4,7 @@ import pytest
 
 from novelvideo.ingest.zero_write import (
     ZERO_WRITE_SYSTEM_PROMPT,
+    ConfirmedAnswer,
     build_write_first_prompt,
     generate_first_manuscript,
     quality_issues,
@@ -16,7 +17,7 @@ def test_prompt_keeps_single_unit_scope_and_craft():
         premise="雨夜问完那句话",
         lead="林晚",
         count="4",
-        skills=["reversal", "wash"],
+        directives=["剧情反转：本集至少一次反转。", "洗稿：保留原句。"],
     )
     assert "第 1 集" in prompt
     assert "雨夜问完那句话" in prompt
@@ -26,7 +27,7 @@ def test_prompt_keeps_single_unit_scope_and_craft():
     assert "内/外" in prompt
     assert "具体角色名" in prompt
     assert "不要写后面各集" in prompt
-    assert "洗稿" not in prompt
+    assert "洗稿" in prompt
 
 
 def test_prompt_novel_variant_and_blank_lead():
@@ -35,7 +36,6 @@ def test_prompt_novel_variant_and_blank_lead():
         premise="末世种田",
         lead="",
         count="",
-        skills=[],
     )
     assert "第 1 章" in prompt
     assert "叙述散文" in prompt
@@ -89,13 +89,48 @@ def test_quality_issues_novel_length():
     assert any("太短" in issue for issue in issues)
 
 
+def test_prompt_lists_confirmed_answers_and_marks_skill_filled():
+    prompt = build_write_first_prompt(
+        kind="drama",
+        premise="",
+        lead="",
+        count="8",
+        directives=["甜宠：细节说话。"],
+        answers=[
+            ConfirmedAnswer("sweet", "甜宠", "两人卡住的关系是什么？", "她借住在他家"),
+            ConfirmedAnswer("revenge", "复仇打脸", "", "", filled_by_skill=True),
+        ],
+    )
+
+    assert "两人卡住的关系是什么：她借住在他家" in prompt
+    assert "复仇打脸：这一问没有具体回答" in prompt
+    assert "选中的写法：甜宠、复仇打脸" in prompt
+    assert "按该写法自行补齐" in prompt
+
+
+def test_prompt_ad_locks_single_episode_and_call_to_action():
+    prompt = build_write_first_prompt(
+        kind="ad",
+        premise="",
+        lead="",
+        count="",
+        directives=["短视频广告：前三秒钩子。"],
+        answers=[ConfirmedAnswer("ad-brief", "广告提案", "这条广告卖什么？", "卖耳机，看完点链接")],
+    )
+
+    assert "这部广告的第 1 集" in prompt
+    assert "全片只有 1 集" in prompt
+    assert "行动号召" in prompt
+    assert "全片最多三场" in prompt
+    assert "叙述散文" not in prompt
+
+
 def test_prompt_continuation_includes_previous_and_note():
     prompt = build_write_first_prompt(
         kind="drama",
         premise="雨夜问完那句话",
         lead="林晚",
         count="4",
-        skills=[],
         episode=2,
         previous_text="第 1 集 雨夜\n巷口 夜 内\n林晚：你来了。",
         note="这集加一个反派",

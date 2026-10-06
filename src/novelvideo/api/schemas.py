@@ -173,16 +173,46 @@ class SaveManuscriptImitation(BaseModel):
     validate: bool = True
 
 
+class WriteFirstAnswer(BaseModel):
+    skill_id: str = Field(default="", max_length=64)
+    question: str = Field(default="", max_length=200)
+    answer: str = Field(default="", max_length=2000)
+    filled_by_skill: bool = False
+
+
 class IngestWriteFirst(BaseModel):
-    kind: Literal["novel", "drama"] = "drama"
-    premise: str = Field(min_length=1, max_length=2000)
+    kind: Literal["novel", "drama", "ad"] = "drama"
+    premise: str = Field(default="", max_length=2000)
     lead: str = Field(default="", max_length=200)
     count: str = Field(default="", max_length=40)
     skills: list[str] = Field(default_factory=list, max_length=20)
+    answers: list[WriteFirstAnswer] = Field(default_factory=list, max_length=20)
     reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
     filename: str = Field(default="", max_length=200)
     episode: int = Field(default=0, ge=0, le=2000)
     note: str = Field(default="", max_length=2000)
+
+
+class WritingSkillBody(BaseModel):
+    """新增或改一条写法。``regenerate`` 让模型重写这一问和三句灵感。"""
+
+    name: str = Field(default="", max_length=40)
+    description: str = Field(default="", max_length=120)
+    prompt: str = Field(default="", max_length=4000)
+    question: str = Field(default="", max_length=120)
+    suggestions: list[str] = Field(default_factory=list, max_length=5)
+    regenerate: bool = False
+    kind: Literal["novel", "drama", "ad", ""] = ""
+    context: str = Field(default="", max_length=2000)
+
+
+class SkillSuggestionsBody(BaseModel):
+    """提问过程中的「换一批」：只重写屏幕上的三句，不回写写法库。"""
+
+    question: str = Field(default="", max_length=120)
+    avoid: list[str] = Field(default_factory=list, max_length=10)
+    kind: Literal["novel", "drama", "ad", ""] = ""
+    context: str = Field(default="", max_length=2000)
 
 
 # ── 角色 ──────────────────────────────────────────────────────────────────────

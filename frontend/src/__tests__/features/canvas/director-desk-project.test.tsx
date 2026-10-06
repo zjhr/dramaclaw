@@ -33,11 +33,15 @@ import {
   directorDeskProjectUploadName,
 } from "@/features/canvas/nodes/DirectorDeskNode";
 import { DIRECTOR_DESK_MESSAGE_TYPES } from "@/features/canvas/nodes/directorDeskBridge";
+import { getDirectorDeskV2Session } from "@/features/canvas/nodes/directorDeskV2Session";
 import { useCanvasStore } from "@/stores/canvasStore";
 
 const uploadFreezoneImage = vi.fn();
+/** 工程与封面共用上传 API，在边界按文件名分开控制，保留两条链路的真实等待。 */
+const uploadPreview = vi.fn();
 vi.mock("@/api/ops", () => ({
-  uploadFreezoneImage: (...args: unknown[]) => uploadFreezoneImage(...args),
+  uploadFreezoneImage: (...args: unknown[]) =>
+    String(args[2]).endsWith(".jpg") ? uploadPreview(...args) : uploadFreezoneImage(...args),
   uploadFreezoneVideo: vi.fn(),
 }));
 
@@ -68,6 +72,10 @@ const CAPABILITIES = { protocolVersion: 2, actions: ["capabilities.get", "tool.c
 /** v2 子应用自报的协议版本（vendor/director-desk/src/host-bridge.ts 的 PROTOCOL_VERSION）。 */
 const CHILD_PROTOCOL_VERSION = 2;
 const SNAPSHOT_REF = `/static/projects/${PROJECT_ID}/freezone/_uploads/director-desk-${NODE_ID}-project-1.json?st_v=1`;
+/** 相同长度、不同内容的两帧，复现旧的 length 指纹漏更新。 */
+const PREVIEW_A = "data:image/jpeg;base64,YQ==";
+const PREVIEW_B = "data:image/jpeg;base64,Yg==";
+let previewDataUrl = PREVIEW_A;
 
 const PROJECT_PAYLOAD = {
   protocolVersion: 1,
@@ -160,6 +168,23 @@ function installFrameRecorder(frames: unknown[]) {
   const originalPost = contentWindow.postMessage.bind(contentWindow);
   (contentWindow as unknown as { postMessage: unknown }).postMessage = (message: unknown) => {
     frames.push(message);
+    const request = message as { type?: string; payload?: { requestId: string; action: string; options?: { name?: string } } };
+    if (request.type === DIRECTOR_DESK_MESSAGE_TYPES.request) {
+      const payload = request.payload!;
+      const data = payload.action === "preview.capture"
+        ? { dataUrl: previewDataUrl, width: 640, height: 360 }
+        : payload.action === "ai.describe"
+          ? { contract: { definitions: [] } }
+          : payload.action === "agent.event"
+            ? {}
+        : payload.action === "tool.call" && payload.options?.name === "director_read"
+          ? { revision: 7, result: { entities: [{ id: "camera-1", kind: "camera" }] } }
+          : undefined;
+      if (data) queueMicrotask(() => emitFromDirector({
+        type: DIRECTOR_DESK_MESSAGE_TYPES.response,
+        payload: { protocolVersion: CHILD_PROTOCOL_VERSION, requestId: payload.requestId, action: payload.action, ok: true, data },
+      }));
+    }
     return originalPost(message as never, "*");
   };
 }
@@ -295,6 +320,11 @@ async function replyToolCall(
 
 beforeEach(() => {
   uploadFreezoneImage.mockReset();
+  uploadPreview.mockReset().mockImplementation(async (_project, _blob, filename) => ({
+    url: `/static/projects/${PROJECT_ID}/freezone/_uploads/${filename}`,
+    filename,
+  }));
+  previewDataUrl = PREVIEW_A;
   toastError.mockReset();
   toastSuccess.mockReset();
   useCanvasStore.setState({ nodes: [], edges: [], selectedNodeId: null });
@@ -378,7 +408,7 @@ describe("关闭节点 → 工程快照落项目资产", () => {
     expect(parsed.project).toMatchObject({ version: 1, activeCameraId: "c1" });
   });
 
-  it("工程超过体积上限时跳过上传、不留引用，如实告诉子应用没存上，仍照常关窗", async () => {
+  it("工程超过体积上限时跳过上传、不留引用，并保留编辑器让用户重试", async () => {
     await renderOpenNode();
     const frames = await handshake();
     const content = "x".repeat(DIRECTOR_DESK_SNAPSHOT_MAX_BYTES + 1);
@@ -388,15 +418,15 @@ describe("关闭节点 → 工程快照落项目资产", () => {
     await waitFor(() => expect(responseFrame(frames, saveId).payload.ok).toBe(false));
     await replyToolCall(toolCallId, { ok: false, message: "工程过大" });
 
-    await waitFor(() => expect(storedData().isOpen).toBe(false));
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    expect(storedData().isOpen).toBe(true);
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
     expect(storedData().directorProjectRef).toBeNull();
-    // 关窗后内联提示已随弹窗卸载，所以断言 toast —— 用户实际看得见的那条。
-    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("iframe")).not.toBeNull();
     expect(String(toastError.mock.calls[0][0])).toMatch(/工程过大|too large|quá lớn/);
   });
 
-  it("存档失败（上传报错）不阻断关窗，只给可读提示", async () => {
+  it("存档失败（上传报错）保留编辑器和内存改动，给出可读提示", async () => {
     uploadFreezoneImage.mockRejectedValue(new Error("upload boom"));
     await renderOpenNode();
     const frames = await handshake();
@@ -410,10 +440,75 @@ describe("关闭节点 → 工程快照落项目资产", () => {
     });
     await replyToolCall(toolCallId, { ok: false, message: "upload boom" });
 
-    await waitFor(() => expect(storedData().isOpen).toBe(false));
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    expect(storedData().isOpen).toBe(true);
     expect(storedData().directorProjectRef).toBeNull();
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(String(toastError.mock.calls[0][0])).toContain("upload boom");
+  });
+
+  it("相同长度的新画面仍更新封面，且新封面上传完成前不能关闭", async () => {
+    uploadFreezoneImage.mockResolvedValue({ url: SNAPSHOT_REF });
+    await renderOpenNode();
+    const frames = await handshake();
+    await waitFor(() => expect(storedData().previewImageUrl).toBeTruthy());
+    const oldPreview = storedData().previewImageUrl;
+    expect(PREVIEW_A.length).toBe(PREVIEW_B.length);
+    previewDataUrl = PREVIEW_B;
+
+    let finishPreview!: (value: { url: string }) => void;
+    uploadPreview.mockImplementationOnce(() => new Promise(resolve => { finishPreview = resolve; }));
+    const toolCallId = await closeAndStartSave(frames);
+    const saveTask = childAsksHostToSave(frames, JSON.stringify(PROJECT_PAYLOAD), "pending-preview-save");
+    await waitFor(() => expect(uploadPreview).toHaveBeenCalledTimes(2));
+    expect(storedData().isOpen).toBe(true);
+    expect(storedData().previewImageUrl).toBe(oldPreview);
+    expect(frames.some(frame => (frame as ResponseFrame).payload?.requestId === "pending-preview-save"
+      && (frame as { type?: string }).type === DIRECTOR_DESK_MESSAGE_TYPES.response)).toBe(false);
+
+    await act(async () => { finishPreview({ url: `/static/projects/${PROJECT_ID}/latest-shot.jpg` }); });
+    await saveTask;
+    await replyToolCall(toolCallId);
+    await waitFor(() => expect(storedData().isOpen).toBe(false));
+    expect(storedData().previewImageUrl).toContain("/latest-shot.jpg");
+    expect(storedData().previewImageUrl).not.toBe(oldPreview);
+  });
+
+  it("工程已上传但封面上传失败时保留窗口，不能假报全部同步成功", async () => {
+    uploadFreezoneImage.mockResolvedValue({ url: SNAPSHOT_REF });
+    await renderOpenNode();
+    const frames = await handshake();
+    await waitFor(() => expect(storedData().previewImageUrl).toBeTruthy());
+    const oldPreview = storedData().previewImageUrl;
+    previewDataUrl = PREVIEW_B;
+    uploadPreview.mockRejectedValueOnce(new Error("preview upload failed"));
+
+    const toolCallId = await closeAndStartSave(frames);
+    const saveId = await childAsksHostToSave(frames, JSON.stringify(PROJECT_PAYLOAD));
+    expect(responseFrame(frames, saveId).payload).toMatchObject({ ok: true, data: { saved: true, previewSynced: false } });
+    await replyToolCall(toolCallId);
+    await waitFor(() => expect(toastError).toHaveBeenCalledOnce());
+    expect(storedData().isOpen).toBe(true);
+    expect(storedData().directorProjectRef).toBeTruthy();
+    expect(storedData().previewImageUrl).toBe(oldPreview);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(String(toastError.mock.calls[0][0])).toMatch(/工程已保存|project was saved|Dự án đã được lưu/);
+  });
+
+  it("等待保存期间重复点击关闭只发起一次工程保存", async () => {
+    uploadFreezoneImage.mockResolvedValue({ url: SNAPSHOT_REF });
+    await renderOpenNode();
+    const frames = await handshake();
+    const toolCallId = await closeAndStartSave(frames);
+    act(() => fireEvent.click(screen.getAllByRole("button", { name: /关闭|Close|Đóng/ }).pop()!));
+    const exports = frames.filter(frame => {
+      const candidate = frame as RequestFrame;
+      return candidate.payload?.action === "tool.call" && candidate.payload.options?.name === "director_export";
+    });
+    expect(exports).toHaveLength(1);
+    await childAsksHostToSave(frames, JSON.stringify(PROJECT_PAYLOAD));
+    await replyToolCall(toolCallId);
+    await waitFor(() => expect(storedData().isOpen).toBe(false));
   });
 
   it("桥还没 ready 就关窗：不发起任何保存流程，直接关", async () => {
@@ -427,6 +522,56 @@ describe("关闭节点 → 工程快照落项目资产", () => {
     await waitFor(() => expect(storedData().isOpen).toBe(false));
     expect(requestActions(frames)).toEqual([]);
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("新节点 AI 提交后自动保存", () => {
+  it("会话建立后能收到提交事件，预检不保存，实际提交在静默期结束后落盘", async () => {
+    let publish!: (response: Response) => void;
+    const response = (data: unknown) => new Response(JSON.stringify(data), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).endsWith("/ai/session")) return response({ sessionId: "new-node-auto-save" });
+      if (String(url).endsWith("/ai/poll")) return new Promise<Response>(resolve => { publish = resolve; });
+      return response({ ok: true, data: { episode: 1, episodes: [1], beats: [], selected: null, context: "" } });
+    }));
+    uploadFreezoneImage.mockResolvedValue({ url: SNAPSHOT_REF });
+    // 此时组件先挂载，iframe 会话尚不存在；不能在渲染前偷偷注册会话来绕过真实生命周期。
+    await renderOpenNode();
+    const frames = await handshake();
+    await waitFor(() => expect(storedData().previewImageUrl).toBeTruthy());
+    await act(async () => { await getDirectorDeskV2Session(NODE_ID)!.startAgent(); });
+    // 刻意不回复技能刷新通知，验证工具轮询不依赖界面通知的确认。
+    expect(requestActions(frames)).toContain("skills.sync");
+    expect(publish).toBeTypeOf("function");
+    const exports = () => frames.filter(frame => {
+      const request = frame as RequestFrame;
+      return request.payload?.action === "tool.call" && request.payload.options?.name === "director_export";
+    }) as RequestFrame[];
+
+    vi.useFakeTimers();
+    await act(async () => {
+      publish(response({ events: [{ type: "tool", name: "director_apply", status: "completed",
+        summary: { preview: true, committed: false, summary: { hasChanges: true } } }] }));
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(exports()).toHaveLength(0);
+    expect(uploadFreezoneImage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      publish(response({ events: [{ type: "tool", name: "director_apply", status: "completed",
+        summary: { preview: false, committed: true, summary: { hasChanges: true } } }, { type: "done" }] }));
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(exports()).toHaveLength(1);
+    vi.useRealTimers();
+    await childAsksHostToSave(frames, JSON.stringify(PROJECT_PAYLOAD));
+    await replyToolCall(exports()[0].payload.requestId);
+    await waitFor(() => expect(storedData().directorProjectRef).toBeTruthy());
+    expect(uploadFreezoneImage).toHaveBeenCalledOnce();
+    expect(storedData().errorMessage ?? null).toBeNull();
+    expect(storedData().isOpen).toBe(true);
   });
 });
 
@@ -449,8 +594,8 @@ describe("重开节点 → 工程回灌", () => {
     );
     expect(sessionFrames(frames)).toEqual([]);
 
-    // 子应用回执只承诺「已提交」：导入是它那条 #project-file 的异步流程，本桥管不到。
-    // 所以宿主不能把它当成"导入已完成"来改写任何状态。
+    // 导入尚未结束时不得抓初始化封面；真实导入完成后才接通节点。
+    expect(requestActions(frames)).not.toContain("preview.capture");
     emitFromDirector({
       type: DIRECTOR_DESK_MESSAGE_TYPES.response,
       payload: {
@@ -458,11 +603,12 @@ describe("重开节点 → 工程回灌", () => {
         requestId: load.payload.requestId,
         action: "project.load",
         ok: true,
-        data: { submitted: true },
+        data: { loaded: true },
       },
     });
 
     // 快照可用 → 不出现降级提示
+    await waitFor(() => expect(requestActions(frames)).toContain("preview.capture"));
     await waitFor(() =>
       expect(screen.queryByText(/快照加载失败|snapshot failed to load|Không tải được bản chụp/)).toBeNull(),
     );
