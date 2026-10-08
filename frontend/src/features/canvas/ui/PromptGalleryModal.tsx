@@ -11,6 +11,7 @@ import {
   ImageOff,
   RefreshCw,
   Search,
+  Sparkles,
   WifiOff,
   X,
 } from 'lucide-react';
@@ -30,7 +31,10 @@ import {
   findPromptSource,
   type PromptItem,
   type PromptMediaKind,
+  type PromptSearchIntent,
+  rankPromptItems,
 } from '@/features/canvas/domain/promptGallery';
+import { usePromptGalleryAiSearch } from '@/lib/queries/prompt-gallery';
 
 /**
  * 提示词画廊。
@@ -74,6 +78,9 @@ export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGaller
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
   const [keyword, setKeyword] = useState('');
+  const [searchMode, setSearchMode] = useState<'keyword' | 'ai'>('keyword');
+  const [aiIntent, setAiIntent] = useState<PromptSearchIntent | null>(null);
+  const [aiError, setAiError] = useState(false);
   const [sourceId, setSourceId] = useState<string>(ALL_SOURCES);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagPanelOpen, setTagPanelOpen] = useState(false);
@@ -84,6 +91,7 @@ export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGaller
   // 打开即拉取。此前节点渲染时不会碰这些源（约 3.5MB）。
   const { items, isLoading, isRefreshing, failures, hasAnySuccess, offlineCount, refetch } =
     usePromptGallery(true, mediaKind);
+  const aiSearch = usePromptGalleryAiSearch();
 
   const pool = useMemo(
     () => (mediaKind ? items.filter((item) => item.mediaKind === mediaKind) : items),
@@ -116,10 +124,15 @@ export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGaller
         .filter((tag) => !selectedTags.includes(tag)),
     [tagStats, selectedTags],
   );
-  const filtered = useMemo(
-    () => filterPromptItems(pool, { keyword, sourceId, tags: selectedTags }),
-    [pool, keyword, sourceId, selectedTags],
-  );
+  const filtered = useMemo(() => {
+    const scoped = pool.filter(
+      (item) =>
+        (sourceId === ALL_SOURCES || item.sourceId === sourceId) &&
+        (selectedTags.length === 0 || selectedTags.some((tag) => item.tags.includes(tag))),
+    );
+    if (searchMode === 'ai' && aiIntent) return rankPromptItems(scoped, aiIntent);
+    return filterPromptItems(pool, { keyword, sourceId, tags: selectedTags });
+  }, [pool, keyword, sourceId, selectedTags, searchMode, aiIntent]);
   const visible = useMemo(
     () => filtered.slice(0, visibleCount),
     [filtered, visibleCount],
@@ -128,7 +141,21 @@ export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGaller
   // 换筛选条件就回到第一页，否则「上一轮滚出来的 300 条」会跟着新条件带过来。
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [keyword, sourceId, selectedTags]);
+  }, [keyword, sourceId, selectedTags, searchMode, aiIntent]);
+
+  const submitAiSearch = async () => {
+    const query = keyword.trim();
+    if (!query || aiSearch.isPending) return;
+    setAiError(false);
+    try {
+      const result = await aiSearch.mutateAsync({ query, media_kind: mediaKind ?? '' });
+      setAiIntent({ ...result, query });
+    } catch {
+      setAiIntent(null);
+      setAiError(true);
+      setSearchMode('keyword');
+    }
+  };
 
   const copy = async (item: PromptItem) => {
     try {
@@ -174,12 +201,69 @@ export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGaller
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-muted" />
                 <input
                   value={keyword}
-                  onChange={(event) => setKeyword(event.target.value)}
-                  placeholder={t('canvas.promptGallery.search')}
+                  onChange={(event) => {
+                    setKeyword(event.target.value);
+                    // 用户开始改写想法后，旧的 AI 排序不再代表当前输入。
+                    if (searchMode === 'ai') {
+                      setAiIntent(null);
+                      setAiError(false);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && searchMode === 'ai') void submitAiSearch();
+                  }}
+                  placeholder={
+                    searchMode === 'ai'
+                      ? t('canvas.promptGallery.aiSearchHint', {
+                          defaultValue: '描述你想要的画面或镜头，例如雨夜追逐',
+                        })
+                      : t('canvas.promptGallery.search')
+                  }
                   aria-label={t('canvas.promptGallery.search')}
                   className="h-8 w-full rounded-[6px] border border-white/[0.10] bg-white/[0.04] pl-8 pr-3 text-sm text-text-dark placeholder:text-text-muted focus:border-white/[0.24] focus:outline-none"
                 />
               </div>
+              <div className="flex shrink-0 items-center rounded-[6px] border border-white/[0.10] bg-white/[0.03] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchMode('keyword');
+                    setAiIntent(null);
+                    setAiError(false);
+                  }}
+                  className={`h-7 rounded-[4px] px-2 text-xs transition-colors ${
+                    searchMode === 'keyword'
+                      ? 'bg-white/[0.14] text-text-dark'
+                      : 'text-text-muted hover:text-text-dark'
+                  }`}
+                >
+                  {t('canvas.promptGallery.keywordMode', { defaultValue: '关键词' })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchMode('ai')}
+                  className={`inline-flex h-7 items-center gap-1 rounded-[4px] px-2 text-xs transition-colors ${
+                    searchMode === 'ai'
+                      ? 'bg-cyan-200/[0.16] text-cyan-100'
+                      : 'text-text-muted hover:text-cyan-100'
+                  }`}
+                >
+                  <Sparkles className="size-3" />
+                  {t('canvas.promptGallery.aiMode', { defaultValue: 'AI 搜索' })}
+                </button>
+              </div>
+              {searchMode === 'ai' ? (
+                <button
+                  type="button"
+                  onClick={() => void submitAiSearch()}
+                  disabled={!keyword.trim() || aiSearch.isPending}
+                  title={t('canvas.promptGallery.aiSearch', { defaultValue: '按想法搜索' })}
+                  aria-label={t('canvas.promptGallery.aiSearch', { defaultValue: '按想法搜索' })}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-cyan-200/[0.14] text-cyan-100 transition-colors hover:bg-cyan-200/[0.22] disabled:opacity-50"
+                >
+                  <Sparkles className={`size-3.5 ${aiSearch.isPending ? 'animate-pulse' : ''}`} />
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={refetch}
@@ -199,6 +283,28 @@ export function PromptGalleryModal({ onApply, onClose, mediaKind }: PromptGaller
                 <X className="size-4" />
               </button>
             </div>
+
+            {searchMode === 'ai' ? (
+              <div className="flex shrink-0 items-center gap-2 px-4 pt-2 text-xs leading-5 text-cyan-100/70">
+                <Sparkles className="size-3 shrink-0" />
+                <span>
+                  {aiSearch.isPending
+                    ? t('canvas.promptGallery.aiSearching', { defaultValue: '正在理解你的想法…' })
+                    : aiError
+                      ? t('canvas.promptGallery.aiSearchFailed', {
+                          defaultValue: 'AI 搜索暂时不可用，已切回关键词搜索',
+                        })
+                      : aiIntent
+                        ? t('canvas.promptGallery.aiSearchResult', {
+                            n: filtered.length,
+                            defaultValue: 'AI 已按相关度排序，找到 {{n}} 条',
+                          })
+                        : t('canvas.promptGallery.aiSearchPrivacy', {
+                            defaultValue: '只发送这段想法，提示词正文留在本地',
+                          })}
+                </span>
+              </div>
+            ) : null}
 
             <FilterRow
               label={t('canvas.promptGallery.sourceLabel')}
@@ -587,7 +693,7 @@ function PromptCard({
         </button>
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/88 via-black/30 to-transparent" />
         {item.mediaKind === 'video' ? (
-          <span className="pointer-events-none absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white/90">
+          <span className="pointer-events-none absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white/90">
             {t('canvas.promptGallery.videoBadge')}
           </span>
         ) : null}
@@ -616,7 +722,7 @@ function PromptCard({
                 type="button"
                 onClick={() => onTagClick(tag)}
                 aria-pressed={active}
-                className={`max-w-full truncate rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+                className={`max-w-full truncate rounded px-1.5 py-0.5 text-xs transition-colors ${
                   active
                     ? 'bg-cyan-200/85 text-black'
                     : 'bg-white/[0.08] text-text-dark/70 hover:bg-white/[0.16] hover:text-text-dark'
@@ -627,7 +733,7 @@ function PromptCard({
             );
           })}
           {overflow > 0 ? (
-            <span className="rounded px-1 py-0.5 text-[10px] text-text-muted">+{overflow}</span>
+            <span className="rounded px-1 py-0.5 text-xs text-text-muted">+{overflow}</span>
           ) : null}
         </div>
       ) : null}
@@ -726,7 +832,7 @@ function DetailPane({
             {item.tags.map((entry) => (
               <span
                 key={entry}
-                className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] text-text-dark/80"
+                className="rounded bg-white/[0.08] px-1.5 py-0.5 text-xs text-text-dark/80"
               >
                 {entry}
               </span>
@@ -760,7 +866,7 @@ function DetailPane({
             </div>
 
             {/* 出处与许可是 CC BY 系的硬要求，不是装饰。 */}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-text-muted">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
               <span>{item.sourceName}</span>
               {source ? <span>· {source.license}</span> : null}
               {item.author ? (

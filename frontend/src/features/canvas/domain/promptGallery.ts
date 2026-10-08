@@ -985,6 +985,14 @@ export interface PromptFilter {
   tags: string[];
 }
 
+/** 后端 AI 搜索返回的意图，候选正文仍留在浏览器本地。 */
+export interface PromptSearchIntent {
+  query: string;
+  terms: string[];
+  tags: string[];
+  strategy: 'ai' | 'fallback' | 'empty' | string;
+}
+
 export function filterPromptItems(
   items: PromptItem[],
   filter: PromptFilter,
@@ -1007,6 +1015,57 @@ export function filterPromptItems(
       item.tags.some((tag) => tag.toLowerCase().includes(keyword))
     );
   });
+}
+
+function searchText(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+/**
+ * 按 AI 展开的检索词在本地给候选排序。
+ *
+ * 标签和标题比正文权重更高，保证「赛博朋克城市」这类概念优先命中分类明确
+ * 的条目；分数相同时保留上游顺序，避免每次请求结果跳动。
+ */
+export function rankPromptItems(
+  items: PromptItem[],
+  intent: PromptSearchIntent,
+): PromptItem[] {
+  const terms = [...intent.terms, intent.query]
+    .map(searchText)
+    .filter((term, index, all) => term.length > 0 && all.indexOf(term) === index);
+  const tags = intent.tags.map(searchText).filter(Boolean);
+  if (terms.length === 0 && tags.length === 0) return items;
+
+  return items
+    .map((item, index) => {
+      const title = searchText(item.title);
+      const description = searchText(item.description);
+      const prompt = searchText(item.prompt);
+      const itemTags = item.tags.map(searchText);
+      let score = 0;
+
+      for (const term of terms) {
+        if (title.includes(term)) score += 8;
+        if (itemTags.some((tag) => tag.includes(term))) score += 6;
+        if (description.includes(term)) score += 4;
+        if (prompt.includes(term)) score += 2;
+        // 英文短语可能没有完整命中，按词补一层轻量召回。
+        if (term.includes(' ')) {
+          for (const token of term.split(/\s+/).filter((part) => part.length > 1)) {
+            if (title.includes(token)) score += 2;
+            if (prompt.includes(token)) score += 1;
+          }
+        }
+      }
+      for (const tag of tags) {
+        if (itemTags.some((itemTag) => itemTag === tag || itemTag.includes(tag))) score += 7;
+      }
+      return { item, index, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.item);
 }
 
 /**

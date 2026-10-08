@@ -54,7 +54,13 @@ function resolveBuildId(): string {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    if (described) return `${datePrefix()}${described}`;
+    if (described) {
+      // 脏工作区如果永远只保留字面量 `-dirty`，连续本地构建会复用同一个
+      // 语言包缓存键。未提交构建加入时间戳；干净的 CI 构建仍只由提交描述决定，
+      // 保持可复现。
+      const dirtySuffix = described.endsWith("-dirty") ? `-${Date.now()}` : "";
+      return `${datePrefix()}${described}${dirtySuffix}`;
+    }
   } catch {
     // not a git checkout (e.g. source tarball) — fall through to the timestamp
   }

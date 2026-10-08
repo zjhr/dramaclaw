@@ -14,8 +14,41 @@ import {
   parsePromptSource,
   parseRegistrySource,
   parseWuyoscarGallery,
+  rankPromptItems,
+  type PromptItem,
   type PromptSource,
 } from "@/features/canvas/domain/promptGallery";
+
+const RANKING_ITEMS: PromptItem[] = [
+  {
+    id: "first",
+    title: "普通城市",
+    prompt: "城市街头",
+    description: "",
+    coverUrl: "",
+    referenceImageUrls: [],
+    tags: [],
+    author: "",
+    sourceUrl: "",
+    sourceId: "test",
+    sourceName: "Test",
+    mediaKind: "image",
+  },
+  {
+    id: "second",
+    title: "雨夜追逐",
+    prompt: "cinematic rainy night chase",
+    description: "",
+    coverUrl: "",
+    referenceImageUrls: [],
+    tags: ["cinematic"],
+    author: "",
+    sourceUrl: "",
+    sourceId: "test",
+    sourceName: "Test",
+    mediaKind: "image",
+  },
+];
 
 /**
  * 样本全部是从上游真实响应里抄下来的片段，不是照着解析器反推的。
@@ -50,6 +83,30 @@ const SEEDANCE_SOURCE: PromptSource = {
   mediaKind: "video",
   enabled: true,
 };
+
+describe("rankPromptItems", () => {
+  it("按标题、标签和正文的相关度排序", () => {
+    expect(
+      rankPromptItems(RANKING_ITEMS, {
+        query: "雨夜追逐",
+        terms: ["rainy night chase"],
+        tags: ["cinematic"],
+        strategy: "ai",
+      }).map((item) => item.id),
+    ).toEqual(["second"]);
+  });
+
+  it("没有意图时保留上游顺序", () => {
+    expect(
+      rankPromptItems(RANKING_ITEMS, {
+        query: "",
+        terms: [],
+        tags: [],
+        strategy: "empty",
+      }),
+    ).toEqual(RANKING_ITEMS);
+  });
+});
 
 describe("parseRegistrySource", () => {
   it("读取扁平数组并展开字段", () => {

@@ -39,6 +39,13 @@ class ErrorResponse(BaseModel):
     error: str = ""
 
 
+class PromptGallerySearchBody(BaseModel):
+    """提示词画廊 AI 搜索的自然语言输入。"""
+
+    query: str = Field(min_length=1, max_length=500)
+    media_kind: Literal["image", "video", ""] = ""
+
+
 # ── 项目 ──────────────────────────────────────────────────────────────────────
 
 

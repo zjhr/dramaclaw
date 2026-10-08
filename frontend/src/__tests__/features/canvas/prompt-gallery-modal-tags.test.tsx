@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { createElement } from 'react';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PromptItem } from '@/features/canvas/domain/promptGallery';
@@ -74,8 +75,11 @@ vi.mock('@/features/canvas/hooks/usePromptGallery', () => ({
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, vars?: Record<string, unknown>) =>
-      vars ? `${key}:${JSON.stringify(vars)}` : key,
+    t: (key: string, vars?: Record<string, unknown>) => {
+      // 模拟 i18next：词条未加载时，优先使用组件传入的 defaultValue。
+      if (typeof vars?.defaultValue === 'string') return vars.defaultValue;
+      return vars ? `${key}:${JSON.stringify(vars)}` : key;
+    },
   }),
 }));
 
@@ -91,7 +95,11 @@ const countText = () =>
 
 function renderModal() {
   return render(
-    createElement(PromptGalleryModal, { onApply: () => {}, onClose: () => {} }),
+    createElement(
+      QueryClientProvider,
+      { client: new QueryClient({ defaultOptions: { mutations: { retry: false } } }) },
+      createElement(PromptGalleryModal, { onApply: () => {}, onClose: () => {} }),
+    ),
   );
 }
 
@@ -108,6 +116,15 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
 describe('PromptGalleryModal 标签筛选', () => {
+  it('翻译词条未加载时，AI 搜索模式仍显示中文文案而不是 key', () => {
+    renderModal();
+
+    expect(buttonByText('关键词')).toBeTruthy();
+    fireEvent.click(buttonByText('AI 搜索'));
+    expect(buttonByText('AI 搜索')).toBeTruthy();
+    expect(screen.getByText('只发送这段想法，提示词正文留在本地')).toBeTruthy();
+  });
+
   it('三个标签都作为快捷项出现，卡片上也能看到标签', () => {
     renderModal();
     expect(buttonByText('Tech')).toBeTruthy();
