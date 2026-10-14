@@ -162,10 +162,7 @@ async def cancel_chat_turn(
         business_turn_id = str(payload.turn_id or "").strip()
         if not business_turn_id:
             raise HTTPException(status_code=400, detail="turn_id is required")
-        try:
-            scope = _scope_from_model(payload.scope)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        scope = _scope_from_model_or_400(payload.scope)
         _enforce_agent_chat_scope(user, scope, require_write=True)
         if scope.kind in {"project", "freezone"}:
             await _project_context_for_scope(user, scope)
@@ -568,7 +565,7 @@ async def append_chat_notification(
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
     username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
+    scope = _scope_from_model_or_400(payload.scope)
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -614,7 +611,7 @@ async def restore_director_desk_chat(
     user/assistant。库里还有内容就不动，避免撤销发生在清理之前时写重一份。
     """
     username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
+    scope = _scope_from_model_or_400(payload.scope)
     if scope.kind != "directorDesk" or not scope.project_id:
         raise HTTPException(status_code=400, detail="directorDesk scope is required")
     project_ctx = await _project_context_for_scope(user, scope)
@@ -662,7 +659,7 @@ async def append_chat_ui_event(
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
     username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
+    scope = _scope_from_model_or_400(payload.scope)
     project_ctx = None
     if scope.kind == "project":
         project_ctx = await _project_context_for_scope(user, scope)
@@ -686,7 +683,7 @@ async def resolve_agent_permission(
     payload: AgentPermissionResultIn,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    scope = _scope_from_model(payload.scope)
+    scope = _scope_from_model_or_400(payload.scope)
     if scope.kind in {"project", "freezone"}:
         await _project_context_for_scope(user, scope)
     option_id = payload.option_id.strip()
@@ -2039,6 +2036,37 @@ async def _close_ws_unauthorized(websocket: WebSocket) -> None:
 
 def _scope_from_model(model: ChatScopePayload | None) -> ChatScope:
     return ChatScope.from_payload(model.model_dump() if model else None)
+
+
+def _scope_from_model_or_400(model: ChatScopePayload | None) -> ChatScope:
+    """REST 入口用：作用域非法时给 400。
+
+    `ChatScope.from_payload` 对未知 kind / 畸形 directorDesk id 抛的是裸
+    `ValueError`。路由层若不接住，它会被 FastAPI 当成未处理异常冒成 **500**——
+    客户端把 body 拼错一个字段，看到的却是「服务器内部错误」，排查方向直接跑偏。
+    """
+    try:
+        return _scope_from_model(model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _scope_from_ws_event_or_error_frame(
+    websocket: WebSocket, model: ChatScopePayload | None
+) -> ChatScope | None:
+    """WS 入站事件的 scope 解析：非法时发一帧 error 并返回 None。
+
+    返回 None 表示调用方应当 `continue`。WS 里没有 HTTP 状态码可用，若让
+    ValueError 直接冒出去，整条连接会被 Starlette 异常关闭——用户看到的是
+    「聊天突然断了」，而不是「这条消息的 scope 有问题」。
+    """
+    try:
+        return _scope_from_model(model)
+    except ValueError as exc:
+        await _send_json_best_effort(
+            websocket, {"type": "error", "message": f"invalid scope: {exc}"}
+        )
+        return None
 
 
 def _should_prewarm_on_ws_connect(scope: ChatScope) -> bool:
@@ -4535,7 +4563,11 @@ async def chat_ws(websocket: WebSocket) -> None:
             )
             if event_type == "scope.set":
                 msg = ScopeSetIn.model_validate(raw)
-                requested_scope = _scope_from_model(msg.scope)
+                requested_scope = await _scope_from_ws_event_or_error_frame(
+                    websocket, msg.scope
+                )
+                if requested_scope is None:
+                    continue
                 try:
                     user = await _reauthenticate_ws_event(
                         websocket,
@@ -4633,7 +4665,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                 continue
 
             msg = ChatMessageIn.model_validate(raw)
-            scope = _scope_from_model(msg.scope) if msg.scope else current_scope
+            if msg.scope:
+                scope = await _scope_from_ws_event_or_error_frame(websocket, msg.scope)
+                if scope is None:
+                    continue
+            else:
+                scope = current_scope
             turn_id = (msg.turn_id or "").strip() or uuid.uuid4().hex
             text = msg.text.strip()
             user_text = (msg.user_text or "").strip() or text
