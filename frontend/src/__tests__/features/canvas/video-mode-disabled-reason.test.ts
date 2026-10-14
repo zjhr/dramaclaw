@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { videoModeDisabledReason } from "@/features/canvas/nodes/VideoOperationsPanel";
+import { videoModeDisabledReason as sharedVideoModeDisabledReason } from "@/features/canvas/nodes/shared/VideoGenerationForm";
 import { zhT } from "../../helpers/i18n-fixtures";
 
 const NONE = { videos: 0, images: 0, audios: 0 };
@@ -24,6 +25,27 @@ const WITHOUT_VIDEO_EDIT = [
   "all_reference",
   "image_reference",
 ];
+const WITH_VIDEO_EXTEND = [...WITHOUT_VIDEO_EDIT, "video_extend"];
+
+describe.each([videoModeDisabledReason, sharedVideoModeDisabledReason])("mode input requirements (%#)", (reason) => {
+  it("requires an image for image-based modes", () => {
+    for (const mode of ["firstFrame", "imageToVideo", "imageReference", "firstLastFrame"] as const) {
+      expect(reason(mode, "seedance-2.0", NONE, zhT)).toBe("需要连接图片节点（1个）");
+      expect(reason(mode, "seedance-2.0", { ...NONE, images: 1 }, zhT)).toBeNull();
+    }
+  });
+  it("does not apply the new required-input rule to all-reference", () => {
+    expect(reason("allReference", "seedance-2.0", NONE, zhT)).toBeNull();
+    expect(reason("allReference", "seedance-2.0", { ...NONE, hasOtherReference: true }, zhT)).toBeNull();
+  });
+  it("keeps text generation available without media and blocks video-only modes", () => {
+    expect(reason("textToVideo", "seedance-2.0", NONE, zhT)).toBeNull();
+    for (const mode of ["videoEdit", "videoExtend"] as const) {
+      expect(reason(mode, "Depth-Anything-Video", NONE, zhT, ["video_edit", "video_extend"]))
+        .not.toBeNull();
+    }
+  });
+});
 
 describe("videoModeDisabledReason — 上游接了视频时的模式可用性", () => {
   /**
@@ -111,6 +133,27 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
     expect(videoModeDisabledReason("textToVideo", "happyhorse-1.0", { ...NONE, videos: 1 }, zhT)).toBe(
       "已连接视频节点，请使用「视频编辑」",
     );
+  });
+
+  it("视频延长要求模型声明能力且只连接一个源视频", () => {
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.5",
+        { ...NONE, videos: 1 },
+        zhT,
+        WITH_VIDEO_EXTEND,
+      ),
+    ).toBeNull();
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.5",
+        { ...NONE, videos: 1, images: 1 },
+        zhT,
+        WITH_VIDEO_EXTEND,
+      ),
+    ).toBe("「视频延长」只接受源视频，请移除图片或音频素材");
   });
 });
 

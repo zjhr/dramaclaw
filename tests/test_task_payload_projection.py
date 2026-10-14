@@ -132,13 +132,19 @@ def _registered_task_types() -> tuple[str, ...]:
 
 def test_registered_task_types_are_the_full_bridge_set() -> None:
     """Guards the iteration source itself: T1 is only meaningful if it sees them all."""
+    # 上游：22 → 23（新增 `freezone_video_breakdown` 逐帧拉片）。
+    # 合并后本地侧又带进 greybox / reshoot / text_enhance / continue 等桥接任务，
+    # 按当前 freezone.py 实测为 29。
     task_types = _registered_task_types()
-    assert len(task_types) == 21, task_types
+    assert len(task_types) == 29, task_types
     assert {
         "mainline_sketch_from_context",
         "mainline_frame_from_context",
         "mainline_director_control_sketch",
         "freezone_audio_speech",
+        "freezone_workflow_confirm",
+        "freezone_image_vectorize",
+        "freezone_image_animate_gif",
     } <= set(task_types)
 
 

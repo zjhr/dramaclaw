@@ -165,7 +165,9 @@ Example style for `video_motion_prompt`:
   Reuse the exact same character identifier across rows so the same person keeps one name.
 """
 
-FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT = FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT + """
+FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT = (
+    FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT
+    + """
 ## Vision-reference modes
 Images may be attached to the request. The task message states which mode applies; follow that
 mode and ignore the other one.
@@ -195,6 +197,7 @@ lists them. There is no reference video.
   not from the images. The images only fix who the characters are.
 - Set `keyframe_index` to 0 on every row: there are no keyframes to attach.
 """
+)
 
 FREEZONE_PROMPT_ENHANCE_SYSTEM_PROMPT = """# Freezone Prompt Enhancer
 
@@ -430,10 +433,11 @@ def create_freezone_translation_agent() -> Agent:
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
+    from novelvideo.brainclaw_contract import BrainClawProfile
 
     model = get_newapi_text_pydantic_model(
         "FREEZONE_TRANSLATION_MODEL",
-        FREEZONE_TRANSLATION_MODEL,
+        brainclaw_profile=BrainClawProfile.FREEZONE_TRANSLATION,
         capability="freezone.text.generate",
     )
     return Agent(
@@ -491,10 +495,11 @@ def get_freezone_prompt_enhance_agent() -> Agent:
 def create_freezone_text_writer_agent() -> Agent:
     """创建 Freezone 自由文本生成 Agent。"""
     from novelvideo.config import get_newapi_text_pydantic_model
+    from novelvideo.brainclaw_contract import BrainClawProfile
 
     model = get_newapi_text_pydantic_model(
         "FREEZONE_TEXT_WRITER_MODEL",
-        FREEZONE_TEXT_WRITER_MODEL,
+        brainclaw_profile=BrainClawProfile.FREEZONE_TEXT_GENERATION,
     )
     return Agent(
         model,
@@ -572,11 +577,12 @@ def create_freezone_story_script_agent(model: str | None = None) -> Agent:
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
+    from novelvideo.brainclaw_contract import BrainClawProfile
 
-    resolved = resolve_freezone_story_script_model(model)
+    resolve_freezone_story_script_model(model)
     llm_model = get_newapi_text_pydantic_model(
         "FREEZONE_STORY_SCRIPT_MODEL",
-        resolved["model"],
+        brainclaw_profile=BrainClawProfile.FREEZONE_STORY_SCRIPT_WRITING,
         capability="freezone.text.generate",
     )
     return Agent(
@@ -997,13 +1003,12 @@ def create_freezone_video_story_script_agent() -> Agent:
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
-    from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
-
+    from novelvideo.brainclaw_contract import BrainClawProfile
     return Agent(
         get_newapi_text_pydantic_model(
             "FREEZONE_VISION_MODEL",
-            DEFAULT_FREEZONE_VISION_MODEL,
             timeout_seconds_override=300.0,
+            brainclaw_profile=BrainClawProfile.FREEZONE_VISION_ANALYSIS,
             capability="vision.analyze",
         ),
         system_prompt=FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT,

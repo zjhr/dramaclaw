@@ -5,7 +5,11 @@ import asyncio
 import pytest
 
 from novelvideo.cognee.chapter_detector import ChapterDetector
-from novelvideo.official_defaults import DEFAULT_TEXT_MODEL_BY_ENV
+from novelvideo.config import get_newapi_text_model_name
+from novelvideo.official_defaults import (
+    ADVANCED_TEXT_MODEL_BY_ENV,
+    DEFAULT_TEXT_MODEL_BY_ENV,
+)
 from novelvideo.ingest.manuscript_repair import (
     ChapterPlan,
     assemble_manuscript,
@@ -175,7 +179,15 @@ def test_repair_thinking_levels():
 
 
 def test_manuscript_repair_defaults_to_the_single_channel_alias():
-    assert DEFAULT_TEXT_MODEL_BY_ENV["MANUSCRIPT_REPAIR_MODEL"] == "DC-cognee-LLM"
+    # 官方契约（test_brainclaw_contract）：DEFAULT_TEXT_MODEL_BY_ENV 除 COGNEE 外
+    # 必须全是 brainclaw，所以手稿修复不再有 DEFAULT 映射，靠调用方传入的
+    # default_model 解析；Advanced 模式仍由 ADVANCED_TEXT_MODEL_BY_ENV 覆盖。
+    assert "MANUSCRIPT_REPAIR_MODEL" not in DEFAULT_TEXT_MODEL_BY_ENV
+    assert ADVANCED_TEXT_MODEL_BY_ENV["MANUSCRIPT_REPAIR_MODEL"] == "DC-cognee-LLM"
+    assert (
+        get_newapi_text_model_name("MANUSCRIPT_REPAIR_MODEL", "DC-cognee-LLM")
+        == "DC-cognee-LLM"
+    )
 
 
 class _StatusError(Exception):

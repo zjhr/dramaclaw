@@ -1,4 +1,4 @@
-"""B2 步 11 · 只撤画布 14 条路由的 home node 守卫，别的 64 条一行不动。
+"""只允许具备共享存储语义的画布路由撤掉 home node 守卫。
 
 方案文档（`B2-canvas-placement-free.md` §6.4 步 11）的原话是「撤掉
 `api/routes/freezone.py:326` 的 home node 守卫」。**照字面删是错的**，
@@ -7,27 +7,27 @@
 - 那一行（集成线上已漂到 `:331`，在 `_resolve_freezone_project` 内）
   **不是画布路由的守卫，是 freezone 全部路由的守卫** —— 本文件
   `test_only_canvas_routes_opt_out_of_the_home_node_guard` 现场点数：
-  `@router.` 78 条 ≡ `_resolve_freezone_project` 77 处调用，
-  其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 14 条。
-- 删那一行 ＝ 一次性放开另外 ~64 条读写 `Path(ctx.output_dir)` 本地项目文件、
+  `@router.` 当前共 99 条，其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 25 条。
+- 删那一行 ＝ 一次性放开另外 74 条读写 `Path(ctx.output_dir)` 本地项目文件、
   **既没有租约也没有共享存储交代**的路由，与 §6.3 的「逐个撤、不批量撤」直接冲突。
 
 故落地形态是给 `_resolve_freezone_project` 加一个**带默认值 `True` 的关键字参数**
 `require_home_node`（形制照它自己签名里已有的 `*, required_role: str = "editor"`），
-只在 14 条画布路由的调用点显式传 `False`。
+只在明确白名单中的 placement-free 画布路由调用点显式传 `False`。仍写入项目本地
+SQLite 的 workflow draft/run 路由不在白名单中，必须保留默认 Home Node 守卫。
 
 四条用例分工：
 
 1. `test_default_still_rejects_a_non_home_node_project` —— 不传新参数时行为逐字不变
    （错误体照 `tests/test_project_context.py:35` 的既有断言口径）。
 2. `test_canvas_read_route_passes_the_home_node_guard` /
-   `test_canvas_write_route_passes_the_home_node_guard` —— 14 条里挑读写各一条，
+   `test_canvas_write_route_passes_the_home_node_guard` —— 白名单里挑读写各一条，
    在非 home node 上**过得了这道守卫**。只断言这一件：真正落盘还依赖共享存储，
    那是 `dispatch-and-branching.md` §11 第 4 行的交接项，不在本 EU 内。
 3. `test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node` ——
-   另外 64 条挑 3 条，**仍然被拦**且错误体逐字相同。
-4. `test_only_canvas_routes_opt_out_of_the_home_node_guard` —— AST 静态护栏（双向）：
-   传 `require_home_node=False` 的调用点必须都在画布路由里，且 14 条画布路由必须全传了。
+   另外 76 条挑 3 条，**仍然被拦**且错误体逐字相同。
+4. `test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard` —— AST 静态护栏
+   （双向）：传 `require_home_node=False` 的调用点必须且只能位于明确白名单。
    形制照同目录 `tests/test_freezone_canvas_route_to_thread.py:180` 的 AST 不变量。
 """
 
@@ -108,7 +108,7 @@ def _assert_not_a_home_node_rejection(exc: BaseException | None) -> None:
 async def test_default_still_rejects_a_non_home_node_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """不传新参数 ＝ 今天的行为，逐字不变（64 条非画布路由靠这个默认值不改一行）。"""
+    """不传新参数 ＝ 今天的行为，逐字不变（76 条非画布路由靠这个默认值不改一行）。"""
 
     ctx = _patch_remote_project(monkeypatch, tmp_path)
 
@@ -158,6 +158,22 @@ async def test_canvas_write_route_passes_the_home_node_guard(
         raise
 
 
+async def test_workflow_run_route_remains_home_node_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _patch_remote_project(monkeypatch, tmp_path)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await freezone_routes.get_canvas_workflow_run(
+            project="proj_freezone",
+            canvas_id="default",
+            run_id="run-1",
+            user=USER,
+        )
+
+    _assert_home_node_rejection(excinfo.value, ctx)
+
+
 @pytest.mark.parametrize(
     "handler_name",
     [
@@ -169,7 +185,7 @@ async def test_canvas_write_route_passes_the_home_node_guard(
 async def test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node(
     handler_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """另外 64 条一行不改：仍然被拦，错误体逐字相同。"""
+    """另外 76 条一行不改：仍然被拦，错误体逐字相同。"""
 
     ctx = _patch_remote_project(monkeypatch, tmp_path)
     handler = getattr(freezone_routes, handler_name)
@@ -212,15 +228,27 @@ def _opts_out_of_the_guard(call: ast.Call) -> bool:
     )
 
 
-def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
-    """双向棘轮：opt-out 只许出现在画布路由里，且 14 条必须全部 opt-out。
+PLACEMENT_FREE_CANVAS_ROUTES = {
+    "create_canvas_from_preset",
+    "build_projection_from_preset",
+    "project_canvas_from_preset",
+    "remove_canvas_projection",
+    "projection_status",
+    "list_canvases",
+    "get_canvas_revision",
+    "get_canvas",
+    "list_canvas_history",
+    "restore_canvas_history",
+    "get_node_generation_history",
+    "delete_node_generation_history_record",
+    "get_canvas_generation_history",
+    "put_canvas",
+    "delete_canvas",
+}
 
-    这条防的是「以后有人顺手多传一个 `require_home_node=False`」——
-    `TCP-P60` 的整个论证建立在「撤除面恰好是那 14 条」上。
 
-    2026-08-27 由 13 → 14：新增 `DELETE .../nodes/{node_id}/generation-history`。
-    它带 `tags=[TAG_FREEZONE_CANVAS]`、只改画布自己的历史 JSONL，落在撤除面内。
-    """
+def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> None:
+    """双向棘轮：opt-out 只许出现在明确的 placement-free 白名单中。"""
 
     tree = ast.parse(ROUTES_SOURCE.read_text(encoding="utf-8"), filename=str(ROUTES_SOURCE))
 
@@ -259,27 +287,37 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：freezone 79 条路由全过同一个解析器，画布只占 14 条；
-    # 之后新增的跨项目素材拷贝路由（assets/copy）也走守卫，计 80；
-    # 再新增提示词强化路由（text/enhance）同样走守卫，计 81；
-    # 音效路由（audio/sound-effect）同样走守卫，计 82；
-    # 音频模型列表路由（audio/models）同样走守卫，计 83。
-    # 83 → 87：片段重拍那条链带进来的 4 条（video/reshoot、reshoot/suggest-prompt
-    # 等）都走守卫，但计数一直没人跟着加，棘轮因此早就对不上了。
-    # 87 → 88：画布视频节点「向后延长」的提示词推荐，同样走守卫。
-    # 88 → 90：视频增强的报价与源探测两条路由（video/upscale/quote、
-    # video/upscale/probe）同样走守卫。它们不是画布路由，画布侧仍是 14 条。
-    # 90 → 91：视频延长（video/video-extend）同样走守卫。
-    assert router_decorators == 91
-    assert len(canvas_routes) == 14
+    # 取证口径（`TCP-P60`）：freezone 路由全过同一个解析器，画布只占一部分。
+    # 本地侧演进：83 → 87（片段重拍 4 条）→ 88（向后延长提示词推荐）→ 90
+    # （视频增强的 quote/probe）→ 91（video-extend）。
+    # 上游侧在此期间一路涨到 114（含 video-breakdown 逐帧拉片等）。
+    # 合并后按当前 freezone.py 实测：122 条装饰器路由，其中画布路由 31 条
+    # （画布侧与上游 staging 一致，本地新增的都是非画布路由）。
+    assert router_decorators == 122
+    assert len(canvas_routes) == 31
 
-    # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。
+    assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
+    assert "cancel_canvas_workflow_draft" in canvas_routes
+    assert canvas_routes["cancel_canvas_workflow_draft"]
+    assert not any(_opts_out_of_the_guard(call) for call in canvas_routes["cancel_canvas_workflow_draft"])
+
+    # 正向：白名单路由必须全部、且每一处调用都 opt-out。
     missing = {
         name: [call.lineno for call in calls if not _opts_out_of_the_guard(call)]
         for name, calls in canvas_routes.items()
+        if name in PLACEMENT_FREE_CANVAS_ROUTES
         if not calls or not all(_opts_out_of_the_guard(call) for call in calls)
     }
     assert missing == {}
+
+    # 仍落项目本地 SQLite 的画布路由不得 opt-out。
+    unexpected = {
+        name: [call.lineno for call in calls if _opts_out_of_the_guard(call)]
+        for name, calls in canvas_routes.items()
+        if name not in PLACEMENT_FREE_CANVAS_ROUTES
+        if any(_opts_out_of_the_guard(call) for call in calls)
+    }
+    assert unexpected == {}
 
     # 反向：全文件的 opt-out 一个都不许落在画布路由之外（含模块级 helper）。
     assert {call.lineno for call in all_opt_outs} == {

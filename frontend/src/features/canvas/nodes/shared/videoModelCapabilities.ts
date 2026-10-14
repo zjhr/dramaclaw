@@ -47,6 +47,52 @@ export function isSeedance2VideoModel(modelId: string | null | undefined): boole
   return /seedance2/.test(normalizeVideoModelId(modelId));
 }
 
+/**
+ * Seedance 2.5（目录里的 `gateway_model = seedance-2.5`，apiModel `newapi_seedance-2.5`）。
+ *
+ * 归一化后是 `seedance25`，所以它同时也命中上面的 `isSeedance2VideoModel`(`/seedance2/`)
+ * ——那条是「2.x 族」的粗口径（能吃多图 / 视频 / 音频），两者不冲突，别为了区分把它
+ * 改成 `seedance20`：2.5 的多图与参考素材能力跟 2.0 同族，收窄会把 2.5 打回 1.x 待遇。
+ *
+ * 这条**只**用于「片段重拍」这类 2.5 独占的入口。判定按前缀而非全等，是为了将来
+ * 出 `seedance-2.5-fast` 之类变体时不用再改一次。
+ */
+export function isSeedance25VideoModel(modelId: string | null | undefined): boolean {
+  return /seedance25/.test(normalizeVideoModelId(modelId));
+}
+
+/**
+ * 「智能续写」要落到哪个模型上：目录里第一个 Seedance 2.5，没有则 null。
+ *
+ * 返回 null 意味着这个项目的目录里压根没上 2.5 —— 调用方应该把入口置灰而不是随便
+ * 挑一个模型顶上：续写的参考素材规格是按 2.5 定的，换个模型只会得到一次莫名其妙的
+ * 生成。
+ */
+export function findSeedance25VideoModel<T extends { id: string; apiModel?: string }>(
+  models: readonly T[],
+): T | null {
+  return models.find((model) => isSeedance25VideoModel(model.apiModel ?? model.id)) ?? null;
+}
+
+/**
+ * 出片的比例 / 时长是否由输入视频决定 —— Seedance 的视频编辑就是这样：厂商硬校验
+ * `ratio` 必须是 `adaptive`、`duration` 必须是 -1，指定具体值整单打回
+ * （`[InvalidParameter.TaskTypeConstraint] ... the output ratio and duration follow
+ * the input video`）。所以这两项在界面上也不该出现 —— 摆着一个改了也不生效、还会
+ * 让人以为自己能定出片时长的旋钮，比不给更糟。
+ *
+ * 后端 `VideoGenerator._follows_source_video_output` 是同一条判断（seedance 系 +
+ * 视频编辑），两边改一处就要同步另一处。HappyHorse 的视频编辑不在此列，它照常带
+ * 比例和时长。
+ */
+export function videoOutputFollowsSourceVideo(
+  mode: VideoGenMode | null | undefined,
+  modelId: string | null | undefined,
+): boolean {
+  if (mode !== "videoEdit") return false;
+  return /seedance/.test(normalizeVideoModelId(modelId));
+}
+
 // 基础款 Seedance 2.0（`…seedance-2.0` 本体，不含 fast / value / fast-value 变体）。
 // 归一化后以 `seedance20` 结尾即为基础款——变体都会在后面多出 `fast` / `value` 后缀。
 function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean {
@@ -159,8 +205,8 @@ function videoModelIdOf(model: VideoModelRef): string | null | undefined {
  * - 非 HappyHorse：视频编辑是 HappyHorse 专属；全能参考与「真尾帧」首尾帧只有
  *   Seedance 2.0 后端支持（非 2.0 打 omni→400、首尾帧静默丢尾帧）；文生 / 首帧 /
  *   图片参考其余视频模型均支持。
- * - 目录未返回 supportedModes 时沿用旧启发式；视频延长没有旧默认，只有后台显式
- *   配置后才开放。
+ * - 目录未返回 supportedModes 时沿用旧启发式；视频延长没有旧默认，只有后台显式配置后
+ *   才开放。
  */
 export function isVideoModeSupportedByModel(
   mode: VideoGenMode,
@@ -259,7 +305,7 @@ export function videoUpstreamImageDefaultMode(
  * 首帧 / 图生视频 / 图片参考 / 首尾帧 / 视频编辑允许空提示词（只要素材齐备即可提交）。
  */
 export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
-  return mode === "textToVideo" || mode === "allReference";
+  return mode === "textToVideo" || mode === "allReference" || mode === "videoExtend";
 }
 
 /**
@@ -275,6 +321,45 @@ export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
  */
 export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
   return mode !== "textToVideo";
+}
+
+export interface VideoModeInputCounts {
+  images: number;
+  videos: number;
+  audios: number;
+  hasOtherReference?: boolean;
+}
+
+/** Required inputs, shared by mode availability and model switching. */
+export function videoModeMissingInputReason(
+  mode: VideoGenMode,
+  counts: VideoModeInputCounts,
+): string | null {
+  if (mode === "videoEdit" || mode === "videoExtend") {
+    return counts.videos === 0 ? "node.videoOps.modeDisabled.needOneVideo" : null;
+  }
+  // All-reference entry semantics are separate from input-required image/video modes.
+  if (mode !== "textToVideo" && mode !== "allReference" && counts.images === 0) {
+    return "node.videoOps.modeDisabled.needOneImage";
+  }
+  return null;
+}
+
+/** Preserve compatible explicit modes, including those waiting for their input. */
+export function videoModeForModel(
+  mode: VideoGenMode,
+  model: VideoModelRef,
+  counts: VideoModeInputCounts,
+): VideoGenMode {
+  if (!model) return mode;
+  const supportsCurrentMode = isVideoModeSupportedByModel(mode, model);
+  if (supportsCurrentMode && !videoSubmitMediaRejectionReason(mode, model, counts)) return mode;
+  const candidates = (Object.keys(GEN_MODE_TO_CATALOG_MODE) as VideoGenMode[])
+    .filter((candidate) => isVideoModeSupportedByModel(candidate, model));
+  return candidates.find((candidate) =>
+    !videoModeMissingInputReason(candidate, counts) &&
+    !videoSubmitMediaRejectionReason(candidate, model, counts)
+  ) ?? (supportsCurrentMode ? mode : candidates[0] ?? mode);
 }
 
 /**
@@ -293,9 +378,11 @@ export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
  */
 export function videoNoUpstreamResetMode(
   mode: VideoGenMode,
-  counts: { images: number; videos: number; audios: number },
+  counts: VideoModeInputCounts,
+  model?: VideoModelRef,
 ): VideoGenMode | null {
-  if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) return null;
+  if (counts.images > 0 || counts.videos > 0 || counts.audios > 0 || counts.hasOtherReference) return null;
+  if (model && !isVideoModeSupportedByModel("textToVideo", model)) return null;
   return mode === "textToVideo" ? null : "textToVideo";
 }
 
@@ -375,6 +462,61 @@ export function videoMultiImageAutoSwitchMode(
 export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
 export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
 export const MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS = 15_200;
+
+const COMPOSITION_TIMELINE_AUDIO_ROLES = new Set([
+  "voiceover",
+  "narration",
+  "shot_voice",
+  "music",
+  "bgm",
+  "background_music",
+]);
+const COMPOSITION_TIMELINE_AUDIO_INTENT =
+  /(?:旁白|配音|解说|背景音乐|配乐|纯音乐|(?:^|[\s_-])bgm(?:$|[\s_-])|background[_\s-]*music|voice[_\s-]*over|narration)/i;
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Detect full-length narration/music tracks that belong on the compose
+ * timeline. New workflows carry an explicit timelineRole; legacy workflows
+ * are recovered from their catalog item identity without classifying manually
+ * connected audio uploads as timeline tracks.
+ */
+export function isCompositionTimelineAudioData(data: unknown): boolean {
+  const source = recordValue(data);
+  if (!source) return false;
+  const catalog = recordValue(source.workflowCatalog);
+  const promptBuilder = recordValue(catalog?.promptBuilder);
+  const planItem = recordValue(promptBuilder?.planItem);
+  const explicitRole = [
+    catalog?.timelineRole,
+    catalog?.timeline_role,
+    source.timelineRole,
+    source.timeline_role,
+    planItem?.timelineRole,
+    planItem?.timeline_role,
+  ]
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .find(Boolean);
+  if (explicitRole) return COMPOSITION_TIMELINE_AUDIO_ROLES.has(explicitRole);
+  if (!catalog) return false;
+  const searchable = [
+    source.displayName,
+    source.title,
+    catalog.stepId,
+    catalog.operationType,
+    catalog.recipeId,
+    planItem?.id,
+    planItem?.title,
+    planItem?.audio_kind,
+    planItem?.audioKind,
+  ].filter(Boolean).join(" ");
+  return COMPOSITION_TIMELINE_AUDIO_INTENT.test(searchable);
+}
 
 /** 媒体目录里与音频时长相关的那个字段（`ModelOption` 的子集）。 */
 export interface AudioDurationLimitModel {
@@ -573,16 +715,13 @@ export function formatAudioDurationClips(
  * 返回非空理由则应禁用提交、并把理由显示到按钮 tooltip 上，替代「静默丢素材 / 提交 400」。
  *
  * 规则对齐后端 freezone i2v / omni-gen 端点（src/novelvideo/api/routes/freezone.py）：
- * - 视频素材：仅「全能参考」(omni，Seedance 2.0) 与「视频编辑」(HappyHorse) 消费，
- *   其余模式静默丢弃 → 拦；
+ * - 视频素材：「全能参考」「视频编辑」「视频延长」消费，其余模式静默丢弃 → 拦；
  * - 音频素材：「全能参考」消费；「视频编辑」仅在媒体目录显式配置音频上限时消费；
  *   其余模式静默丢弃 → 拦；
  * - 多图(>1)：i2v 端点仅 Seedance 2.0 / HappyHorse 放行，非 2.0 非 HappyHorse
  *   （Seedance 1.x）传 >1 图后端直接 400 → 拦。
  *
- * 非 2.0 / 非 HappyHorse 一接入视频/音频就无模式可消费（allReference / videoEdit 均
- * 不受支持），因此这三条只会在真正会丢素材 / 400 的场景触发；2.0 / HappyHorse 的自动
- * 推导 effect 会先把模式导到能消费素材的模式，不会误伤。
+ * 未配置相应视频模式的模型接入视频/音频后，这些规则会阻止素材被静默丢弃。
  */
 /** 返回 i18n key（非 null 时由调用方 `t()` 出文案），不是可直接展示的句子。 */
 export function videoSubmitMediaRejectionReason(
@@ -590,6 +729,24 @@ export function videoSubmitMediaRejectionReason(
   model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
+  if (
+    mode === "videoExtend" &&
+    !isVideoModeSupportedByModel("videoExtend", model)
+  ) {
+    return "node.videoOps.modeDisabled.modelNoVideoExtend";
+  }
+  if (
+    mode === "videoExtend" &&
+    (counts.videos !== 1 || counts.images > 0 || counts.audios > 0)
+  ) {
+    return "node.videoModel.reason.videoExtendSourceOnly";
+  }
+  if (!isVideoModeSupportedByModel(mode, model)) {
+    return "node.videoModel.reason.modeUnsupported";
+  }
+  if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
+    return "node.videoModel.reason.imageUnsupported";
+  }
   if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit" && mode !== "videoExtend") {
     return "node.videoModel.reason.videoUnsupported";
   }
@@ -643,9 +800,24 @@ export function videoModelReferenceDisabledReason(
   counts: { images: number; videos: number; audios: number },
 ): string | null {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    if (
+      counts.videos === 0 &&
+      model.supportedModes?.every((mode) => mode === "video_edit" || mode === "video_extend")
+    ) {
+      return "node.videoOps.modeDisabled.needOneVideo";
+    }
+    if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
+      return "node.videoModel.reason.imageUnsupported";
+    }
     const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
     const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
-    if (counts.videos > 0 && !supportsAllReference && !supportsVideoEdit) {
+    const supportsVideoExtend = isVideoModeSupportedByModel("videoExtend", model);
+    if (
+      counts.videos > 0 &&
+      !supportsAllReference &&
+      !supportsVideoEdit &&
+      !supportsVideoExtend
+    ) {
       return "node.videoModel.reason.videoUnsupported";
     }
     const supportsVideoEditAudio =

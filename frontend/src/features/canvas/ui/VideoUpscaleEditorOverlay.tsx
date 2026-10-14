@@ -77,6 +77,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const smartInterpolation = persisted.upscaleSmartInterpolation !== false;
   const scene = persisted.upscaleScene ?? 'realistic';
   const faceEnhance = persisted.upscaleFaceEnhance === true;
+  // local 引擎不查模型能力，只有 model 引擎才需要按模型目录收敛帧率档。
   const needsFrameRate = engine === 'model' && (targetFps !== 'auto' || slowdown !== 'auto');
 
   useEffect(() => {

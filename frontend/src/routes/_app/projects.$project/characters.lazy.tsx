@@ -113,6 +113,7 @@ import {
 import { identityPeriodLabel } from "@/lib/identity-period";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { queryKeys } from "@/lib/query-keys";
+import { confirmAssetRename } from "@/lib/confirm-asset-rename";
 import { getProjectCover } from "@/lib/project-cover";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import {
@@ -1117,6 +1118,7 @@ function DetailsFormCard({
   const detailsScope = saveScopes.characterDetails(project, character.name);
 
   const [displayName, setDisplayName] = useState(character.name);
+  const renameInFlight = useRef(false);
   const [role, setRole] = useState(character.role ?? "");
   const [bodyType, setBodyType] = useState(character.body_type ?? "");
   const [aliases, setAliases] = useState((character.aliases ?? []).join(", "));
@@ -1158,7 +1160,8 @@ function DetailsFormCard({
     }
   };
 
-  const handleBlurName = async () => {
+  const handleBlurName = async (event: React.FocusEvent<HTMLInputElement>) => {
+    if (renameInFlight.current) return;
     const nextName = displayName.trim();
     if (!nextName) {
       setDisplayName(character.name);
@@ -1168,7 +1171,13 @@ function DetailsFormCard({
       setDisplayName(nextName);
       return;
     }
+    const returnFocusTarget = event.relatedTarget;
+    renameInFlight.current = true;
     try {
+      if (!(await confirmAssetRename(t))) {
+        if (returnFocusTarget instanceof HTMLElement) returnFocusTarget.focus();
+        return;
+      }
       await trackSave(detailsScope, () =>
         updateChar.mutateAsync({ name: nextName }),
       );
@@ -1176,6 +1185,8 @@ function DetailsFormCard({
     } catch {
       setDisplayName(character.name);
       toast.error(t("common.error"));
+    } finally {
+      renameInFlight.current = false;
     }
   };
 
@@ -1382,6 +1393,7 @@ function IdentityCard({
   const [confirmGenPortraitOpen, setConfirmGenPortraitOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(identity.identity_name);
+  const renameInFlight = useRef(false);
 
   const identityAttempts = isOkResponse<IdentityAttempts>(attemptsRes.data)
     ? attemptsRes.data.data
@@ -1538,12 +1550,15 @@ function IdentityCard({
   };
 
   const handleRename = async () => {
+    if (renameInFlight.current) return;
     const trimmed = renameValue.trim();
     if (!trimmed || trimmed === identity.identity_name) {
       setRenameOpen(false);
       return;
     }
+    renameInFlight.current = true;
     try {
+      if (!(await confirmAssetRename(t))) return;
       await updateIdentity.mutateAsync({
         identityId: identity.identity_id,
         data: { identity_name: trimmed },
@@ -1552,6 +1567,8 @@ function IdentityCard({
       toast.success(t("characters.toasts.identityUpdated"));
     } catch {
       toast.error(t("common.error"));
+    } finally {
+      renameInFlight.current = false;
     }
   };
 

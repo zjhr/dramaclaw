@@ -130,6 +130,8 @@ LOCKED_LICENSE_OVERRIDES = {
     "matplotlib": ("PSF-2.0", "package metadata recorded for locked optional dependency"),
     "mpmath": ("BSD-3-Clause", "package metadata recorded for locked optional dependency"),
     "nvidia-cublas": ("LicenseRef-NVIDIA-CUDA-Toolkit", "NVIDIA CUDA Toolkit package license"),
+    "openai-codex": ("Apache-2.0", "openai/codex SDK, Apache-2.0 (locked git dependency)"),
+    "openai-codex-cli-bin": ("Apache-2.0", "openai/codex CLI binary, Apache-2.0 (locked dependency)"),
     "nvidia-cuda-cupti": ("LicenseRef-NVIDIA-CUDA-Toolkit", "NVIDIA CUDA Toolkit package license"),
     "nvidia-cuda-nvrtc": ("LicenseRef-NVIDIA-CUDA-Toolkit", "NVIDIA CUDA Toolkit package license"),
     "nvidia-cuda-runtime": ("LicenseRef-NVIDIA-CUDA-Toolkit", "NVIDIA CUDA Toolkit package license"),
@@ -210,8 +212,8 @@ class PackageLicense:
 
 
 def run_git_ls_files() -> list[str]:
-    output = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True)
-    return [line for line in output.splitlines() if line]
+    output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
+    return [path.decode("utf-8") for path in output.split(b"\0") if path]
 
 
 def write_text(path: Path, text: str) -> None:
