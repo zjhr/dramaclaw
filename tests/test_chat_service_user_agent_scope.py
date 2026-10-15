@@ -3545,11 +3545,40 @@ def test_ce_codex_model_sends_brainclaw_only_for_custom_brainclaw_mode(monkeypat
     monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
     monkeypatch.setattr(
         "novelvideo.model_gateway_settings.get_effective_llm_config",
-        lambda: SimpleNamespace(mode="relayclaw_brainclaw", is_brainclaw=True),
+        lambda: SimpleNamespace(mode="relayclaw_brainclaw", is_brainclaw=True, model="brainclaw"),
     )
     monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
 
     assert chat_service._codex_model() == "brainclaw"
+
+
+@pytest.mark.parametrize(
+    "catalog_name,search_enabled",
+    [("dramaclaw-model-catalog.json", True), ("dramaclaw-model-catalog-chat-compat.json", False)],
+)
+def test_ce_codex_custom_model_gets_a_complete_catalog(monkeypatch, tmp_path, catalog_name, search_enabled):
+    """自定义模型继承目录能力及兼容开关，不改写随包发布的目录。"""
+    from novelvideo import config
+
+    source = Path(chat_service.__file__).resolve().parents[3] / "deploy" / "codex" / catalog_name
+    original = source.read_bytes()
+    monkeypatch.setattr(config, "STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(source))
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_llm_config",
+        lambda: SimpleNamespace(mode="relayclaw_brainclaw", model="provider/custom-model"),
+    )
+    overrides = chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
+    catalog_override = next(item for item in overrides if item.startswith("model_catalog_json="))
+    path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    catalog = json.loads(path.read_text())
+    entry = next(item for item in catalog["models"] if item["slug"] == "provider/custom-model")
+    assert entry["supports_search_tool"] is search_enabled
+    assert entry["base_instructions"]
+    assert entry["truncation_policy"] == {"mode": "tokens", "limit": 10000}
+    assert path.is_relative_to(tmp_path)
+    assert source.read_bytes() == original
 
 
 @pytest.mark.parametrize("mode", ["official", "hybrid"])
@@ -7215,4 +7244,3 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
 
     assert len(prompts) == 1
     assert "已创建成功" not in result["content"]
-

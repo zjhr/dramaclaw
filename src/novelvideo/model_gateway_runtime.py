@@ -621,7 +621,7 @@ def refresh_model_gateway_runtime() -> dict[str, Any]:
     api_key = str(gateway.api_key or "").strip()
     base_url = str(gateway.base_url or "").strip().rstrip("/")
     version = _runtime_version(
-        f"{api_key}\n{llm_gateway.api_key}\n{llm_gateway.mode}",
+        f"{api_key}\n{llm_gateway.api_key}\n{llm_gateway.mode}\n{llm_gateway.model}",
         f"{base_url}\n{llm_gateway.base_url}",
     )
 

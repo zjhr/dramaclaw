@@ -178,8 +178,9 @@ def get_effective_newapi_text_model_name(
             return selected
         raise ValueError(f"Missing required EE model route: {model_env}")
 
-    if get_effective_llm_config().is_brainclaw:
-        return "brainclaw"
+    llm_config = get_effective_llm_config()
+    if llm_config.model:
+        return llm_config.model
     selected = explicit_model or env_model or ADVANCED_TEXT_MODEL_BY_ENV.get(model_env)
     if selected:
         return selected

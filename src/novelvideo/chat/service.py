@@ -1457,8 +1457,8 @@ def _codex_model() -> str:
         from novelvideo.model_gateway_settings import get_effective_llm_config
 
         # CE is configured interactively and SQLite is authoritative. Only the
-        # explicit Custom + BrainClaw choice sends the literal ``brainclaw``
-        # model; Official and Hybrid send DramaClaw's logical Codex alias and
+        # explicit Custom + BrainClaw choice sends its configured model;
+        # Official and Hybrid send DramaClaw's logical Codex alias and
         # let RelayClaw decide what serves it, and Advanced mode sends the same
         # alias to the user-selected NewAPI gateway.
         from novelvideo.model_gateway_settings import (
@@ -1467,7 +1467,7 @@ def _codex_model() -> str:
 
         gateway = get_effective_llm_config()
         if gateway.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
-            return "brainclaw"
+            return gateway.model
         return _DEFAULT_CODEX_MODEL
 
     # EE/SaaS is deployment-configured. The gateway address and logical model
@@ -3194,6 +3194,8 @@ def _codex_gateway_provider_overrides(
 
 def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     """Node-safe Codex config containing no usable Gateway credential."""
+    from novelvideo.shared.runtime_env import is_ce_effective
+
     overrides = [
         *_codex_gateway_provider_overrides(
             base_url,
@@ -3247,6 +3249,29 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         ),
         None,
     )
+    if entry is None and is_ce_effective():
+        from novelvideo.model_gateway_settings import (
+            CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
+            get_effective_llm_config,
+        )
+
+        gateway = get_effective_llm_config()
+        if (
+            gateway.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW
+            and gateway.model == configured_model
+        ):
+            # 自定义模型沿用当前目录的 BrainClaw 能力契约，包括 Chat 兼容开关。
+            template = next(
+                (
+                    item
+                    for item in models
+                    if isinstance(item, dict) and item.get("slug") == "brainclaw"
+                ),
+                None,
+            )
+            if template is not None:
+                entry = {**template, "slug": configured_model, "display_name": configured_model}
+                catalog = {**catalog, "models": [*models, entry]}
     required_fields = {
         "base_instructions",
         "display_name",
@@ -3267,6 +3292,15 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         raise RuntimeError(
             f"Codex model catalog must provide base_instructions for {configured_model}"
         )
+    if entry not in models:
+        from novelvideo import config as app_config
+        from novelvideo.utils.state_index_files import write_json_atomic
+
+        payload = json.dumps(catalog, sort_keys=True).encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        path = Path(app_config.STATE_DIR).resolve() / "local" / "codex-model-catalogs" / f"{digest}.json"
+        if not path.is_file():
+            write_json_atomic(path, catalog)
     overrides.append(f"model_catalog_json={json.dumps(str(path))}")
     return tuple(overrides)
 

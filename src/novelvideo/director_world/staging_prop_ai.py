@@ -235,8 +235,8 @@ def resolve_model_config(
     from novelvideo.model_gateway_settings import get_effective_llm_config
 
     llm_config = get_effective_llm_config()
-    if llm_config.is_brainclaw and llm_config.api_key:
-        return "brainclaw", llm_config.api_key, llm_config.base_url
+    if llm_config.model and llm_config.api_key:
+        return llm_config.model, llm_config.api_key, llm_config.base_url
 
     model = (
         str(request.get("model") or "").strip()

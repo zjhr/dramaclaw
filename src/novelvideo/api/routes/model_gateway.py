@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -20,9 +21,11 @@ from novelvideo.model_gateway_settings import (
     build_media_relay_status,
     build_model_gateway_status,
     get_effective_media_relay_config,
+    get_model_gateway_settings,
     get_official_media_catalog_update_status,
     normalize_relay_base_url,
     normalize_api_key,
+    normalize_brainclaw_model,
     parse_comfyui_channel_workflows,
     save_media_relay_config,
     save_elevenlabs_config,
@@ -172,6 +175,15 @@ class OfficialMediaCatalogPreferencesBody(BaseModel):
 
 
 class BrainClawGatewayBody(BaseModel):
+    new_api_base_url: str | None = Field(default=None, alias="newApiBaseUrl")
+    new_api_api_key: str | None = Field(default=None, alias="newApiApiKey")
+    # 省略时保留已保存的模型，首次配置使用 brainclaw。
+    model: str | None = None
+
+
+class BrainClawModelsBody(BaseModel):
+    """允许使用尚未保存的端点和密钥探测模型，不更改运行配置。"""
+
     new_api_base_url: str | None = Field(default=None, alias="newApiBaseUrl")
     new_api_api_key: str | None = Field(default=None, alias="newApiApiKey")
 
@@ -708,6 +720,10 @@ async def save_custom_brainclaw_config(
     )
     api_key = normalize_api_key(body.new_api_api_key)
     base_url = normalize_relay_base_url(body.new_api_base_url)
+    try:
+        model = normalize_brainclaw_model(body.model) if body.model is not None else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     # A custom endpoint must carry its own key. The previous condition accepted
     # a non-empty apiKeyPreview as proof one existed, but the preview falls back
     # to the official key — so saving a custom URL with an empty key was
@@ -728,6 +744,7 @@ async def save_custom_brainclaw_config(
     save_relayclaw_brainclaw_key(
         api_key=api_key,
         base_url=base_url,
+        model=model,
     )
     runtime = refresh_model_gateway_runtime()
     return {
@@ -738,6 +755,85 @@ async def save_custom_brainclaw_config(
         ),
         "runtime": runtime,
     }
+
+
+@router.post("/custom/brainclaw/models")
+async def fetch_brainclaw_models(body: BrainClawModelsBody) -> dict[str, Any]:
+    """直接读取 OpenAI 兼容网关的模型列表，密钥始终留在服务端。"""
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from None
+
+    from novelvideo.model_gateway_settings import _is_official_relay_url
+    from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
+
+    settings = get_model_gateway_settings()
+    saved_base_url = normalize_relay_base_url(
+        settings.get("brainclaw_newapi_base_url", "") or OFFICIAL_NEWAPI_BASE_URL
+    )
+    base_url = normalize_relay_base_url(
+        body.new_api_base_url if body.new_api_base_url is not None else saved_base_url
+    )
+    try:
+        target = urlsplit(base_url)
+        valid_url = (
+            target.scheme in {"http", "https"}
+            and bool(target.hostname)
+            and target.username is None
+            and target.password is None
+            and not target.query
+            and not target.fragment
+        )
+        _ = target.port
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        raise HTTPException(status_code=400, detail="newApiBaseUrl must be an HTTP(S) endpoint without credentials, query or fragment")
+
+    api_key = normalize_api_key(body.new_api_api_key)
+    if not api_key and base_url == saved_base_url:
+        api_key = normalize_api_key(settings.get("brainclaw_newapi_api_key", ""))
+    # 已保存的密钥只用于原端点；官方凭据只用于官方地址。
+    if not api_key and _is_official_relay_url(base_url):
+        api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
+    if not api_key:
+        raise HTTPException(status_code=400, detail="newApiApiKey is required for this endpoint")
+
+    try:
+        async with httpx.AsyncClient(
+            trust_env=False, timeout=20, follow_redirects=False
+        ) as client:
+            response = await client.get(
+                f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"}
+            )
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail="Gateway rejected model discovery; check the endpoint and API key")
+        payload = response.json()
+        raw_models = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(raw_models, list):
+            raise ValueError("invalid model list")
+        models: list[str] = []
+        seen: set[str] = set()
+        for item in raw_models:
+            model_id = item.get("id") if isinstance(item, dict) else item
+            if not isinstance(model_id, str):
+                continue
+            try:
+                model = normalize_brainclaw_model(model_id)
+            except ValueError:
+                continue
+            if model not in seen:
+                seen.add(model)
+                models.append(model)
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Gateway model discovery timed out") from None
+    except Exception:
+        # 上游响应及传输异常可能包含凭据，不将其拼入错误信息。
+        raise HTTPException(status_code=502, detail="Gateway model discovery failed") from None
+    return {"ok": True, "data": {"models": models}}
 
 
 @router.post("/custom/brainclaw/enable")

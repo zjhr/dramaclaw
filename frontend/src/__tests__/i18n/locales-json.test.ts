@@ -45,6 +45,19 @@ describe("locale translation files", () => {
     expect(zh.myBuddy.debug.accessoryFeedback.niulai).toBe("妈妈！");
   });
 
+  // 三种语言都必须定义完整按钮文案，避免所有词典同时漏键时绕过键集对齐检查。
+  it.each([
+    ["zh", "添加渠道"],
+    ["en", "Add channel"],
+    ["vi", "Thêm kênh"],
+  ])("translates the add provider channel button in %s", (language, label) => {
+    const translations = JSON.parse(
+      readFileSync(`public/locales/${language}/translation.json`, "utf8"),
+    );
+
+    expect(translations.settings.modelConfig.featureModels.addChannel).toBe(label);
+  });
+
   it("uses the requested custom prompt label for Seedance2 guidance in Chinese", () => {
     const content = readFileSync("public/locales/zh/translation.json", "utf8");
     const translations = JSON.parse(content);

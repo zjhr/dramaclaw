@@ -629,3 +629,167 @@ def test_brainclaw_settings_never_switch_the_active_gateway_mode(monkeypatch, tm
     assert custom_llm.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW
     assert custom_llm.base_url == "http://127.0.0.1:8317/v1"
     assert custom_llm.api_key == "sk-local-secret"
+
+
+def test_custom_model_roundtrips_and_is_preserved_when_omitted(monkeypatch, tmp_path):
+    """自定义模型持久化后，旧客户端仅修改网关时应保留已选模型。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    _configure_custom_media()
+    save_relayclaw_brainclaw_key(
+        api_key="sk-local-secret",
+        base_url="https://custom.example/v1",
+        model=" provider/custom-model ",
+    )
+    save_relayclaw_brainclaw_key(base_url="https://second.example/v1")
+
+    llm = get_effective_llm_config()
+    assert llm.model == "provider/custom-model"
+    assert llm.is_brainclaw is False
+    assert llm.base_url == "https://second.example/v1"
+    assert get_model_gateway_settings()["brainclaw_model"] == "provider/custom-model"
+    assert get_effective_newapi_config().base_url == "http://local-newapi:3000/v1"
+
+
+@pytest.mark.parametrize("mode", ["official", "hybrid"])
+def test_custom_model_does_not_replace_official_or_hybrid(monkeypatch, tmp_path, mode):
+    """自定义模型只影响自定义模式，官方和混合模式继续使用官方模型。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_official_newapi_key(api_key="sk-official-secret")
+    save_relayclaw_brainclaw_key(model="custom-model")
+    set_model_gateway_mode(mode)
+
+    llm = get_effective_llm_config()
+    assert llm.model == "brainclaw"
+    assert llm.is_brainclaw is True
+    from novelvideo.model_gateway_settings import build_model_gateway_status
+
+    assert build_model_gateway_status()["brainclaw"]["model"] == "custom-model"
+
+
+def test_custom_model_is_used_by_text_vision_hermes_codex_and_staging(monkeypatch, tmp_path):
+    """统一模型配置必须进入所有实际模型入口，并关闭专属 Profile 头。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    _configure_custom_media()
+    save_relayclaw_brainclaw_key(
+        api_key="sk-custom-model-key",
+        base_url="https://custom.example/v1",
+        model="provider/custom-model",
+    )
+    captured = {}
+
+    def fake_model(model_name, **kwargs):
+        captured.update(model_name=model_name, **kwargs)
+        return "model"
+
+    monkeypatch.setattr(config, "_newapi_text_openai_model", fake_model)
+    config.get_newapi_text_pydantic_model(
+        "CONTENT_REWRITER_MODEL",
+        model_name_override="ignored-per-task-model",
+        brainclaw_profile=BrainClawProfile.CONTENT_REWRITE,
+    )
+    assert captured["model_name"] == "provider/custom-model"
+    assert captured["base_url"] == "https://custom.example/v1"
+    assert captured["default_headers"] == {}
+
+    from novelvideo.chat import hermes_workspace, service as chat_service
+    from novelvideo.director_world import staging_prop_ai
+    from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
+
+    assert resolve_freezone_vision_model("ignored-vision-model") == "provider/custom-model"
+    assert hermes_workspace._hermes_model_default() == "provider/custom-model"
+    assert chat_service._codex_model() == "provider/custom-model"
+    assert staging_prop_ai.resolve_model_config({}) == (
+        "provider/custom-model",
+        "sk-custom-model-key",
+        "https://custom.example/v1",
+    )
+
+
+def test_model_change_rotates_hermes_fingerprint_and_runtime_version(monkeypatch, tmp_path):
+    """只改变模型也必须使运行时版本失效，避免工作进程继续使用旧模型。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    _configure_custom_media()
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", model="first-model")
+
+    from novelvideo.chat.hermes_workspace import effective_gateway_fingerprint
+    from novelvideo.chat.hermes_pool import gateway_origin_fingerprint
+    from novelvideo import model_gateway_runtime
+
+    monkeypatch.setattr(model_gateway_runtime, "_clear_agent_singletons", lambda: [])
+    monkeypatch.setattr(model_gateway_runtime, "_cognee_runtime_status", lambda: "ready")
+    initial_fingerprint = effective_gateway_fingerprint()
+    initial_pool_fingerprint = gateway_origin_fingerprint()
+    initial_version = model_gateway_runtime.refresh_model_gateway_runtime()["runtimeVersion"]
+
+    save_relayclaw_brainclaw_key(model="second-model")
+
+    assert effective_gateway_fingerprint() != initial_fingerprint
+    assert gateway_origin_fingerprint() != initial_pool_fingerprint
+    assert model_gateway_runtime.refresh_model_gateway_runtime()["runtimeVersion"] != initial_version
+
+    # 凭据逐轮注入，只改密钥不应重建池内进程。
+    pool_fingerprint = gateway_origin_fingerprint()
+    save_relayclaw_brainclaw_key(api_key="sk-replacement-secret")
+    assert gateway_origin_fingerprint() == pool_fingerprint
+
+
+def test_brainclaw_api_saves_and_reports_custom_model(monkeypatch, tmp_path):
+    """保存接口应回显实际模型，省略模型时不得恢复为默认值。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    _configure_custom_media()
+    monkeypatch.setattr(model_gateway, "refresh_model_gateway_runtime", lambda: {})
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/model-gateway/custom/brainclaw/config",
+        json={
+            "newApiApiKey": "sk-custom-secret",
+            "newApiBaseUrl": "https://custom.example/v1",
+            "model": "  provider/custom-model  ",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["brainclaw"]["model"] == "provider/custom-model"
+    assert payload["llmEffective"]["model"] == "provider/custom-model"
+    assert payload["llmEffective"]["brainclaw"] is False
+    assert "sk-custom-secret" not in response.text
+
+    unchanged = client.post("/model-gateway/custom/brainclaw/config", json={})
+    assert unchanged.status_code == 200
+    assert unchanged.json()["data"]["brainclaw"]["model"] == "provider/custom-model"
+
+
+@pytest.mark.parametrize("model", ["", "   ", "\t\n", "a b", "a\nb", "a\x00b", "x" * 257])
+def test_brainclaw_api_rejects_explicit_blank_model(monkeypatch, tmp_path, model):
+    """显式提交空模型时拒绝保存，防止用户配置被静默覆盖。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    _configure_custom_media()
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", model="saved-model")
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/model-gateway/custom/brainclaw/config", json={"model": model}
+    )
+
+    assert response.status_code == 400
+    assert get_effective_llm_config().model == "saved-model"
+
+
+@pytest.mark.parametrize("model", ["false", "123", "provider/model:latest", 'model"quoted'])
+def test_custom_model_stays_a_string_in_hermes_yaml(monkeypatch, tmp_path, model):
+    """模型名必须作为字符串写入 YAML，不能被识别成布尔值或数字。"""
+    import yaml
+    from novelvideo.chat import hermes_workspace
+
+    _isolate_settings_db(monkeypatch, tmp_path)
+    _configure_custom_media()
+    save_relayclaw_brainclaw_key(api_key="sk-custom-key", model=model)
+    for render in (hermes_workspace._default_config_yaml, hermes_workspace._default_freezone_config_yaml):
+        assert yaml.safe_load(render())["model"]["default"] == model

@@ -1270,7 +1270,6 @@ def test_official_brainclaw_ignores_legacy_hermes_model_env(
     home = hw.ensure_user_hermes_workspace("admin")
     config = (home / "config.yaml").read_text(encoding="utf-8")
 
-    assert "  default: brainclaw" in config
     parsed = yaml.safe_load(config)
     assert parsed["model"]["provider"] == "custom:dramaclaw"
     assert parsed["model"]["default"] == "brainclaw"

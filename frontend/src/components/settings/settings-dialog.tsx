@@ -34,6 +34,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChannelModelsButton } from "@/components/settings/channel-model-input";
+import { BrainClawModelInput } from "@/components/settings/brainclaw-model-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -1011,7 +1012,12 @@ function BrainClawGatewayPanel({
     (config?.llmEffective.brainclaw ? config.llmEffective.baseUrl : "") ||
     config?.official.baseUrl ||
     "";
+  const savedModel =
+    savedBrainClaw?.model ||
+    (config?.llmEffective.brainclaw ? config.llmEffective.model : "") ||
+    "brainclaw";
   const [baseUrl, setBaseUrl] = useState(savedBaseUrl);
+  const [model, setModel] = useState(savedModel);
   const [apiKey, setApiKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const savedApiKeyPreview =
@@ -1026,17 +1032,27 @@ function BrainClawGatewayPanel({
     }
   }, [savedBaseUrl]);
 
+  useEffect(() => {
+    setModel((current) => (current === savedModel ? current : savedModel));
+  }, [savedModel]);
+
   const handleSave = async () => {
     const trimmedApiKey = apiKey.trim();
     const trimmedBaseUrl = baseUrl.trim();
+    const trimmedModel = model.trim();
     if (!trimmedBaseUrl) {
       toast.error(t("settings.modelConfig.brainclaw.missingEndpoint"));
       return;
     }
+    if (!trimmedModel) {
+      toast.error(t("settings.modelConfig.brainclaw.missingModel"));
+      return;
+    }
     try {
-      const response = trimmedApiKey || trimmedBaseUrl !== savedBaseUrl
+      const response = trimmedApiKey || trimmedBaseUrl !== savedBaseUrl || trimmedModel !== savedModel
         ? await saveBrainClaw.mutateAsync({
             newApiBaseUrl: trimmedBaseUrl,
+            model: trimmedModel,
             ...(trimmedApiKey ? { newApiApiKey: trimmedApiKey } : {}),
           })
         : await enableBrainClaw.mutateAsync();
@@ -1121,9 +1137,26 @@ function BrainClawGatewayPanel({
             ) : null}
           </div>
         </div>
-        <div className="grid grid-cols-[120px_1fr] items-center gap-3 text-[11px]">
-          <span className="text-muted-foreground">{t("settings.modelConfig.brainclaw.model")}</span>
-          <code className="text-foreground">brainclaw</code>
+        <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+          <Label
+            htmlFor="brainclaw-model"
+            className="justify-start text-xs font-normal tracking-wide text-muted-foreground"
+          >
+            {t("settings.modelConfig.brainclaw.model")}
+          </Label>
+          <div>
+            <BrainClawModelInput
+              value={model}
+              onChange={setModel}
+              baseUrl={baseUrl}
+              apiKey={apiKey}
+              savedApiKeyPreview={savedApiKeyPreview}
+              disabled={loading || saveBrainClaw.isPending || enableBrainClaw.isPending}
+            />
+            <p id="brainclaw-model-hint" className="mt-1 text-xs text-muted-foreground">
+              {t("settings.modelConfig.brainclaw.modelHint")}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1137,6 +1170,7 @@ function BrainClawGatewayPanel({
             saveBrainClaw.isPending ||
             enableBrainClaw.isPending ||
             !baseUrl.trim() ||
+            !model.trim() ||
             (!apiKey.trim() && !savedApiKeyPreview)
           }
         >

@@ -10,7 +10,9 @@ import { SettingsDialog } from "@/components/settings/settings-dialog";
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
 const modelGatewayMocks = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
+  enableBrainClaw: vi.fn(),
   saveBrainClaw: vi.fn(),
+  fetchBrainClawModels: vi.fn(),
   setCustomLlmMode: vi.fn(),
 }));
 const freezoneAgentConfigMocks = vi.hoisted(() => ({
@@ -71,10 +73,17 @@ vi.mock("@/lib/queries/model-gateway", () => ({
   useEnableOfficial: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useEnableCustom: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useEnableHybrid: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useEnableBrainClaw: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useEnableBrainClaw: () => ({
+    mutateAsync: modelGatewayMocks.enableBrainClaw,
+    isPending: false,
+  }),
   useSaveOfficialConfig: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveBrainClawConfig: () => ({
     mutateAsync: modelGatewayMocks.saveBrainClaw,
+    isPending: false,
+  }),
+  useFetchBrainClawModels: () => ({
+    mutateAsync: modelGatewayMocks.fetchBrainClawModels,
     isPending: false,
   }),
   useSetCustomLlmMode: () => ({
@@ -84,9 +93,11 @@ vi.mock("@/lib/queries/model-gateway", () => ({
   useInitCustomNewApi: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveCustomChannel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveCustomChannelsBatch: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useFetchProviderModels: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveEmbeddingModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveMediaModels: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveProviderChannels: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useClearComfyUIConfig: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveMediaRelayConfig: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSyncProviderChannel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useChannelModels: () => ({
@@ -142,7 +153,9 @@ vi.mock("react-i18next", () => ({
         "settings.modelConfig.brainclaw.advancedTab": "高级自定义",
         "settings.modelConfig.brainclaw.title": "虾脑 BrainClaw（推荐）",
         "settings.modelConfig.brainclaw.description": "虾脑仅通过虾驿提供",
-        "settings.modelConfig.brainclaw.model": "固定模型",
+        "settings.modelConfig.brainclaw.model": "模型名称",
+        "settings.modelConfig.brainclaw.modelHint": "填写网关实际提供的模型 ID，默认 brainclaw。",
+        "settings.modelConfig.brainclaw.missingModel": "请填写模型名称。",
         "settings.modelConfig.brainclaw.save": "保存并启用 BrainClaw",
         "settings.modelConfig.featureModels.title": "业务模型映射",
         "settings.modelConfig.embeddingModel.title": "Embedding 模型",
@@ -346,10 +359,61 @@ function openRecipesManagement() {
   fireEvent.click(screen.getByRole("button", { name: "高级管理" }));
 }
 
+/** 构造已配置的简化 LLM 网关，验证模型编辑时不需要重新输入密钥。 */
+function createBrainClawConfig(model = "brainclaw") {
+  return {
+    mode: "custom",
+    effective: {
+      source: "custom",
+      baseUrl: "http://local-newapi:3000/v1",
+      apiKeyPreview: "sk-c...cret",
+      configured: true,
+    },
+    llmEffective: {
+      mode: "relayclaw_brainclaw",
+      source: "official",
+      baseUrl: "https://relayclaw.cdnfg.com/v1",
+      apiKeyPreview: "sk-r...cret",
+      configured: true,
+      model,
+      brainclaw: true,
+    },
+    official: {
+      source: "database",
+      baseUrl: "https://relayclaw.cdnfg.com/v1",
+      apiKeyPreview: "sk-r...cret",
+      configured: true,
+      environment: {
+        baseUrl: "https://relayclaw.cdnfg.com/v1",
+        apiKeyPreview: "",
+        configured: false,
+      },
+    },
+    brainclaw: {
+      baseUrl: "https://relayclaw.cdnfg.com/v1",
+      apiKeyPreview: "sk-r...cret",
+      configured: true,
+      model,
+    },
+    custom: {
+      llmMode: "relayclaw_brainclaw",
+      baseUrl: "http://local-newapi:3000/v1",
+      apiKeyPreview: "sk-c...cret",
+      configured: true,
+      adminBaseUrl: "http://local-newapi:3000",
+      tokenName: "dramaclaw",
+      tokenId: "1",
+    },
+  };
+}
+
 beforeEach(() => {
   runtimeState.isCeRuntime = true;
   modelGatewayMocks.config = undefined;
+  modelGatewayMocks.enableBrainClaw.mockReset();
+  modelGatewayMocks.enableBrainClaw.mockResolvedValue({ ok: true });
   modelGatewayMocks.saveBrainClaw.mockReset();
+  modelGatewayMocks.fetchBrainClawModels.mockReset();
   modelGatewayMocks.setCustomLlmMode.mockReset();
   modelGatewayMocks.setCustomLlmMode.mockResolvedValue({ ok: true });
   freezoneAgentConfigMocks.delete.mockReset();
@@ -432,7 +496,7 @@ describe("SettingsDialog pages", () => {
     expect(screen.getByText("虾脑 BrainClaw（推荐）")).toBeInTheDocument();
     const endpoint = screen.getByDisplayValue("https://relayclaw.cdnfg.com/v1");
     expect(endpoint).not.toHaveAttribute("readonly");
-    expect(screen.getByText("brainclaw")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "模型名称" })).toHaveValue("brainclaw");
     expect(screen.getByRole("button", { name: "保存并启用 BrainClaw" })).toBeEnabled();
     expect(screen.getByText("Embedding 模型")).toBeInTheDocument();
     expect(screen.getByText("媒体模型")).toBeInTheDocument();
@@ -444,6 +508,7 @@ describe("SettingsDialog pages", () => {
     await waitFor(() => {
       expect(modelGatewayMocks.saveBrainClaw).toHaveBeenCalledWith({
         newApiBaseUrl: "http://127.0.0.1:8317",
+        model: "brainclaw",
       });
     });
 
@@ -453,6 +518,104 @@ describe("SettingsDialog pages", () => {
     expect(screen.getByText("业务模型映射")).toBeInTheDocument();
     expect(screen.getByText("Embedding 模型")).toBeInTheDocument();
     expect(screen.getByText("媒体模型")).toBeInTheDocument();
+  });
+
+  it("saves a changed model without requiring a new API key", async () => {
+    modelGatewayMocks.config = createBrainClawConfig();
+    modelGatewayMocks.saveBrainClaw.mockResolvedValue({ ok: true });
+    renderSettingsDialog();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "模型名称" }), {
+      target: { value: "  provider/custom-model  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并启用 BrainClaw" }));
+
+    await waitFor(() => {
+      expect(modelGatewayMocks.saveBrainClaw).toHaveBeenCalledWith({
+        newApiBaseUrl: "https://relayclaw.cdnfg.com/v1",
+        model: "provider/custom-model",
+      });
+    });
+    expect(modelGatewayMocks.enableBrainClaw).not.toHaveBeenCalled();
+  });
+
+  it("restores the configured model instead of the default model", () => {
+    modelGatewayMocks.config = createBrainClawConfig("provider/saved-model");
+    renderSettingsDialog();
+
+    expect(screen.getByRole("combobox", { name: "模型名称" })).toHaveValue(
+      "provider/saved-model",
+    );
+  });
+
+  it("fetches models using the saved key and selects a fetched model without saving", async () => {
+    modelGatewayMocks.config = createBrainClawConfig();
+    modelGatewayMocks.fetchBrainClawModels.mockResolvedValue({ ok: true, data: { models: ["provider/custom-model", "another-model"] } });
+    renderSettingsDialog();
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.modelConfig.channelModels.fetch" }));
+    await waitFor(() => expect(modelGatewayMocks.fetchBrainClawModels).toHaveBeenCalledWith({
+      newApiBaseUrl: "https://relayclaw.cdnfg.com/v1",
+    }));
+    // 当前 brainclaw 不在返回列表中，仍必须能看到其他候选。
+    fireEvent.click(await screen.findByRole("option", { name: "provider/custom-model" }));
+    expect(screen.getByRole("combobox", { name: "模型名称" })).toHaveValue("provider/custom-model");
+    expect(modelGatewayMocks.saveBrainClaw).not.toHaveBeenCalled();
+  });
+
+  it("uses the current unsaved credentials when fetching models", async () => {
+    modelGatewayMocks.config = createBrainClawConfig();
+    modelGatewayMocks.fetchBrainClawModels.mockResolvedValue({ ok: true, data: { models: [] } });
+    renderSettingsDialog();
+    fireEvent.change(screen.getByDisplayValue("https://relayclaw.cdnfg.com/v1"), {
+      target: { value: "http://127.0.0.1:8317" },
+    });
+    fireEvent.change(document.querySelector('input[name="relayclaw-brainclaw-api-key"]')!, {
+      target: { value: " sk-unsaved-key " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "settings.modelConfig.channelModels.fetch" }));
+    await waitFor(() => expect(modelGatewayMocks.fetchBrainClawModels).toHaveBeenCalledWith({
+      newApiBaseUrl: "http://127.0.0.1:8317", newApiApiKey: "sk-unsaved-key",
+    }));
+    expect(modelGatewayMocks.saveBrainClaw).not.toHaveBeenCalled();
+  });
+
+  it("keeps manual input available when model discovery fails", async () => {
+    modelGatewayMocks.config = createBrainClawConfig();
+    modelGatewayMocks.fetchBrainClawModels.mockResolvedValue({ detail: "upstream unavailable" });
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: "settings.modelConfig.channelModels.fetch" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("settings.modelConfig.brainclaw.fetchModelsFailed"));
+    fireEvent.change(screen.getByRole("combobox", { name: "模型名称" }), { target: { value: "manual-model" } });
+    expect(screen.getByRole("combobox", { name: "模型名称" })).toHaveValue("manual-model");
+  });
+
+  it("does not save a blank or whitespace-only model", () => {
+    modelGatewayMocks.config = createBrainClawConfig();
+    renderSettingsDialog();
+    const modelInput = screen.getByRole("combobox", { name: "模型名称" });
+    const saveButton = screen.getByRole("button", { name: "保存并启用 BrainClaw" });
+
+    for (const value of ["", "   "]) {
+      fireEvent.change(modelInput, { target: { value } });
+      expect(saveButton).toBeDisabled();
+      fireEvent.click(saveButton);
+    }
+
+    expect(modelGatewayMocks.saveBrainClaw).not.toHaveBeenCalled();
+    expect(modelGatewayMocks.enableBrainClaw).not.toHaveBeenCalled();
+  });
+
+  it("keeps the selected custom model when enabling unchanged settings", async () => {
+    modelGatewayMocks.config = createBrainClawConfig("provider/saved-model");
+    renderSettingsDialog();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并启用 BrainClaw" }));
+
+    await waitFor(() => {
+      expect(modelGatewayMocks.enableBrainClaw).toHaveBeenCalledOnce();
+    });
+    expect(modelGatewayMocks.saveBrainClaw).not.toHaveBeenCalled();
   });
 
   it("limits EE settings to Freezone Skills with Recipes under advanced management", () => {

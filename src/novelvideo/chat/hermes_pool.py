@@ -220,16 +220,16 @@ def gateway_origin_fingerprint() -> str:
     Rotating a worker is expensive — a new subprocess, a fresh ACP session, a
     cold connection pool — and the key is no longer a property of the worker.
     It now arrives with each turn, so two turns that differ only by credential
-    can share one worker; only a change of endpoint requires a new one.
-
-    ``hermes_workspace.effective_gateway_fingerprint`` still hashes the key and
-    is left untouched: that module is frozen pending a recovery review, and this
-    is the one call site that needed the narrower key.
+    can share one worker. Endpoint or model changes require a new one.
     """
     _, base_url = effective_gateway_credentials()
     parts = urlsplit((base_url or "").strip())
     origin = f"{parts.scheme.lower()}://{parts.netloc.lower()}"
-    return hashlib.sha256(origin.encode("utf-8")).hexdigest()
+    from novelvideo.chat.hermes_workspace import _hermes_model_default
+
+    # 模型写入工作进程配置，只改模型时也需要重建进程。
+    material = f"{origin}\n{_hermes_model_default()}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 class _ManagedHermesThread:

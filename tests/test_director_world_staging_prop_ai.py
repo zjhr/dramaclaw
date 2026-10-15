@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import pydantic_ai
+import pytest
 
 from novelvideo import config
 from novelvideo.director_world import staging_prop_ai
+
+
+@pytest.fixture(autouse=True)
+def isolate_advanced_gateway(monkeypatch, tmp_path):
+    """隔离本机网关设置，确保这些测试只验证高级模式的请求级模型参数。"""
+    from novelvideo.model_gateway_settings import set_custom_llm_mode, set_model_gateway_mode
+
+    monkeypatch.setattr(config, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
+    set_model_gateway_mode("custom")
+    set_custom_llm_mode("advanced")
 
 
 def test_create_staging_prop_agent_uses_request_model_config(monkeypatch) -> None:

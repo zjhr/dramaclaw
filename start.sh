@@ -54,7 +54,8 @@ start() {
   wait_up http://localhost:18780/api/status 网关 gateway.out 30
 
   echo "启动 DramaClaw API..."
-  (cd "$REPO" && nohup uv run novelvideo api --port 8780 >"$LOG_DIR/api.out" 2>&1 &)
+  # 依赖已在前台同步，后台只启动 API，避免再次下载依赖占用就绪等待时间。
+  (cd "$REPO" && nohup uv run --no-sync novelvideo api --port 8780 >"$LOG_DIR/api.out" 2>&1 &)
   # 90s：API 冷启动要导入 Cognee，实测 15~25s 属正常，给足余量避免误判。
   wait_up http://localhost:8780/healthz API api.out 90
 

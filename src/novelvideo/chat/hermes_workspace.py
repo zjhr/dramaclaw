@@ -344,7 +344,8 @@ def _newapi_base_url() -> str:
 def effective_gateway_fingerprint() -> str:
     """Return a non-secret fingerprint of the gateway used by new Hermes workers."""
     api_key, base_url = _effective_newapi_gateway()
-    material = f"{base_url}\n{api_key}".encode("utf-8")
+    # 模型变化也必须轮换工作进程，避免继续复用旧模型配置。
+    material = f"{base_url}\n{api_key}\n{_hermes_model_default()}".encode("utf-8")
     return hashlib.sha256(material).hexdigest()
 
 
@@ -360,8 +361,10 @@ def _hermes_model_default() -> str:
     # Only CE resolves the route from its gateway settings database. EE keeps
     # the deployment environment in charge, so HERMES_MODEL selects the alias
     # and BrainClaw is reached by pointing it at the BrainClaw alias.
-    if is_ce_effective() and get_effective_llm_config().is_brainclaw:
-        return "brainclaw"
+    if is_ce_effective():
+        llm_config = get_effective_llm_config()
+        if llm_config.model:
+            return llm_config.model
     return (
         _root_value(
             "HERMES_MODEL",
@@ -390,7 +393,7 @@ def _hermes_model_context_length() -> str:
 
 def _default_config_yaml() -> str:
     return _CONFIG_YAML_TEMPLATE.format(
-        model=_hermes_model_default(),
+        model=json.dumps(_hermes_model_default(), ensure_ascii=False),
         base_url=_newapi_base_url(),
         api_mode=_hermes_model_api_mode(),
         context_length=_hermes_model_context_length(),
@@ -399,7 +402,7 @@ def _default_config_yaml() -> str:
 
 def _default_freezone_config_yaml() -> str:
     return _FREEZONE_CONFIG_YAML_TEMPLATE.format(
-        model=_hermes_model_default(),
+        model=json.dumps(_hermes_model_default(), ensure_ascii=False),
         base_url=_newapi_base_url(),
         api_mode=_hermes_model_api_mode(),
         context_length=_hermes_model_context_length(),

@@ -17,6 +17,12 @@ export interface GatewayEndpointPreview {
   configured: boolean;
 }
 
+/** 简化 LLM 网关的配置预览，模型 ID 可由用户指定。 */
+export interface BrainClawGatewayConfig extends GatewayEndpointPreview {
+  /** 上游实际使用的模型 ID（BrainClaw 端点可自定义）。 */
+  model?: string;
+}
+
 export interface OfficialGatewayConfig extends GatewayEndpointPreview {
   /** "database" | "env" 等，标识官方配置来源。 */
   source: string;
@@ -128,7 +134,7 @@ export interface ModelGatewayConfig {
   effective: EffectiveGatewayConfig;
   llmEffective: EffectiveLlmConfig;
   official: OfficialGatewayConfig;
-  brainclaw?: GatewayEndpointPreview;
+  brainclaw?: BrainClawGatewayConfig;
   custom: CustomGatewayConfig;
   provisioner?: ModelGatewayProvisionerConfig;
   mediaRelay?: MediaRelayConfig;
@@ -156,6 +162,8 @@ export interface SaveOfficialConfigInput {
 export interface SaveBrainClawConfigInput {
   newApiBaseUrl: string;
   newApiApiKey?: string;
+  /** 省略时保留已保存的模型，新配置默认使用 brainclaw。 */
+  model?: string;
 }
 
 export interface NewApiDatabaseConfigInput {
@@ -477,6 +485,21 @@ export function useSaveBrainClawConfig() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
+  });
+}
+
+/** 使用当前表单或已保存的凭据拉取模型，不保存配置。 */
+export function useFetchBrainClawModels() {
+  return useMutation({
+    mutationFn: (input: { newApiBaseUrl: string; newApiApiKey?: string }) =>
+      api
+        .post("api/v1/model-gateway/custom/brainclaw/models", {
+          json: input,
+          timeout: 30_000,
+          retry: 0,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<{ models: string[] }> | ErrorResponse | FastApiErrorResponse>(),
   });
 }
 

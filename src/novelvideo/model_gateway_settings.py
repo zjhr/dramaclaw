@@ -39,6 +39,7 @@ MODE_HYBRID = "hybrid"
 VALID_MODES = {MODE_OFFICIAL, MODE_CUSTOM, MODE_HYBRID}
 CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW = "relayclaw_brainclaw"
 CUSTOM_LLM_MODE_ADVANCED = "advanced"
+DEFAULT_BRAINCLAW_MODEL = "brainclaw"
 VALID_CUSTOM_LLM_MODES = {
     CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
     CUSTOM_LLM_MODE_ADVANCED,
@@ -142,6 +143,18 @@ def normalize_relay_base_url(value: str | None) -> str:
     if base.endswith("/v1"):
         return base
     return f"{base}/v1"
+
+
+def normalize_brainclaw_model(value: str | None) -> str:
+    """规范化网关模型 ID；未配置时沿用默认别名，拒绝空白或控制字符。"""
+    if value is None:
+        return DEFAULT_BRAINCLAW_MODEL
+    clean = value.strip()
+    if not clean:
+        raise ValueError("model is required")
+    if len(clean) > 256 or any(char.isspace() or not char.isprintable() for char in clean):
+        raise ValueError("model must be at most 256 characters without whitespace or control characters")
+    return clean
 
 
 def _now_iso() -> str:
@@ -249,6 +262,7 @@ def save_relayclaw_brainclaw_key(
     *,
     api_key: str = "",
     base_url: str = "",
+    model: str | None = None,
 ) -> None:
     """Persist the BrainClaw LLM endpoint and select BrainClaw for Custom mode.
 
@@ -262,6 +276,8 @@ def save_relayclaw_brainclaw_key(
         values["brainclaw_newapi_api_key"] = clean_api_key
     if clean_base_url:
         values["brainclaw_newapi_base_url"] = clean_base_url
+    if model is not None:
+        values["brainclaw_model"] = normalize_brainclaw_model(model)
     _write_many(values)
 
 
@@ -1113,7 +1129,7 @@ def get_effective_llm_config() -> EffectiveLlmConfig:
             source="environment",
             base_url=base_url,
             api_key=api_key,
-            model="brainclaw" if is_brainclaw else "",
+            model=DEFAULT_BRAINCLAW_MODEL if is_brainclaw else "",
             is_brainclaw=is_brainclaw,
         )
 
@@ -1126,7 +1142,7 @@ def get_effective_llm_config() -> EffectiveLlmConfig:
             source="hybrid" if gateway_mode == MODE_HYBRID else "official",
             base_url=normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL),
             api_key=normalize_api_key(settings.get("official_newapi_api_key", "")),
-            model="brainclaw",
+            model=DEFAULT_BRAINCLAW_MODEL,
             is_brainclaw=True,
         )
     if custom_llm_mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
@@ -1145,18 +1161,20 @@ def get_effective_llm_config() -> EffectiveLlmConfig:
             or (settings.get("official_newapi_api_key", "")
                 if _is_official_relay_url(brainclaw_base_url) else "")
         )
+        brainclaw_model = normalize_brainclaw_model(settings.get("brainclaw_model"))
         return EffectiveLlmConfig(
             mode=CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
             source=(
                 "custom"
                 if settings.get("brainclaw_newapi_base_url", "")
                 or settings.get("brainclaw_newapi_api_key", "")
+                or settings.get("brainclaw_model", "")
                 else "official"
             ),
             base_url=brainclaw_base_url,
             api_key=brainclaw_api_key,
-            model="brainclaw",
-            is_brainclaw=True,
+            model=brainclaw_model,
+            is_brainclaw=brainclaw_model == DEFAULT_BRAINCLAW_MODEL,
         )
     custom = get_ce_newapi_config_for_mode(MODE_CUSTOM)
     return EffectiveLlmConfig(
@@ -1402,6 +1420,7 @@ def build_model_gateway_status(
     brainclaw_base_url = normalize_relay_base_url(
         settings.get("brainclaw_newapi_base_url", "") or OFFICIAL_NEWAPI_BASE_URL
     )
+    brainclaw_model = normalize_brainclaw_model(settings.get("brainclaw_model"))
     # Same rule as the effective config: the official key is only shown as the
     # BrainClaw key when the endpoint is the official one.
     dedicated_brainclaw_key = normalize_api_key(
@@ -1440,6 +1459,7 @@ def build_model_gateway_status(
         },
         "brainclaw": {
             "baseUrl": brainclaw_base_url,
+            "model": brainclaw_model,
             "apiKeyPreview": mask_secret(brainclaw_api_key),
             # Distinct from apiKeyPreview, which is non-empty even when it is
             # only the official key showing through. A caller asking "is a

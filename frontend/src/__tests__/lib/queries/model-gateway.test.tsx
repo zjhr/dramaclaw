@@ -26,6 +26,7 @@ import {
   useCheckOfficialMediaCatalog,
   useOfficialMediaCatalogWatcher,
   useSaveProviderChannels,
+  useFetchBrainClawModels,
 } from "@/lib/queries/model-gateway";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -61,6 +62,32 @@ function catalogStatus(
     ...overrides,
   };
 }
+
+describe("BrainClaw model discovery", () => {
+  it("posts current credentials without invalidating saved configuration", async () => {
+    const requests: unknown[] = [];
+    server.use(http.post(
+      "http://localhost:3000/api/v1/model-gateway/custom/brainclaw/models",
+      async ({ request }) => {
+        requests.push(await request.clone().json());
+        return HttpResponse.json({ ok: true, data: { models: ["provider/model"] } });
+      },
+    ));
+    const queryClient = new QueryClient();
+    const invalidation = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useFetchBrainClawModels(), { wrapper: wrapper(queryClient) });
+    await act(async () => {
+      await result.current.mutateAsync({ newApiBaseUrl: "https://gateway.example/v1", newApiApiKey: "test-key" });
+    });
+    // 全局和本文件各有一个 MSW 拦截器，二者会观察同一个请求。
+    expect(requests.length).toBeGreaterThan(0);
+    for (const request of requests) {
+      expect(request).toEqual({ newApiBaseUrl: "https://gateway.example/v1", newApiApiKey: "test-key" });
+    }
+    await waitFor(() => expect(result.current.data).toEqual({ ok: true, data: { models: ["provider/model"] } }));
+    expect(invalidation).not.toHaveBeenCalled();
+  });
+});
 
 describe("official media catalog watcher", () => {
   it("polls only while automatic updates are enabled", async () => {
